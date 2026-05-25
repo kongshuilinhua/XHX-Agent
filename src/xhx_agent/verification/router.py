@@ -20,8 +20,17 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
     commands: list[VerificationCommand] = []
     package_json = workspace / "package.json"
     if _is_python_project(workspace, changed_files):
-        command = "uv run pytest" if (workspace / "pyproject.toml").exists() else "python -m pytest"
-        commands.append(VerificationCommand(command=command, reason="Python project with tests or pytest config."))
+        test_files = _python_test_files(changed_files)
+        base_command = "uv run pytest" if (workspace / "pyproject.toml").exists() else "python -m pytest"
+        if test_files:
+            commands.append(
+                VerificationCommand(
+                    command=f"{base_command} {' '.join(test_files)}",
+                    reason="Python test file changed; run targeted pytest.",
+                )
+            )
+        else:
+            commands.append(VerificationCommand(command=base_command, reason="Python project with tests or pytest config."))
     if package_json.exists():
         scripts = package_json.read_text(encoding="utf-8", errors="ignore")
         if '"test"' in scripts:
@@ -41,3 +50,18 @@ def _is_python_project(workspace: Path, changed_files: list[str] | None) -> bool
     if (workspace / "pyproject.toml").exists() and changed_files and any(path.endswith(".py") for path in changed_files):
         return True
     return False
+
+
+def _python_test_files(changed_files: list[str] | None) -> list[str]:
+    if not changed_files:
+        return []
+    return sorted(
+        path.replace("\\", "/")
+        for path in changed_files
+        if path.replace("\\", "/").endswith(".py")
+        and (
+            path.replace("\\", "/").startswith("tests/")
+            or Path(path).name.startswith("test_")
+            or Path(path).name.endswith("_test.py")
+        )
+    )

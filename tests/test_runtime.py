@@ -7,6 +7,9 @@ from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.tools.registry import ToolRegistry, ToolExecutionResult
 from xhx_agent.context.pack import ContextPack
+from xhx_agent.tools.terminal import TerminalResult
+from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.safety.risk import RiskLevel
 
 
 def test_init_project_writes_expected_files(tmp_path: Path) -> None:
@@ -43,6 +46,9 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
     assert any(item["kind"] == "patch" for item in evidence_lines)
     assert any(item["kind"] == "test" for item in evidence_lines)
+    report = (workspace / result.summary_path).read_text(encoding="utf-8")
+    assert "## Verification Details" in report
+    assert "exit_code: 0" in report
 
 
 def test_node_fixture_mock_closed_loop(tmp_path: Path) -> None:
@@ -55,6 +61,66 @@ def test_node_fixture_mock_closed_loop(tmp_path: Path) -> None:
     assert result.verification == "passed"
     assert result.changed_files == ["src/index.js"]
     assert "return a + b;" in (workspace / "src" / "index.js").read_text(encoding="utf-8")
+
+
+def test_runtime_requires_confirmation_without_yes(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "python_bug"
+    workspace = tmp_path / "python_bug"
+    shutil.copytree(fixture, workspace)
+    RuntimeApp(workspace).init_project()
+
+    result = RuntimeApp(workspace).run_task("fix failing test")
+
+    assert result.status == "success"
+    assert result.verification == "requires_confirmation"
+    assert result.commands == ["uv run pytest"]
+    assert result.verification_results[0].status == "confirm"
+    assert any("requires confirmation" in risk for risk in result.risk_summary)
+
+
+def test_runtime_confirmation_callback_executes_verification(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "python_bug"
+    workspace = tmp_path / "python_bug"
+    shutil.copytree(fixture, workspace)
+    RuntimeApp(workspace).init_project()
+
+    result = RuntimeApp(workspace).run_task(
+        "fix failing test",
+        confirm_callback=lambda _command, _decision: True,
+    )
+
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert result.verification_results[0].exit_code == 0
+
+
+def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypatch) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "python_bug"
+    workspace = tmp_path / "python_bug"
+    shutil.copytree(fixture, workspace)
+    RuntimeApp(workspace).init_project()
+
+    failed_result = TerminalResult(
+        command="uv run pytest",
+        status="failed",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        stdout="",
+        stderr="assert 1 == 2\nline 1\n",
+        exit_code=1,
+        summary="assert 1 == 2\nline 1",
+    )
+
+    monkeypatch.setattr("xhx_agent.runtime.app.run_terminal", lambda *_args, **_kwargs: failed_result)
+
+    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True)
+
+    assert result.status == "failed"
+    assert result.verification == "failed"
+    assert result.verification_results == [failed_result]
+    assert any("exit_code=1" in risk for risk in result.risk_summary)
+    report = (workspace / result.summary_path).read_text(encoding="utf-8")
+    assert "assert 1 == 2" in report
+    assert "exit_code: 1" in report
 
 
 def test_openai_profile_missing_api_key_fails_safely(tmp_path: Path) -> None:
