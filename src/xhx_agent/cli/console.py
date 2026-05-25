@@ -4,6 +4,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.columns import Columns
 from rich.panel import Panel
 from rich.table import Table
 
@@ -26,6 +27,7 @@ SLASH_COMMANDS = {
     "/diff",
     "/skills",
     "/mode",
+    "/dashboard",
     "/clear",
     "/exit",
 }
@@ -45,6 +47,7 @@ class CommandConsole:
 
     def run(self) -> None:
         self.console.print(Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent"))
+        self.print_dashboard()
         while True:
             try:
                 text = typer.prompt("xhx")
@@ -90,13 +93,17 @@ class CommandConsole:
             self.print_path_group("Skills", ".xhx/skills")
         elif command == "/mode":
             self.set_mode(argument.strip())
+        elif command == "/dashboard":
+            self.print_dashboard()
         elif command == "/clear":
             self.console.clear()
+            self.print_dashboard()
         else:
             self.console.print(f"Unknown command: {command}. Type /help.")
         return True
 
     def run_task(self, task: str) -> None:
+        self.print_dashboard()
         self.console.print(Panel(task, title="Task"))
         result = self.runtime.run_task(
             task,
@@ -108,6 +115,7 @@ class CommandConsole:
         )
         self.last_result = result
         self.print_run_result(result)
+        self.print_dashboard()
 
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
@@ -146,6 +154,7 @@ class CommandConsole:
             ("/diff", "Show changed files from last run."),
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
+            ("/dashboard", "Render the console dashboard."),
             ("/clear", "Clear terminal."),
             ("/exit", "Exit console."),
         ]
@@ -169,6 +178,9 @@ class CommandConsole:
         self.console.print(table)
 
     def print_status(self) -> None:
+        self.console.print(self.status_table())
+
+    def status_table(self) -> Table:
         table = Table(title="Console Status")
         table.add_column("Field")
         table.add_column("Value")
@@ -181,7 +193,7 @@ class CommandConsole:
         if self.last_result:
             table.add_row("last_status", self.last_result.status)
             table.add_row("last_summary", self.last_result.summary_path)
-        self.console.print(table)
+        return table
 
     def print_plan(self, task: str | None = None) -> None:
         if not task:
@@ -238,6 +250,53 @@ class CommandConsole:
         if argument:
             self.mode = argument
         self.console.print(f"mode: {self.mode}")
+
+    def print_dashboard(self) -> None:
+        self.console.print(
+            Panel(
+                Columns(
+                    [
+                        self.status_table(),
+                        self.last_run_table(),
+                        self.event_table(),
+                        self.command_table(),
+                    ],
+                    equal=True,
+                    expand=True,
+                ),
+                title="xhx-agent",
+            )
+        )
+
+    def last_run_table(self) -> Table:
+        table = Table(title="Last Run")
+        table.add_column("Field")
+        table.add_column("Value")
+        if not self.last_result:
+            table.add_row("status", "none")
+            return table
+        table.add_row("status", self.last_result.status)
+        table.add_row("verification", self.last_result.verification)
+        table.add_row("changed", str(len(self.last_result.changed_files)))
+        table.add_row("summary", self.last_result.summary_path)
+        return table
+
+    def event_table(self) -> Table:
+        table = Table(title="Recent Events")
+        table.add_column("Type")
+        table.add_column("Message")
+        for event in self.events[-5:]:
+            table.add_row(event.type, event.message)
+        if not self.events:
+            table.add_row("none", "No events yet.")
+        return table
+
+    def command_table(self) -> Table:
+        table = Table(title="Commands")
+        table.add_column("Command")
+        for command in sorted(SLASH_COMMANDS):
+            table.add_row(command)
+        return table
 
     def print_run_result(self, result: RunResult) -> None:
         table = Table(title="Run Result")
