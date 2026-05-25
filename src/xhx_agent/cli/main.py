@@ -7,6 +7,7 @@ import click
 import typer
 from rich.console import Console
 
+from xhx_agent.cli.console import CommandConsole
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
@@ -71,14 +72,12 @@ def run(
 
 @app.command("chat")
 def chat() -> None:
-    console.print("xhx-agent REPL. Type /exit to quit.")
-    runtime = RuntimeApp()
-    while True:
-        text = typer.prompt("xhx")
-        if text.strip() == "/exit":
-            break
-        result = runtime.run_task(text)
-        console.print(f"status: {result.status}; summary: {result.summary_path}")
+    CommandConsole(console=console).run()
+
+
+@app.command("tui")
+def tui() -> None:
+    CommandConsole(console=console).run()
 
 
 @config_app.command("list")

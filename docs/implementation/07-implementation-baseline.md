@@ -39,6 +39,7 @@ v0.1-A 真实模型接入
 | `845127a` | `Complete v0.2 safe execution loop` | v0.2 | 抽出 SafeExecutionKernel，加入 `--auto-repair` 最多两轮修复循环。 |
 | `65b3d6f` | `Add v0.2 checkpoint restore plan` | v0.2 | 增加失败后的只读 restore plan，不自动回滚。 |
 | `e8dddf6` | `Implement v0.3 context pack compiler` | v0.3 | 正式化 Context Pack Compiler，加入预算选择和 context debug report。 |
+| `544615a` | `Implement v0.4 evidence runtime` | v0.4 | 加入 EvidenceStore 读回、artifact_ref 展开、patch evidence id 绑定和报告渲染。 |
 
 ## v0.1-A 真实模型接入
 
@@ -307,6 +308,23 @@ v0.5：TUI / Command Console。
 - 工具状态。
 - 权限确认 UI。
 - `/` 命令系统。
+
+v0.5 当前状态：部分实现。
+
+v0.5 已完成：
+
+- 新增 `xhx tui` 入口。
+- `xhx chat` 复用同一个 Command Console。
+- 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
+- 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/clear`、`/exit`。
+- 权限确认在控制台中以表格展示 command、risk 和 reason。
+- `/plan` 可 dry-run 预览计划，不执行工具。
+
+v0.5 未完成 / 后续增强：
+
+- 还不是全屏 Textual TUI。
+- 还没有真正流式模型输出。
+- 工具调用状态目前是任务结束后的结果表，不是实时事件流。
 
 v0.6：Repo Intelligence Graph。
 
