@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from xhx_agent.runtime.paths import ensure_xhx_dirs, xhx_dir
+from xhx_agent.safety.repair import RepairDecision
 from xhx_agent.tools.terminal import TerminalResult
 
 
@@ -16,6 +17,8 @@ def write_report(
     verification: str,
     risks: list[str],
     verification_results: list[TerminalResult] | None = None,
+    checkpoint_path: str | None = None,
+    repair: RepairDecision | None = None,
 ) -> Path:
     ensure_xhx_dirs(workspace)
     path = xhx_dir(workspace) / "logbook" / f"{run_id}.md"
@@ -45,9 +48,17 @@ def write_report(
 
 {_verification_details(verification_results or [])}
 
+## Checkpoint
+
+{checkpoint_path or "- none"}
+
+## Repair
+
+{_repair_details(repair)}
+
 ## Evidence Summary
 
-- v0.1 summary generated from runtime tool and verification summaries.
+- Runtime summary generated from tool, policy, checkpoint, verification, and repair summaries.
 
 ## Risks
 
@@ -85,3 +96,16 @@ def _verification_details(results: list[TerminalResult]) -> str:
             )
         )
     return "\n\n".join(sections)
+
+
+def _repair_details(repair: RepairDecision | None) -> str:
+    if repair is None:
+        return "- none"
+    return "\n".join(
+        [
+            f"- should_repair: {str(repair.should_repair).lower()}",
+            f"- attempts_used: {repair.attempts_used}",
+            f"- max_attempts: {repair.max_attempts}",
+            f"- reason: {repair.reason}",
+        ]
+    )
