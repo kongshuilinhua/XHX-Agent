@@ -38,6 +38,7 @@ v0.1-A 真实模型接入
 | `3279d04` | `Add v0.2 safety checkpoint groundwork` | v0.2 前半 | 增加 checkpoint、policy trace/evidence 和默认不自动 repair 的失败停止报告。 |
 | `845127a` | `Complete v0.2 safe execution loop` | v0.2 | 抽出 SafeExecutionKernel，加入 `--auto-repair` 最多两轮修复循环。 |
 | `65b3d6f` | `Add v0.2 checkpoint restore plan` | v0.2 | 增加失败后的只读 restore plan，不自动回滚。 |
+| `e8dddf6` | `Implement v0.3 context pack compiler` | v0.3 | 正式化 Context Pack Compiler，加入预算选择和 context debug report。 |
 
 ## v0.1-A 真实模型接入
 
@@ -278,7 +279,22 @@ v0.3 未完成 / 后续增强：
 - changed files 还没有结合 repo_intel 做影响面排序。
 - 历史会话摘要还没有正式接入。
 
-v0.4 当前状态：未完成。
+v0.4 当前状态：基本完成。
+
+v0.4 已完成：
+
+- Raw Trace 支持 JSONL 写入和读回。
+- Evidence Index 支持 JSONL 写入和读回。
+- EvidenceStore 支持按 evidence id 查找证据。
+- EvidenceStore 支持按需展开 `trace://...` 和 `checkpoint://...` artifact_ref。
+- `apply_patch` 成功后写入 patch evidence，并通过 `patch_evidence_binding` trace 绑定 tool trace id、evidence id 和 changed files。
+- Markdown 报告渲染 Evidence Summary，包含 evidence id、kind/source、confidence、summary、artifact_ref 和 artifact 展开状态。
+
+v0.4 未完成 / 后续增强：
+
+- 复杂 TrailGraph 结构仍未实现。
+- artifact_ref 展开目前限定在当前 run 的 trace/checkpoint，不跨 run 检索。
+- Evidence Index 仍是 JSONL 文件，不是 SQLite 或全文索引。
 
 ## v0.5-v0.7 产品能力
 
