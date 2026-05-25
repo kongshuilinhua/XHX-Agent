@@ -203,6 +203,7 @@ v0.1-A 真实模型接入
 
 - 修改后验证前写入 `.xhx/checkpoints/<run-id>.json`。
 - checkpoint 记录 changed files 的 sha256、size、Git HEAD 和 dirty 状态。
+- 验证失败且已有 checkpoint 时写入 `.xhx/checkpoints/<run-id>-restore-plan.json` 只读恢复计划。
 - 已抽出 `SafeExecutionKernel`，由 Runtime 通过该边界执行工具、创建 checkpoint、运行验证和记录 policy。
 - tool policy decision 写入 Raw Trace 和 Evidence Index。
 - terminal policy decision 写入 Raw Trace 和 Evidence Index。
@@ -211,17 +212,18 @@ v0.1-A 真实模型接入
 - repair loop 会把最近验证失败摘要反馈给下一轮模型计划。
 - repair loop 达到上限后停止，不会无限循环。
 - 验证失败时记录 repair decision，并明确说明未尝试自动修复。
+- 失败报告中记录 restore plan 路径，明确 v0.2 不自动回滚。
 - repair 成功或失败都会在报告中记录 attempts、decision、verification 和 risk。
 
 未完成：
 
-- 还没有自动回滚或 checkpoint restore。
+- 还没有自动回滚；v0.2 只提供只读 restore plan。
 - patch 尚未强制绑定具体 evidence id。
 - SafeExecutionKernel 仍是单进程最小内核，还没有独立沙箱或进程隔离。
 
 进入 v0.3-v0.4 前仍需处理：
 
-1. 明确 checkpoint restore 策略：先提供只读报告，再决定是否自动回滚。
+1. 将只读 restore plan 和 Evidence Runtime 的 artifact_ref 展开机制衔接起来。
 2. 在 Evidence Runtime 中实现 patch 到具体 evidence id 的强绑定。
 3. 保持 SafeExecutionKernel 边界稳定，避免 Runtime 重新直接编排安全逻辑。
 

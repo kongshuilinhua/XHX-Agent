@@ -18,6 +18,7 @@ def write_report(
     risks: list[str],
     verification_results: list[TerminalResult] | None = None,
     checkpoint_path: str | None = None,
+    restore_plan_path: str | None = None,
     repair: RepairDecision | None = None,
     repair_attempts: int = 0,
 ) -> Path:
@@ -52,6 +53,10 @@ def write_report(
 ## Checkpoint
 
 {checkpoint_path or "- none"}
+
+## Restore Plan
+
+{restore_plan_path or "- none"}
 
 ## Repair
 

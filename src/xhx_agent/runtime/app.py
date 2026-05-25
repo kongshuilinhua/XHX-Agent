@@ -20,7 +20,7 @@ from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
-from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path
+from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, restore_plan_path
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
@@ -43,6 +43,7 @@ class RunResult(BaseModel):
     verification: str
     verification_results: list[TerminalResult] = []
     checkpoint_path: str | None = None
+    restore_plan_path: str | None = None
     repair: RepairDecision | None = None
     repair_attempts: int = 0
     summary_path: str
@@ -99,6 +100,7 @@ class RuntimeApp:
         commands_run: list[str] = []
         verification_results: list[TerminalResult] = []
         checkpoint: Checkpoint | None = None
+        restore_plan_created = False
         repair_decision: RepairDecision | None = None
         repair_attempts = 0
         risks: list[str] = []
@@ -212,6 +214,9 @@ class RuntimeApp:
                 evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
                 break
             continue
+        if status == "failed" and checkpoint is not None:
+            kernel.create_restore_plan(checkpoint)
+            restore_plan_created = True
         summary = write_report(
             workspace=self.workspace,
             run_id=run_id,
@@ -223,6 +228,7 @@ class RuntimeApp:
             risks=risks,
             verification_results=verification_results,
             checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
+            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
             repair=repair_decision,
             repair_attempts=repair_attempts,
         )
@@ -236,6 +242,7 @@ class RuntimeApp:
             verification=verification_status,
             verification_results=verification_results,
             checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
+            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
             repair=repair_decision,
             repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(self.workspace)),
@@ -419,6 +426,10 @@ def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], ste
 
 def checkpoint_path_value(workspace: Path, run_id: str) -> Path:
     return checkpoint_path(workspace, run_id).relative_to(workspace)
+
+
+def restore_plan_path_value(workspace: Path, run_id: str) -> Path:
+    return restore_plan_path(workspace, run_id).relative_to(workspace)
 
 
 def _last_verification_error(results: list[TerminalResult]) -> str:

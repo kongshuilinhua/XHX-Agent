@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
-from xhx_agent.safety.checkpoint import Checkpoint, create_checkpoint
+from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
 from xhx_agent.safety.policy import PolicyDecision, decide_tool
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
@@ -43,6 +43,19 @@ class SafeExecutionKernel:
             confidence=0.95,
         )
         return checkpoint
+
+    def create_restore_plan(self, checkpoint: Checkpoint) -> CheckpointRestorePlan:
+        plan = create_restore_plan(self.workspace, self.run_id, checkpoint)
+        self.evidence.write_trace("restore_plan", plan.model_dump())
+        changed = sum(1 for item in plan.files if item.status != "unchanged")
+        self.evidence.write_evidence(
+            "checkpoint",
+            plan.id,
+            f"Read-only restore plan recorded {changed} file(s) that differ from checkpoint metadata.",
+            f"checkpoint://{plan.id}",
+            confidence=0.85,
+        )
+        return plan
 
     def run_verification(
         self,
