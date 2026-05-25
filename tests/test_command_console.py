@@ -34,7 +34,10 @@ def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None
 
     assert command_console.last_result is not None
     assert command_console.last_result.status == "success"
-    assert "Run Result" in console.export_text()
+    output = console.export_text()
+    assert "Run Result" in output
+    assert "run_start" in output
+    assert command_console.events
 
 
 def test_command_console_plan_preview(tmp_path: Path) -> None:

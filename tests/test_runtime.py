@@ -30,6 +30,21 @@ def test_run_task_writes_report(tmp_path: Path) -> None:
     assert (tmp_path / result.summary_path).exists()
 
 
+def test_run_task_emits_runtime_events(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    events = []
+
+    result = RuntimeApp(tmp_path).run_task("analyze this repo", event_callback=events.append)
+
+    assert result.status == "success"
+    event_types = [event.type for event in events]
+    assert "run_start" in event_types
+    assert "scan" in event_types
+    assert "context_pack" in event_types
+    assert "model_plan" in event_types
+    assert "run_end" in event_types
+
+
 def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     fixture = Path(__file__).parent / "fixtures" / "python_bug"
     workspace = tmp_path / "python_bug"

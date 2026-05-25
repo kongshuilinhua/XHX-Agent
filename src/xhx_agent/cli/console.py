@@ -9,6 +9,7 @@ from rich.table import Table
 
 from xhx_agent.runtime.app import RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
+from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
 
@@ -39,6 +40,7 @@ class CommandConsole:
         self.auto_repair = False
         self.assume_yes = False
         self.last_result: RunResult | None = None
+        self.events: list[RuntimeEvent] = []
         self.mode = "linear-edit"
 
     def run(self) -> None:
@@ -102,9 +104,21 @@ class CommandConsole:
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
             auto_repair=self.auto_repair,
+            event_callback=self.handle_event,
         )
         self.last_result = result
         self.print_run_result(result)
+
+    def handle_event(self, event: RuntimeEvent) -> None:
+        self.events.append(event)
+        self.console.print(f"[dim]{event.type}[/dim] {event.message}")
+        if event.type in {"tool_result", "verification_result", "run_end"} and event.payload:
+            table = Table(show_header=False, box=None, padding=(0, 1))
+            table.add_column("Field")
+            table.add_column("Value")
+            for key, value in event.payload.items():
+                table.add_row(str(key), str(value))
+            self.console.print(table)
 
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
         table = Table(title="Permission Required")
@@ -163,6 +177,7 @@ class CommandConsole:
         table.add_row("mode", self.mode)
         table.add_row("auto_repair", str(self.auto_repair).lower())
         table.add_row("assume_yes", str(self.assume_yes).lower())
+        table.add_row("events", str(len(self.events)))
         if self.last_result:
             table.add_row("last_status", self.last_result.status)
             table.add_row("last_summary", self.last_result.summary_path)
