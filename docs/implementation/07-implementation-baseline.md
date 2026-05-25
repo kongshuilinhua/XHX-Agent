@@ -36,6 +36,8 @@ v0.1-A 真实模型接入
 | `ffe7cf4` | `Implement v0.1-D atomic patch engine` | v0.1-B 写入工具补强，兼作 v0.2 前置 | 强化 `apply_patch` 原子性。历史提交名保留，但后续文档不再使用 v0.1-D 作为版本。 |
 | `d32122c` | `Complete v0.1-C verification loop` | v0.1-C | 补齐交互确认、验证结果摘要、失败停止和验证报告。 |
 | `3279d04` | `Add v0.2 safety checkpoint groundwork` | v0.2 前半 | 增加 checkpoint、policy trace/evidence 和默认不自动 repair 的失败停止报告。 |
+| `845127a` | `Complete v0.2 safe execution loop` | v0.2 | 抽出 SafeExecutionKernel，加入 `--auto-repair` 最多两轮修复循环。 |
+| `65b3d6f` | `Add v0.2 checkpoint restore plan` | v0.2 | 增加失败后的只读 restore plan，不自动回滚。 |
 
 ## v0.1-A 真实模型接入
 
@@ -256,7 +258,27 @@ v0.4 必须实现：
 
 - 已有最小 Context Pack。
 - 已有 Raw Trace / Evidence Index 基础写入。
-- 这些只能算前置能力，不代表 v0.3 或 v0.4 已完成。
+- 这些只能算前置能力，不代表 v0.4 已完成。
+
+v0.3 当前状态：基本完成。
+
+v0.3 已完成：
+
+- Context Pack Compiler 正式化为预算驱动选择器。
+- 每轮记录 `budget_tokens`、`used_tokens_estimate` 和 reserved token 估算。
+- 支持 top-k evidence selection，并按 evidence kind 和 confidence 排序。
+- 支持 changed files selection，避免变更文件过多时全部进入上下文。
+- recent failure 以高优先级进入 repair-loop 上下文。
+- 每轮写入 `.xhx/context/<run-id>-turn-<n>.json` context debug report。
+- Raw Trace 中记录 `context_debug_report` 路径。
+
+v0.3 未完成 / 后续增强：
+
+- token 估算仍是字符数近似，不是 provider tokenizer。
+- changed files 还没有结合 repo_intel 做影响面排序。
+- 历史会话摘要还没有正式接入。
+
+v0.4 当前状态：未完成。
 
 ## v0.5-v0.7 产品能力
 
