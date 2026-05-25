@@ -297,6 +297,104 @@ def test_runtime_auto_repair_attempts_second_patch(tmp_path: Path, monkeypatch) 
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 3\n"
 
 
+def test_runtime_manual_repair_runs_one_attempt(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+
+    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+        summary="repair value",
+        steps=[
+            ToolStep(
+                tool="apply_patch",
+                arguments={
+                    "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-value = 1
++value = 2
+*** End Patch
+"""
+                },
+            )
+        ],
+    )
+    failed_result = TerminalResult(
+        command="python -m pytest",
+        status="failed",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=1,
+        summary="expected value 2",
+    )
+    passed_result = TerminalResult(
+        command="python -m pytest",
+        status="success",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=0,
+        summary="passed",
+    )
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: passed_result)
+    events = []
+
+    result = app.repair_after_failed_verification(
+        task="fix demo",
+        changed_files=["demo.py"],
+        failed_verification_results=[failed_result],
+        profile_name="real",
+        assume_yes=True,
+        event_callback=events.append,
+    )
+
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert result.repair_attempts == 1
+    assert result.commands == ["python -m pytest"]
+    assert result.summary_path is not None
+    assert (tmp_path / result.summary_path).exists()
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert any(event.type == "repair_start" for event in events)
+    assert any(event.type == "verification_result" for event in events)
+
+
+def test_runtime_manual_repair_requires_failed_verification(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    passed_result = TerminalResult(
+        command="python -m pytest",
+        status="success",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=0,
+        summary="passed",
+    )
+
+    result = RuntimeApp(tmp_path).repair_after_failed_verification(
+        task="fix demo",
+        changed_files=["demo.py"],
+        failed_verification_results=[passed_result],
+        assume_yes=True,
+    )
+
+    assert result.status == "skipped_no_failed_verification"
+    assert result.repair_attempts == 0
+    assert any("requires a failed verification" in risk for risk in result.risk_summary)
+
+
 def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()

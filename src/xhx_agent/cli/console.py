@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from xhx_agent.runtime.app import ManualVerificationResult, RunResult, RuntimeApp
+from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -44,6 +44,7 @@ class CommandConsole:
         self.assume_yes = False
         self.last_result: RunResult | None = None
         self.last_manual_verification: ManualVerificationResult | None = None
+        self.last_manual_repair: ManualRepairResult | None = None
         self.events: list[RuntimeEvent] = []
         self.state = ConsoleState()
         self.mode = "linear-edit"
@@ -156,7 +157,7 @@ class CommandConsole:
             ("/evidence", "List Evidence Index files."),
             ("/context", "List context debug reports."),
             ("/verify", "Run verification for current changed files."),
-            ("/repair on|off", "Toggle auto repair."),
+            ("/repair [run|on|off]", "Run manual repair or toggle auto repair."),
             ("/diff", "Show changed files from last run."),
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
@@ -322,11 +323,57 @@ class CommandConsole:
             self.console.print(Panel("\n".join(result.risk_summary), title="Verification Risks"))
 
     def toggle_repair(self, argument: str) -> None:
+        if argument.lower() in {"", "run"}:
+            self.run_manual_repair()
+            return
         if argument.lower() in {"on", "true", "1"}:
             self.auto_repair = True
         elif argument.lower() in {"off", "false", "0"}:
             self.auto_repair = False
         self.console.print(f"auto_repair: {str(self.auto_repair).lower()}")
+
+    def run_manual_repair(self) -> None:
+        failed_results = []
+        changed_files: list[str] = []
+        task = self.state.task or "manual repair"
+        if self.last_manual_verification and self.last_manual_verification.status == "failed":
+            failed_results = self.last_manual_verification.verification_results
+            changed_files = list(self.last_manual_verification.changed_files)
+        elif self.last_result and self.last_result.verification == "failed":
+            failed_results = self.last_result.verification_results
+            changed_files = list(self.last_result.changed_files)
+            task = self.last_result.run_id
+        else:
+            self.console.print("Manual repair requires a failed verification result.")
+            return
+        result = self.runtime.repair_after_failed_verification(
+            task=task,
+            changed_files=changed_files,
+            failed_verification_results=failed_results,
+            profile_name=self.profile_name,
+            assume_yes=self.assume_yes,
+            confirm_callback=self.confirm_terminal_command,
+            event_callback=self.handle_event,
+        )
+        self.last_manual_repair = result
+        self.print_manual_repair_result(result)
+        self.print_dashboard()
+
+    def print_manual_repair_result(self, result: ManualRepairResult) -> None:
+        table = Table(title="Manual Repair Result")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("status", result.status)
+        table.add_row("verification", result.verification)
+        table.add_row("changed_files", ", ".join(result.changed_files) or "none")
+        table.add_row("commands", ", ".join(result.commands) or "none")
+        table.add_row("repair_attempts", str(result.repair_attempts))
+        table.add_row("summary", result.summary_path or "none")
+        if result.restore_plan_path:
+            table.add_row("restore_plan", result.restore_plan_path)
+        self.console.print(table)
+        if result.risk_summary:
+            self.console.print(Panel("\n".join(result.risk_summary), title="Repair Risks"))
 
     def print_changed_files(self) -> None:
         if not self.last_result:
