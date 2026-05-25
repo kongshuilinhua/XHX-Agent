@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.runtime.paths import ensure_xhx_dirs, xhx_dir
 from xhx_agent.safety.repair import RepairDecision
 from xhx_agent.tools.terminal import TerminalResult
@@ -21,6 +22,7 @@ def write_report(
     restore_plan_path: str | None = None,
     repair: RepairDecision | None = None,
     repair_attempts: int = 0,
+    evidence_entries: list[EvidenceEntry] | None = None,
 ) -> Path:
     ensure_xhx_dirs(workspace)
     path = xhx_dir(workspace) / "logbook" / f"{run_id}.md"
@@ -64,7 +66,7 @@ def write_report(
 
 ## Evidence Summary
 
-- Runtime summary generated from tool, policy, checkpoint, verification, and repair summaries.
+{_evidence_summary(workspace, run_id, evidence_entries)}
 
 ## Risks
 
@@ -116,3 +118,25 @@ def _repair_details(repair: RepairDecision | None, repair_attempts: int = 0) -> 
             f"- reason: {repair.reason}",
         ]
     )
+
+
+def _evidence_summary(workspace: Path, run_id: str, entries: list[EvidenceEntry] | None) -> str:
+    store = EvidenceStore(workspace, run_id)
+    selected = entries if entries is not None else store.list_evidence()
+    if not selected:
+        return "- none"
+    lines: list[str] = []
+    for entry in selected:
+        expansion = store.expand_artifact_ref(entry.artifact_ref)
+        lines.append(
+            "\n".join(
+                [
+                    f"- `{entry.id}` {entry.kind}:{entry.source}",
+                    f"  - confidence: {entry.confidence:.2f}",
+                    f"  - summary: {entry.summary}",
+                    f"  - artifact_ref: {entry.artifact_ref}",
+                    f"  - artifact_status: {expansion.status}",
+                ]
+            )
+        )
+    return "\n".join(lines)

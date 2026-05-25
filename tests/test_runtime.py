@@ -52,9 +52,12 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
     assert any(item["type"] == "checkpoint" for item in trace_lines)
     assert any(item["type"] == "context_debug_report" for item in trace_lines)
+    patch_binding = next(item for item in trace_lines if item["type"] == "patch_evidence_binding")
+    assert patch_binding["payload"]["changed_files"] == ["src/calc.py"]
     assert any(item["type"] == "policy_decision" for item in trace_lines)
     assert any(item["type"] == "repair_decision" for item in trace_lines)
-    assert any(item["kind"] == "patch" for item in evidence_lines)
+    patch_evidence = next(item for item in evidence_lines if item["kind"] == "patch")
+    assert patch_binding["payload"]["evidence_id"] == patch_evidence["id"]
     assert any(item["kind"] == "test" for item in evidence_lines)
     assert any(item["kind"] == "checkpoint" for item in evidence_lines)
     assert any(item["kind"] == "policy" for item in evidence_lines)
@@ -62,6 +65,8 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     assert "## Verification Details" in report
     assert "## Checkpoint" in report
     assert "## Repair" in report
+    assert "artifact_ref: trace://" in report
+    assert f"`{patch_evidence['id']}` patch:apply_patch" in report
     assert "exit_code: 0" in report
     assert list((workspace / ".xhx" / "context").glob("*.json"))
 

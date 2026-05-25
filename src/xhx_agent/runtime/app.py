@@ -395,15 +395,24 @@ class RuntimeApp:
                         return "failed", turns_completed, recent_error
                     changed_files.extend(result.changed_files)
                     if result.evidence_kind and result.evidence_source and result.evidence_summary:
-                        evidence_entries.append(
-                            evidence.write_evidence(
-                                result.evidence_kind,
-                                result.evidence_source,
-                                result.evidence_summary,
-                                f"trace://{trace.id}",
-                                confidence=0.9 if result.evidence_kind == "patch" else 0.8,
-                            )
+                        entry = evidence.write_evidence(
+                            result.evidence_kind,
+                            result.evidence_source,
+                            result.evidence_summary,
+                            f"trace://{trace.id}",
+                            confidence=0.9 if result.evidence_kind == "patch" else 0.8,
                         )
+                        evidence_entries.append(entry)
+                        if result.evidence_kind == "patch":
+                            evidence.write_trace(
+                                "patch_evidence_binding",
+                                {
+                                    "turn": turn,
+                                    "tool_trace_id": trace.id,
+                                    "evidence_id": entry.id,
+                                    "changed_files": result.changed_files,
+                                },
+                            )
                 except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
                     recent_error = str(exc)
                     risks.append(recent_error)
