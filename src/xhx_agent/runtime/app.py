@@ -63,6 +63,16 @@ class PlanPreview(BaseModel):
     risk_summary: list[str]
 
 
+class ManualVerificationResult(BaseModel):
+    run_id: str
+    status: str
+    changed_files: list[str]
+    commands: list[str]
+    verification_results: list[TerminalResult] = []
+    summary_path: str | None = None
+    risk_summary: list[str]
+
+
 ConfirmationCallback = Callable[[str, object], bool]
 
 
@@ -352,6 +362,124 @@ class RuntimeApp:
             context_budget_tokens=context_pack.budget_tokens,
             context_used_tokens_estimate=context_pack.used_tokens_estimate,
             trace_path=str(evidence.trace_path.relative_to(self.workspace)),
+            risk_summary=risks,
+        )
+
+    def verify_changed_files(
+        self,
+        changed_files: list[str],
+        assume_yes: bool = False,
+        confirm_callback: ConfirmationCallback | None = None,
+        event_callback: EventCallback | None = None,
+    ) -> ManualVerificationResult:
+        run_id = f"verify-{int(time.time())}"
+        normalized_changed_files = sorted(set(changed_files))
+        evidence = EvidenceStore(self.workspace, run_id)
+        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
+        evidence.write_trace("run_start", {"task": "manual verification", "changed_files": normalized_changed_files})
+        emit_event(
+            event_callback,
+            "run_start",
+            "Manual verification started.",
+            run_id=run_id,
+            task="manual verification",
+            profile="manual",
+        )
+        if not normalized_changed_files:
+            status = "skipped_no_changes"
+            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
+            summary = write_report(
+                workspace=self.workspace,
+                run_id=run_id,
+                task="manual verification",
+                plan=["Infer verification commands from changed files."],
+                changed_files=[],
+                commands=[],
+                verification=status,
+                risks=[],
+            )
+            evidence.write_trace("run_end", {"status": "success", "summary_path": str(summary)})
+            emit_event(
+                event_callback,
+                "run_end",
+                "Manual verification finished.",
+                run_id=run_id,
+                status="success",
+                verification=status,
+                changed_files=[],
+                summary_path=str(summary.relative_to(self.workspace)),
+            )
+            return ManualVerificationResult(
+                run_id=run_id,
+                status=status,
+                changed_files=[],
+                commands=[],
+                summary_path=str(summary.relative_to(self.workspace)),
+                risk_summary=[],
+            )
+
+        plan = infer_verification(self.workspace, normalized_changed_files)
+        commands = [item.command for item in plan.commands]
+        risks: list[str] = []
+        results: list[TerminalResult] = []
+        verification_status = plan.skip_reason or "not_executed"
+        if not commands:
+            risks.append(plan.skip_reason or "No verification command inferred.")
+        for command in commands:
+            emit_event(event_callback, "verification_start", "Manual verification started.", command=command)
+            result = kernel.run_verification(
+                command,
+                assume_yes=assume_yes,
+                confirm_callback=confirm_callback,
+                event_callback=event_callback,
+            )
+            emit_event(
+                event_callback,
+                "verification_result",
+                "Manual verification finished.",
+                command=command,
+                status=result.status,
+                exit_code=result.exit_code,
+            )
+            results.append(result)
+            if result.status == "confirm":
+                verification_status = "requires_confirmation"
+                risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
+                break
+            if result.status != "success":
+                verification_status = "failed"
+                risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
+                break
+            verification_status = "passed"
+        summary = write_report(
+            workspace=self.workspace,
+            run_id=run_id,
+            task="manual verification",
+            plan=["Infer verification commands from changed files.", "Run selected verification commands."],
+            changed_files=normalized_changed_files,
+            commands=commands,
+            verification=verification_status,
+            risks=risks,
+            verification_results=results,
+        )
+        evidence.write_trace("run_end", {"status": verification_status, "summary_path": str(summary)})
+        emit_event(
+            event_callback,
+            "run_end",
+            "Manual verification finished.",
+            run_id=run_id,
+            status="success" if verification_status in {"passed", "skipped_no_changes"} else verification_status,
+            verification=verification_status,
+            changed_files=normalized_changed_files,
+            summary_path=str(summary.relative_to(self.workspace)),
+        )
+        return ManualVerificationResult(
+            run_id=run_id,
+            status=verification_status,
+            changed_files=normalized_changed_files,
+            commands=commands,
+            verification_results=results,
+            summary_path=str(summary.relative_to(self.workspace)),
             risk_summary=risks,
         )
 

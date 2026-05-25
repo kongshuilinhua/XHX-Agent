@@ -130,6 +130,43 @@ def test_runtime_confirmation_callback_executes_verification(tmp_path: Path) -> 
     assert result.verification_results[0].exit_code == 0
 
 
+def test_runtime_manual_verification_runs_for_changed_files(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+
+    terminal_result = TerminalResult(
+        command="python -m pytest",
+        status="success",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=0,
+        summary="passed",
+    )
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: terminal_result)
+    events = []
+
+    result = RuntimeApp(tmp_path).verify_changed_files(["demo.py"], assume_yes=True, event_callback=events.append)
+
+    assert result.status == "passed"
+    assert result.commands == ["python -m pytest"]
+    assert result.verification_results == [terminal_result]
+    assert result.summary_path is not None
+    assert (tmp_path / result.summary_path).exists()
+    assert any(event.type == "verification_start" for event in events)
+    assert any(event.type == "verification_result" for event in events)
+
+
+def test_runtime_manual_verification_skips_without_changed_files(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+
+    result = RuntimeApp(tmp_path).verify_changed_files([])
+
+    assert result.status == "skipped_no_changes"
+    assert result.commands == []
+    assert result.summary_path is not None
+    assert (tmp_path / result.summary_path).exists()
+
+
 def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypatch) -> None:
     fixture = Path(__file__).parent / "fixtures" / "python_bug"
     workspace = tmp_path / "python_bug"

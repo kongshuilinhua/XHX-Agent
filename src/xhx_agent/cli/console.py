@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from xhx_agent.runtime.app import RunResult, RuntimeApp
+from xhx_agent.runtime.app import ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -43,6 +43,7 @@ class CommandConsole:
         self.auto_repair = False
         self.assume_yes = False
         self.last_result: RunResult | None = None
+        self.last_manual_verification: ManualVerificationResult | None = None
         self.events: list[RuntimeEvent] = []
         self.state = ConsoleState()
         self.mode = "linear-edit"
@@ -87,7 +88,7 @@ class CommandConsole:
         elif command == "/context":
             self.print_context()
         elif command == "/verify":
-            self.print_verification()
+            self.run_manual_verification()
         elif command == "/repair":
             self.toggle_repair(argument.strip())
         elif command == "/diff":
@@ -154,7 +155,7 @@ class CommandConsole:
             ("/plan [task]", "Preview a model plan without executing tools."),
             ("/evidence", "List Evidence Index files."),
             ("/context", "List context debug reports."),
-            ("/verify", "Show last verification status."),
+            ("/verify", "Run verification for current changed files."),
             ("/repair on|off", "Toggle auto repair."),
             ("/diff", "Show changed files from last run."),
             ("/skills", "List local skill directory entries."),
@@ -275,19 +276,50 @@ class CommandConsole:
         self.print_path_group("Context Reports", ".xhx/context")
 
     def print_verification(self) -> None:
-        if not self.last_result:
-            self.console.print("No task has run in this console.")
+        if not self.last_result and not self.last_manual_verification:
+            self.console.print("No verification has run in this console.")
             return
         table = Table(title="Verification")
         table.add_column("Field")
         table.add_column("Value")
-        table.add_row("status", self.last_result.verification)
-        table.add_row("commands", ", ".join(self.last_result.commands) or "none")
-        table.add_row("repair_attempts", str(self.last_result.repair_attempts))
+        if self.last_manual_verification:
+            table.add_row("manual_status", self.last_manual_verification.status)
+            table.add_row("manual_commands", ", ".join(self.last_manual_verification.commands) or "none")
+            table.add_row("manual_summary", self.last_manual_verification.summary_path or "none")
+        if self.last_result:
+            table.add_row("last_status", self.last_result.verification)
+            table.add_row("last_commands", ", ".join(self.last_result.commands) or "none")
+            table.add_row("repair_attempts", str(self.last_result.repair_attempts))
         for index, item in enumerate(self.state.verifications[-5:], start=1):
             exit_code = "none" if item.exit_code is None else str(item.exit_code)
             table.add_row(f"event_{index}", f"{item.command}: {item.status}, exit_code={exit_code}")
         self.console.print(table)
+
+    def run_manual_verification(self) -> None:
+        changed_files = list(self.state.changed_files)
+        if not changed_files and self.last_result:
+            changed_files = list(self.last_result.changed_files)
+        result = self.runtime.verify_changed_files(
+            changed_files,
+            assume_yes=self.assume_yes,
+            confirm_callback=self.confirm_terminal_command,
+            event_callback=self.handle_event,
+        )
+        self.last_manual_verification = result
+        self.print_manual_verification_result(result)
+        self.print_dashboard()
+
+    def print_manual_verification_result(self, result: ManualVerificationResult) -> None:
+        table = Table(title="Manual Verification Result")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("status", result.status)
+        table.add_row("changed_files", ", ".join(result.changed_files) or "none")
+        table.add_row("commands", ", ".join(result.commands) or "none")
+        table.add_row("summary", result.summary_path or "none")
+        self.console.print(table)
+        if result.risk_summary:
+            self.console.print(Panel("\n".join(result.risk_summary), title="Verification Risks"))
 
     def toggle_repair(self, argument: str) -> None:
         if argument.lower() in {"on", "true", "1"}:
