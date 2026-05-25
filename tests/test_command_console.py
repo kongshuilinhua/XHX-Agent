@@ -3,7 +3,9 @@ from pathlib import Path
 from rich.console import Console
 
 from xhx_agent.cli.console import CommandConsole
+from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
@@ -87,6 +89,79 @@ def test_command_console_verify_runs_manual_verification(tmp_path: Path, monkeyp
     assert command_console.last_manual_verification.status == "passed"
     output = console.export_text()
     assert "Manual Verification Result" in output
+    assert "python -m pytest" in output
+
+
+def test_command_console_repair_runs_manual_repair(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    terminal_result = TerminalResult(
+        command="python -m pytest",
+        status="success",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=0,
+        summary="passed",
+    )
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: terminal_result)
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+    command_console.profile_name = "real"
+    command_console.assume_yes = True
+    command_console.runtime._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+        summary="repair demo",
+        steps=[
+            ToolStep(
+                tool="apply_patch",
+                arguments={
+                    "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-value = 1
++value = 2
+*** End Patch
+"""
+                },
+            )
+        ],
+    )
+    command_console.last_manual_verification = command_console.runtime.verify_changed_files(
+        ["demo.py"],
+        assume_yes=True,
+    )
+    command_console.last_manual_verification.status = "failed"
+    command_console.last_manual_verification.verification_results = [
+        TerminalResult(
+            command="python -m pytest",
+            status="failed",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=1,
+            summary="expected value 2",
+        )
+    ]
+
+    assert command_console.handle_input("/repair")
+
+    assert command_console.last_manual_repair is not None
+    assert command_console.last_manual_repair.verification == "passed"
+    output = console.export_text()
+    assert "Manual Repair Result" in output
     assert "python -m pytest" in output
 
 

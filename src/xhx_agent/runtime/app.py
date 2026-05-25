@@ -73,6 +73,20 @@ class ManualVerificationResult(BaseModel):
     risk_summary: list[str]
 
 
+class ManualRepairResult(BaseModel):
+    run_id: str
+    status: str
+    turns: int = 0
+    changed_files: list[str]
+    commands: list[str]
+    verification: str
+    verification_results: list[TerminalResult] = []
+    repair_attempts: int = 0
+    summary_path: str | None = None
+    restore_plan_path: str | None = None
+    risk_summary: list[str]
+
+
 ConfirmationCallback = Callable[[str, object], bool]
 
 
@@ -480,6 +494,240 @@ class RuntimeApp:
             commands=commands,
             verification_results=results,
             summary_path=str(summary.relative_to(self.workspace)),
+            risk_summary=risks,
+        )
+
+    def repair_after_failed_verification(
+        self,
+        task: str,
+        changed_files: list[str],
+        failed_verification_results: list[TerminalResult],
+        profile_name: str | None = None,
+        assume_yes: bool = False,
+        confirm_callback: ConfirmationCallback | None = None,
+        event_callback: EventCallback | None = None,
+    ) -> ManualRepairResult:
+        config = load_config(self.workspace)
+        profile = get_profile(self.workspace, profile_name or config.default_profile)
+        run_id = f"repair-{int(time.time())}"
+        normalized_changed_files = sorted(set(changed_files))
+        evidence = EvidenceStore(self.workspace, run_id)
+        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
+        risks: list[str] = []
+        verification_results: list[TerminalResult] = []
+        commands_run: list[str] = []
+        checkpoint: Checkpoint | None = None
+        restore_plan_created = False
+        repair_attempts = 0
+        verification_status = "not_executed"
+        status = "success"
+        turns_completed = 0
+        evidence.write_trace(
+            "run_start",
+            {
+                "task": task,
+                "mode": "manual_repair",
+                "changed_files": normalized_changed_files,
+                "profile": profile.name,
+            },
+        )
+        emit_event(
+            event_callback,
+            "run_start",
+            "Manual repair started.",
+            run_id=run_id,
+            task=task,
+            profile=profile.name,
+        )
+        failed_results = [result for result in failed_verification_results if result.status == "failed"]
+        if not failed_results:
+            verification_status = "skipped_no_failed_verification"
+            risks.append("Manual repair requires a failed verification result.")
+            summary = write_report(
+                workspace=self.workspace,
+                run_id=run_id,
+                task=f"manual repair: {task}",
+                plan=["Check failed verification state."],
+                changed_files=normalized_changed_files,
+                commands=[],
+                verification=verification_status,
+                risks=risks,
+                verification_results=failed_verification_results,
+            )
+            evidence.write_trace("run_end", {"status": verification_status, "summary_path": str(summary)})
+            emit_event(
+                event_callback,
+                "run_end",
+                "Manual repair skipped.",
+                run_id=run_id,
+                status=verification_status,
+                verification=verification_status,
+                changed_files=normalized_changed_files,
+                summary_path=str(summary.relative_to(self.workspace)),
+            )
+            return ManualRepairResult(
+                run_id=run_id,
+                status=verification_status,
+                turns=turns_completed,
+                changed_files=normalized_changed_files,
+                commands=[],
+                verification=verification_status,
+                verification_results=failed_verification_results,
+                summary_path=str(summary.relative_to(self.workspace)),
+                risk_summary=risks,
+            )
+
+        scan = scan_project(self.workspace)
+        emit_event(
+            event_callback,
+            "scan",
+            "Project scan completed.",
+            detected_languages=scan.detected_languages,
+            file_count=scan.file_count,
+        )
+        repair_decision = decide_repair("failed", attempts_used=0, auto_repair_enabled=True)
+        evidence.write_trace("repair_decision", repair_decision.model_dump())
+        emit_event(
+            event_callback,
+            "repair_decision",
+            repair_decision.reason,
+            should_repair=repair_decision.should_repair,
+            attempts_used=repair_decision.attempts_used,
+            max_attempts=1,
+        )
+        if not repair_decision.should_repair:
+            risks.append(f"Manual repair not attempted: {repair_decision.reason}")
+            status = "failed"
+        else:
+            repair_attempts = 1
+            emit_event(event_callback, "repair_start", "Manual repair attempt started.", attempt=1, max_attempts=1)
+            evidence.write_evidence(
+                "decision",
+                "manual-repair",
+                f"Manual repair attempt 1/1: {repair_decision.reason}",
+                f"trace://{run_id}/repair/1",
+                confidence=0.75,
+            )
+            mutable_changed_files = list(normalized_changed_files)
+            plan_summaries = [
+                "Manual repair requested after failed verification.",
+                f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
+            ]
+            tool_summaries = [f"verification failed: {_last_verification_error(failed_results)}"]
+            evidence_entries: list[EvidenceEntry] = []
+            recent_error = _last_verification_error(failed_results)
+            status, turns_completed, recent_error = self._run_model_tool_loop(
+                task=f"Manual repair after failed verification: {task}",
+                profile=profile,
+                scan=scan,
+                evidence=evidence,
+                kernel=kernel,
+                tool_context=ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes),
+                changed_files=mutable_changed_files,
+                tool_summaries=tool_summaries,
+                evidence_entries=evidence_entries,
+                plan_summaries=plan_summaries,
+                risks=risks,
+                recent_error=recent_error,
+                starting_turn=1,
+                max_turns=1,
+                event_callback=event_callback,
+            )
+            normalized_changed_files = sorted(set(mutable_changed_files))
+            if status != "failed":
+                checkpoint = kernel.create_checkpoint(normalized_changed_files)
+                emit_event(
+                    event_callback,
+                    "checkpoint",
+                    "Checkpoint created.",
+                    checkpoint_id=checkpoint.id,
+                    changed_files=normalized_changed_files,
+                )
+                plan = infer_verification(self.workspace, normalized_changed_files)
+                commands_run = [item.command for item in plan.commands]
+                verification_status = plan.skip_reason or "not_executed"
+                if not commands_run:
+                    risks.append(plan.skip_reason or "No verification command inferred.")
+                for command in commands_run:
+                    emit_event(event_callback, "verification_start", "Manual repair verification started.", command=command)
+                    result = kernel.run_verification(
+                        command,
+                        assume_yes=assume_yes,
+                        confirm_callback=confirm_callback,
+                        event_callback=event_callback,
+                    )
+                    emit_event(
+                        event_callback,
+                        "verification_result",
+                        "Manual repair verification finished.",
+                        command=command,
+                        status=result.status,
+                        exit_code=result.exit_code,
+                    )
+                    verification_results.append(result)
+                    if result.status == "confirm":
+                        verification_status = "requires_confirmation"
+                        risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
+                        break
+                    if result.status != "success":
+                        status = "failed"
+                        verification_status = "failed"
+                        risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
+                        break
+                    verification_status = "passed"
+            else:
+                verification_status = "not_executed"
+                if recent_error:
+                    risks.append(recent_error)
+        if status == "failed" and checkpoint is not None:
+            kernel.create_restore_plan(checkpoint)
+            restore_plan_created = True
+            emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
+        summary = write_report(
+            workspace=self.workspace,
+            run_id=run_id,
+            task=f"manual repair: {task}",
+            plan=[
+                "Check failed verification state.",
+                "Run one manual repair attempt.",
+                "Verify repaired changed files.",
+            ],
+            changed_files=normalized_changed_files,
+            commands=commands_run,
+            verification=verification_status,
+            risks=risks,
+            verification_results=verification_results or failed_verification_results,
+            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
+            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
+            repair=RepairDecision(
+                should_repair=False,
+                attempts_used=repair_attempts,
+                reason="Manual repair performs at most one attempt in v0.5.",
+            ),
+            repair_attempts=repair_attempts,
+        )
+        evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        emit_event(
+            event_callback,
+            "run_end",
+            "Manual repair finished.",
+            run_id=run_id,
+            status=status,
+            verification=verification_status,
+            changed_files=normalized_changed_files,
+            summary_path=str(summary.relative_to(self.workspace)),
+        )
+        return ManualRepairResult(
+            run_id=run_id,
+            status=status,
+            turns=turns_completed,
+            changed_files=normalized_changed_files,
+            commands=commands_run,
+            verification=verification_status,
+            verification_results=verification_results,
+            repair_attempts=repair_attempts,
+            summary_path=str(summary.relative_to(self.workspace)),
+            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
             risk_summary=risks,
         )
 

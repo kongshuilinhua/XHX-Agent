@@ -201,7 +201,8 @@ v0.5 只显示 Evidence Index 摘要，不展开 Raw Trace 全文。
 规则：
 
 - 只有最近验证失败时可用。
-- 超过 repair 上限时拒绝。
+- v0.5 当前实现只执行一轮手动 repair，不进入多轮交互式修复。
+- repair 仍必须经过模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
 
 ### /diff
 
