@@ -319,12 +319,14 @@ v0.5 已完成：
 - 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
+- Runtime 支持轻量事件回调。
+- Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
 
 v0.5 未完成 / 后续增强：
 
 - 还不是全屏 Textual TUI。
-- 还没有真正流式模型输出。
-- 工具调用状态目前是任务结束后的结果表，不是实时事件流。
+- 还没有真正 token 级模型流式输出。
+- 工具状态目前是事件行和表格，还不是固定区域的动态刷新 UI。
 
 v0.6：Repo Intelligence Graph。
 

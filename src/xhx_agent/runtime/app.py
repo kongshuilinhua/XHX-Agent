@@ -19,6 +19,7 @@ from xhx_agent.models.types import ModelClientError, ModelPlan
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
+from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
 from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, restore_plan_path
@@ -89,14 +90,23 @@ class RuntimeApp:
         assume_yes: bool = False,
         confirm_callback: ConfirmationCallback | None = None,
         auto_repair: bool = False,
+        event_callback: EventCallback | None = None,
     ) -> RunResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"run-{int(time.time())}"
         evidence = EvidenceStore(self.workspace, run_id)
         kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
+        emit_event(event_callback, "run_start", "Run started.", run_id=run_id, task=task, profile=profile.name)
         evidence.write_trace("run_start", {"task": task, "profile": profile.name})
         scan = scan_project(self.workspace)
+        emit_event(
+            event_callback,
+            "scan",
+            "Project scan completed.",
+            detected_languages=scan.detected_languages,
+            file_count=scan.file_count,
+        )
         changed_files: list[str] = []
         commands_run: list[str] = []
         verification_results: list[TerminalResult] = []
@@ -130,6 +140,7 @@ class RuntimeApp:
             risks=risks,
             recent_error=recent_error,
             starting_turn=1,
+            event_callback=event_callback,
         )
 
         verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
@@ -143,14 +154,30 @@ class RuntimeApp:
 
         while status != "failed" and changed_files:
             checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
+            emit_event(
+                event_callback,
+                "checkpoint",
+                "Checkpoint created.",
+                checkpoint_id=checkpoint.id,
+                changed_files=sorted(set(changed_files)),
+            )
             verification_results.clear()
             commands_run.clear()
             verification_status = verification_plan.skip_reason if verification_plan else "not_executed"
             for command in commands:
+                emit_event(event_callback, "verification_start", "Verification started.", command=command)
                 result = kernel.run_verification(
                     command,
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
+                )
+                emit_event(
+                    event_callback,
+                    "verification_result",
+                    "Verification finished.",
+                    command=command,
+                    status=result.status,
+                    exit_code=result.exit_code,
                 )
                 commands_run.append(command)
                 verification_results.append(result)
@@ -166,6 +193,14 @@ class RuntimeApp:
                 verification_status = "passed"
             repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
             evidence.write_trace("repair_decision", repair_decision.model_dump())
+            emit_event(
+                event_callback,
+                "repair_decision",
+                repair_decision.reason,
+                should_repair=repair_decision.should_repair,
+                attempts_used=repair_decision.attempts_used,
+                max_attempts=repair_decision.max_attempts,
+            )
             if verification_status != "failed":
                 break
             if not repair_decision.should_repair:
@@ -179,6 +214,13 @@ class RuntimeApp:
                 risks.append(f"Repair not attempted: {repair_decision.reason}")
                 break
             repair_attempts += 1
+            emit_event(
+                event_callback,
+                "repair_start",
+                "Repair attempt started.",
+                attempt=repair_attempts,
+                max_attempts=MAX_REPAIR_ATTEMPTS,
+            )
             evidence.write_evidence(
                 "decision",
                 "repair",
@@ -205,6 +247,7 @@ class RuntimeApp:
                 recent_error=recent_error,
                 starting_turn=turns_completed + 1,
                 max_turns=1,
+                event_callback=event_callback,
             )
             if status == "failed":
                 break
@@ -218,6 +261,7 @@ class RuntimeApp:
         if status == "failed" and checkpoint is not None:
             kernel.create_restore_plan(checkpoint)
             restore_plan_created = True
+            emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
         summary = write_report(
             workspace=self.workspace,
             run_id=run_id,
@@ -234,6 +278,15 @@ class RuntimeApp:
             repair_attempts=repair_attempts,
         )
         evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        emit_event(
+            event_callback,
+            "run_end",
+            "Run finished.",
+            run_id=run_id,
+            status=status,
+            verification=verification_status,
+            summary_path=str(summary.relative_to(self.workspace)),
+        )
         return RunResult(
             run_id=run_id,
             status=status,
@@ -333,6 +386,7 @@ class RuntimeApp:
         recent_error: str | None,
         starting_turn: int,
         max_turns: int | None = None,
+        event_callback: EventCallback | None = None,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
@@ -351,7 +405,18 @@ class RuntimeApp:
             context_debug = write_context_debug_report(self.workspace, evidence.run_id, turn, context_pack)
             evidence.write_trace("context_pack", context_pack.model_dump())
             evidence.write_trace("context_debug_report", {"turn": turn, "path": str(context_debug.relative_to(self.workspace))})
+            emit_event(
+                event_callback,
+                "context_pack",
+                "Context pack compiled.",
+                turn=turn,
+                selected=len(context_pack.items),
+                omitted=len(context_pack.omitted),
+                used_tokens_estimate=context_pack.used_tokens_estimate,
+                budget_tokens=context_pack.budget_tokens,
+            )
             try:
+                emit_event(event_callback, "model_plan_start", "Building model plan.", turn=turn, profile=profile.name)
                 plan = self._build_plan(task, profile, context_pack)
             except ModelClientError as exc:
                 evidence.write_trace("model_error", exc.to_trace_payload())
@@ -360,6 +425,14 @@ class RuntimeApp:
 
             plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
             evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
+            emit_event(
+                event_callback,
+                "model_plan",
+                plan.summary,
+                turn=turn,
+                step_count=len(plan.steps),
+                status=plan.status,
+            )
             turns_completed = turn
             plan_summaries.append(f"Turn {turn}: {plan.summary}")
             evidence_entries.append(
@@ -384,10 +457,20 @@ class RuntimeApp:
 
             for step in plan.steps:
                 try:
+                    emit_event(event_callback, "tool_start", f"Tool started: {step.tool}", turn=turn, tool=step.tool)
                     result, trace, policy = kernel.execute_tool(tool_context, step, turn)
                     if result is None or trace is None:
                         risks.append(policy.reason)
                         return "failed", turns_completed, policy.reason
+                    emit_event(
+                        event_callback,
+                        "tool_result",
+                        f"Tool finished: {step.tool}",
+                        turn=turn,
+                        tool=step.tool,
+                        status=result.status,
+                        summary=result.summary,
+                    )
                     tool_summaries.append(f"{step.tool}: {result.status}: {result.summary}")
                     if result.status != "success":
                         recent_error = result.error or result.summary or f"{step.tool} failed"
