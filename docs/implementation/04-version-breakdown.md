@@ -144,11 +144,13 @@ v0.1 只能拆成三个固定子阶段：
 
 - `tui`：terminal abstraction、component、input、render loop。
 - `cli`：interactive mode 切换。
-- `runtime`：把 RuntimeEvent 转成 TUI state。
+- `runtime`：发出 run、context、plan、policy、tool、verification、repair 和 report 事件。
+- `tui.state`：把 RuntimeEvent 归约成 ConsoleState，供 Rich 控制台和后续 Textual TUI 复用。
 
 测试任务：
 
 - `/help`、`/model`、`/status`、`/plan`、`/context`、`/evidence`、`/diff` 解析。
+- RuntimeEvent 到 ConsoleState 的 reducer 测试。
 - 权限确认同意和拒绝。
 - fake terminal 渲染快照。
 

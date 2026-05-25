@@ -34,10 +34,31 @@ def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None
 
     assert command_console.last_result is not None
     assert command_console.last_result.status == "success"
+    assert command_console.state.run_id == command_console.last_result.run_id
+    assert command_console.state.plan_summary
+    assert command_console.state.verification == "skipped_no_changes"
     output = console.export_text()
     assert "Run Result" in output
     assert "run_start" in output
     assert command_console.events
+
+
+def test_command_console_state_commands_render_current_run(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+
+    assert command_console.handle_input("analyze this repo")
+    assert command_console.handle_input("/plan")
+    assert command_console.handle_input("/context")
+    assert command_console.handle_input("/evidence")
+    assert command_console.handle_input("/verify")
+
+    output = console.export_text()
+    assert "Current Plan" in output
+    assert "Context Summary" in output
+    assert "Evidence Summary" in output
+    assert "Verification" in output
 
 
 def test_command_console_plan_preview(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
+from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
 from xhx_agent.safety.policy import PolicyDecision, decide_tool
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
@@ -22,9 +23,15 @@ class SafeExecutionKernel:
         self.evidence = evidence
         self.tool_registry = tool_registry
 
-    def execute_tool(self, context: ToolContext, step, turn: int) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision]:
+    def execute_tool(
+        self,
+        context: ToolContext,
+        step,
+        turn: int,
+        event_callback: EventCallback | None = None,
+    ) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision]:
         policy = decide_tool(step.tool)
-        self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool})
+        self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
             return None, None, policy
         trace = self.evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
@@ -62,6 +69,7 @@ class SafeExecutionKernel:
         command: str,
         assume_yes: bool,
         confirm_callback: ConfirmationCallback | None = None,
+        event_callback: EventCallback | None = None,
     ) -> TerminalResult:
         result = run_terminal(
             self.workspace,
@@ -69,7 +77,7 @@ class SafeExecutionKernel:
             assume_yes=assume_yes,
             confirm_callback=confirm_callback,
         )
-        self.record_policy("terminal", command, result.policy, {"command": command})
+        self.record_policy("terminal", command, result.policy, {"command": command}, event_callback)
         self.evidence.write_trace("verification", result.model_dump())
         self.evidence.write_evidence(
             "test",
@@ -80,9 +88,23 @@ class SafeExecutionKernel:
         )
         return result
 
-    def record_policy(self, scope: str, source: str, policy: PolicyDecision, payload: dict[str, object] | None = None) -> None:
+    def record_policy(
+        self,
+        scope: str,
+        source: str,
+        policy: PolicyDecision,
+        payload: dict[str, object] | None = None,
+        event_callback: EventCallback | None = None,
+    ) -> None:
         trace_payload = {"scope": scope, **(payload or {}), **policy.model_dump(mode="json")}
         self.evidence.write_trace("policy_decision", trace_payload)
+        emit_event(
+            event_callback,
+            "policy_decision",
+            policy.reason,
+            source=source,
+            **trace_payload,
+        )
         self.evidence.write_evidence(
             "policy",
             f"{scope}:{source}",

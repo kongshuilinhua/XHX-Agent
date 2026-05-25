@@ -13,6 +13,7 @@ from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.tui.state import ConsoleState
 
 
 SLASH_COMMANDS = {
@@ -43,7 +44,9 @@ class CommandConsole:
         self.assume_yes = False
         self.last_result: RunResult | None = None
         self.events: list[RuntimeEvent] = []
+        self.state = ConsoleState()
         self.mode = "linear-edit"
+        self.state.mode = self.mode
 
     def run(self) -> None:
         self.console.print(Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent"))
@@ -80,9 +83,9 @@ class CommandConsole:
         elif command == "/plan":
             self.print_plan(argument.strip() or None)
         elif command == "/evidence":
-            self.print_path_group("Evidence", ".xhx/evidence")
+            self.print_evidence()
         elif command == "/context":
-            self.print_path_group("Context", ".xhx/context")
+            self.print_context()
         elif command == "/verify":
             self.print_verification()
         elif command == "/repair":
@@ -114,11 +117,13 @@ class CommandConsole:
             event_callback=self.handle_event,
         )
         self.last_result = result
+        self.state.apply_result(result)
         self.print_run_result(result)
         self.print_dashboard()
 
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
+        self.state.reduce(event)
         self.console.print(f"[dim]{event.type}[/dim] {event.message}")
         if event.type in {"tool_result", "verification_result", "run_end"} and event.payload:
             table = Table(show_header=False, box=None, padding=(0, 1))
@@ -187,9 +192,13 @@ class CommandConsole:
         table.add_row("workspace", str(self.workspace))
         table.add_row("profile", self.profile_name or load_config(self.workspace).default_profile)
         table.add_row("mode", self.mode)
+        table.add_row("state", self.state.status)
+        table.add_row("run_id", self.state.run_id or "none")
         table.add_row("auto_repair", str(self.auto_repair).lower())
         table.add_row("assume_yes", str(self.assume_yes).lower())
         table.add_row("events", str(len(self.events)))
+        table.add_row("changed_files", str(len(self.state.changed_files)))
+        table.add_row("verification", self.state.verification)
         if self.last_result:
             table.add_row("last_status", self.last_result.status)
             table.add_row("last_summary", self.last_result.summary_path)
@@ -197,7 +206,7 @@ class CommandConsole:
 
     def print_plan(self, task: str | None = None) -> None:
         if not task:
-            self.console.print("Usage: /plan <task>")
+            self.console.print(self.plan_table())
             return
         result = self.runtime.preview_plan(task, self.profile_name)
         table = Table(title="Plan Preview")
@@ -210,6 +219,18 @@ class CommandConsole:
         table.add_row("trace", result.trace_path)
         self.console.print(table)
 
+    def plan_table(self) -> Table:
+        table = Table(title="Current Plan")
+        table.add_column("Field")
+        table.add_column("Value")
+        if not self.state.plan_summary:
+            table.add_row("status", "No active plan.")
+            return table
+        table.add_row("summary", self.state.plan_summary)
+        table.add_row("status", self.state.plan_status or "unknown")
+        table.add_row("steps", str(self.state.plan_step_count))
+        return table
+
     def print_path_group(self, title: str, relative_dir: str) -> None:
         directory = self.workspace / relative_dir
         table = Table(title=title)
@@ -221,6 +242,38 @@ class CommandConsole:
             table.add_row("none")
         self.console.print(table)
 
+    def print_evidence(self) -> None:
+        table = Table(title="Evidence Summary")
+        table.add_column("Kind")
+        table.add_column("Source")
+        table.add_column("Decision")
+        if self.state.policy_decisions:
+            for item in self.state.policy_decisions[-6:]:
+                table.add_row(item.scope or "policy", item.source or "unknown", f"{item.decision}: {item.reason}")
+        else:
+            table.add_row("none", "none", "No policy evidence in current console state.")
+        self.console.print(table)
+        self.print_path_group("Evidence Files", ".xhx/evidence")
+
+    def print_context(self) -> None:
+        table = Table(title="Context Summary")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("turn", str(self.state.context_turn or "none"))
+        table.add_row("selected", str(self.state.context_selected))
+        table.add_row("omitted", str(self.state.context_omitted))
+        if self.state.context_budget_tokens:
+            table.add_row(
+                "budget",
+                f"{self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens} estimated tokens",
+            )
+        else:
+            table.add_row("budget", "none")
+        table.add_row("languages", ", ".join(self.state.detected_languages) or "unknown")
+        table.add_row("files", str(self.state.file_count))
+        self.console.print(table)
+        self.print_path_group("Context Reports", ".xhx/context")
+
     def print_verification(self) -> None:
         if not self.last_result:
             self.console.print("No task has run in this console.")
@@ -231,6 +284,9 @@ class CommandConsole:
         table.add_row("status", self.last_result.verification)
         table.add_row("commands", ", ".join(self.last_result.commands) or "none")
         table.add_row("repair_attempts", str(self.last_result.repair_attempts))
+        for index, item in enumerate(self.state.verifications[-5:], start=1):
+            exit_code = "none" if item.exit_code is None else str(item.exit_code)
+            table.add_row(f"event_{index}", f"{item.command}: {item.status}, exit_code={exit_code}")
         self.console.print(table)
 
     def toggle_repair(self, argument: str) -> None:
@@ -249,6 +305,7 @@ class CommandConsole:
     def set_mode(self, argument: str) -> None:
         if argument:
             self.mode = argument
+            self.state.mode = argument
         self.console.print(f"mode: {self.mode}")
 
     def print_dashboard(self) -> None:
@@ -257,6 +314,8 @@ class CommandConsole:
                 Columns(
                     [
                         self.status_table(),
+                        self.plan_table(),
+                        self.activity_table(),
                         self.last_run_table(),
                         self.event_table(),
                         self.command_table(),
@@ -279,6 +338,28 @@ class CommandConsole:
         table.add_row("verification", self.last_result.verification)
         table.add_row("changed", str(len(self.last_result.changed_files)))
         table.add_row("summary", self.last_result.summary_path)
+        return table
+
+    def activity_table(self) -> Table:
+        table = Table(title="Activity")
+        table.add_column("Type")
+        table.add_column("Status")
+        table.add_column("Summary")
+        if self.state.tools:
+            for item in self.state.tools[-3:]:
+                table.add_row(f"tool:{item.tool}", item.status, item.summary or "")
+        if self.state.verifications:
+            for item in self.state.verifications[-2:]:
+                exit_code = "none" if item.exit_code is None else str(item.exit_code)
+                table.add_row("verify", item.status, f"{item.command} exit_code={exit_code}")
+        if self.state.repair_attempts:
+            table.add_row(
+                "repair",
+                f"{self.state.repair_attempts}/{self.state.repair_max_attempts or '?'}",
+                self.state.repair_reason,
+            )
+        if not self.state.tools and not self.state.verifications and not self.state.repair_attempts:
+            table.add_row("none", "idle", "No activity yet.")
         return table
 
     def event_table(self) -> Table:
