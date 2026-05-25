@@ -24,3 +24,23 @@ def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
             requires_user=True,
         )
     return PolicyDecision(decision="allow", risk=risk, reason="Command allowed by policy.")
+
+
+def decide_tool(tool_name: str) -> PolicyDecision:
+    if tool_name in {"search", "read_file"}:
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.SAFE,
+            reason=f"Tool {tool_name} is read-only.",
+        )
+    if tool_name == "apply_patch":
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason="Structured repository write allowed by apply_patch-only policy.",
+        )
+    return PolicyDecision(
+        decision="deny",
+        risk=RiskLevel.DENY,
+        reason=f"Tool {tool_name} is not allowed by policy.",
+    )

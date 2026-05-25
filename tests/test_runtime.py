@@ -38,16 +38,28 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     assert result.status == "success"
     assert result.verification == "passed"
     assert result.changed_files == ["src/calc.py"]
+    assert result.checkpoint_path is not None
+    assert (workspace / result.checkpoint_path).exists()
+    assert result.repair is not None
+    assert not result.repair.should_repair
     assert "return a + b" in (workspace / "src" / "calc.py").read_text(encoding="utf-8")
     trace_files = list((workspace / ".xhx" / "traces").glob("*.jsonl"))
     evidence_files = list((workspace / ".xhx" / "evidence").glob("*.jsonl"))
     assert trace_files
     assert evidence_files
+    trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
     evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
+    assert any(item["type"] == "checkpoint" for item in trace_lines)
+    assert any(item["type"] == "policy_decision" for item in trace_lines)
+    assert any(item["type"] == "repair_decision" for item in trace_lines)
     assert any(item["kind"] == "patch" for item in evidence_lines)
     assert any(item["kind"] == "test" for item in evidence_lines)
+    assert any(item["kind"] == "checkpoint" for item in evidence_lines)
+    assert any(item["kind"] == "policy" for item in evidence_lines)
     report = (workspace / result.summary_path).read_text(encoding="utf-8")
     assert "## Verification Details" in report
+    assert "## Checkpoint" in report
+    assert "## Repair" in report
     assert "exit_code: 0" in report
 
 
@@ -75,6 +87,7 @@ def test_runtime_requires_confirmation_without_yes(tmp_path: Path) -> None:
     assert result.verification == "requires_confirmation"
     assert result.commands == ["uv run pytest"]
     assert result.verification_results[0].status == "confirm"
+    assert result.checkpoint_path is not None
     assert any("requires confirmation" in risk for risk in result.risk_summary)
 
 
@@ -117,10 +130,15 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
     assert result.status == "failed"
     assert result.verification == "failed"
     assert result.verification_results == [failed_result]
+    assert result.repair is not None
+    assert not result.repair.should_repair
+    assert "not enabled" in result.repair.reason
     assert any("exit_code=1" in risk for risk in result.risk_summary)
+    assert any("Repair not attempted" in risk for risk in result.risk_summary)
     report = (workspace / result.summary_path).read_text(encoding="utf-8")
     assert "assert 1 == 2" in report
     assert "exit_code: 1" in report
+    assert "Auto repair is not enabled" in report
 
 
 def test_openai_profile_missing_api_key_fails_safely(tmp_path: Path) -> None:

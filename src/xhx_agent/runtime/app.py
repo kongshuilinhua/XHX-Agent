@@ -20,6 +20,9 @@ from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
+from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, create_checkpoint
+from xhx_agent.safety.policy import decide_tool
+from xhx_agent.safety.repair import RepairDecision, decide_repair
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
 from xhx_agent.verification.router import infer_verification
@@ -39,6 +42,8 @@ class RunResult(BaseModel):
     commands: list[str]
     verification: str
     verification_results: list[TerminalResult] = []
+    checkpoint_path: str | None = None
+    repair: RepairDecision | None = None
     summary_path: str
     risk_summary: list[str]
 
@@ -90,6 +95,8 @@ class RuntimeApp:
         changed_files: list[str] = []
         commands_run: list[str] = []
         verification_results: list[TerminalResult] = []
+        checkpoint: Checkpoint | None = None
+        repair_decision: RepairDecision | None = None
         risks: list[str] = []
         status = "success"
         turns_completed = 0
@@ -147,6 +154,20 @@ class RuntimeApp:
                 break
 
             for step in plan.steps:
+                policy = decide_tool(step.tool)
+                evidence.write_trace("policy_decision", {"scope": "tool", "tool": step.tool, **policy.model_dump(mode="json")})
+                evidence.write_evidence(
+                    "policy",
+                    f"tool:{step.tool}",
+                    f"{policy.decision}: {policy.reason}",
+                    f"trace://{run_id}/policy/tool/{turn}/{step.tool}",
+                    confidence=0.9,
+                )
+                if policy.decision == "deny":
+                    status = "failed"
+                    recent_error = policy.reason
+                    risks.append(policy.reason)
+                    break
                 trace = evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
                 try:
                     result = self.tool_registry.execute(tool_context, step)
@@ -189,6 +210,15 @@ class RuntimeApp:
             "not_executed" if status == "failed" else verification_plan.skip_reason if verification_plan else "skipped_no_changes"
         )
         if status != "failed" and changed_files:
+            checkpoint = create_checkpoint(self.workspace, run_id, sorted(set(changed_files)))
+            evidence.write_trace("checkpoint", checkpoint.model_dump())
+            evidence.write_evidence(
+                "checkpoint",
+                checkpoint.id,
+                f"Checkpoint recorded {len(checkpoint.files)} changed file(s) before verification.",
+                f"checkpoint://{checkpoint.id}",
+                confidence=0.95,
+            )
             for command in commands:
                 result = run_terminal(
                     self.workspace,
@@ -198,6 +228,17 @@ class RuntimeApp:
                 )
                 commands_run.append(command)
                 verification_results.append(result)
+                evidence.write_trace(
+                    "policy_decision",
+                    {"scope": "terminal", "command": command, **result.policy.model_dump(mode="json")},
+                )
+                evidence.write_evidence(
+                    "policy",
+                    f"terminal:{command}",
+                    f"{result.policy.decision}: {result.policy.reason}",
+                    f"trace://{run_id}/policy/terminal/{command}",
+                    confidence=0.9,
+                )
                 evidence.write_trace("verification", result.model_dump())
                 evidence.write_evidence(
                     "test",
@@ -216,6 +257,17 @@ class RuntimeApp:
                     risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
                     break
                 verification_status = "passed"
+            repair_decision = decide_repair(verification_status, attempts_used=0, auto_repair_enabled=False)
+            evidence.write_trace("repair_decision", repair_decision.model_dump())
+            if verification_status == "failed":
+                evidence.write_evidence(
+                    "error",
+                    "repair",
+                    repair_decision.reason,
+                    f"trace://{run_id}/repair_decision",
+                    confidence=0.8,
+                )
+                risks.append(f"Repair not attempted: {repair_decision.reason}")
         elif status != "failed":
             verification_status = "skipped_no_changes"
             evidence.write_trace("verification_skipped", {"reason": "No changed files."})
@@ -229,6 +281,8 @@ class RuntimeApp:
             verification=verification_status,
             risks=risks,
             verification_results=verification_results,
+            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
+            repair=repair_decision,
         )
         evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         return RunResult(
@@ -239,6 +293,8 @@ class RuntimeApp:
             commands=commands_run or commands,
             verification=verification_status,
             verification_results=verification_results,
+            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
+            repair=repair_decision,
             summary_path=str(summary.relative_to(self.workspace)),
             risk_summary=risks,
         )
@@ -314,3 +370,7 @@ def _verification_evidence_summary(result: TerminalResult) -> str:
     exit_code = "none" if result.exit_code is None else str(result.exit_code)
     summary = result.summary or result.policy.reason
     return f"{result.status}: exit_code={exit_code}; {summary}"
+
+
+def checkpoint_path_value(workspace: Path, run_id: str) -> Path:
+    return checkpoint_path(workspace, run_id).relative_to(workspace)
