@@ -133,12 +133,16 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
     assert result.verification_results == [failed_result]
     assert result.repair is not None
     assert not result.repair.should_repair
+    assert result.restore_plan_path is not None
+    assert (workspace / result.restore_plan_path).exists()
     assert "not enabled" in result.repair.reason
     assert any("exit_code=1" in risk for risk in result.risk_summary)
     assert any("Repair not attempted" in risk for risk in result.risk_summary)
     report = (workspace / result.summary_path).read_text(encoding="utf-8")
     assert "assert 1 == 2" in report
     assert "exit_code: 1" in report
+    assert "## Restore Plan" in report
+    assert str(result.restore_plan_path) in report
     assert "Auto repair is not enabled" in report
 
 
@@ -297,6 +301,7 @@ def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch)
     assert result.repair_attempts == MAX_REPAIR_ATTEMPTS
     assert result.repair is not None
     assert not result.repair.should_repair
+    assert result.restore_plan_path is not None
     assert result.repair.reason == "Repair attempt limit reached."
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 4\n"
     report = (tmp_path / result.summary_path).read_text(encoding="utf-8")
@@ -307,6 +312,7 @@ def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch)
     trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
     evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
     assert any(item["type"] == "repair_decision" for item in trace_lines)
+    assert any(item["type"] == "restore_plan" for item in trace_lines)
     assert any(item["kind"] == "decision" and item["source"] == "repair" for item in evidence_lines)
 
 
