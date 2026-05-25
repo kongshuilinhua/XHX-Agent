@@ -51,6 +51,7 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
     evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
     assert any(item["type"] == "checkpoint" for item in trace_lines)
+    assert any(item["type"] == "context_debug_report" for item in trace_lines)
     assert any(item["type"] == "policy_decision" for item in trace_lines)
     assert any(item["type"] == "repair_decision" for item in trace_lines)
     assert any(item["kind"] == "patch" for item in evidence_lines)
@@ -62,6 +63,7 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     assert "## Checkpoint" in report
     assert "## Repair" in report
     assert "exit_code: 0" in report
+    assert list((workspace / ".xhx" / "context").glob("*.json"))
 
 
 def test_node_fixture_mock_closed_loop(tmp_path: Path) -> None:
@@ -418,6 +420,7 @@ def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None
     trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
     trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
     assert sum(1 for item in trace_lines if item["type"] == "context_pack") == 2
+    assert sum(1 for item in trace_lines if item["type"] == "context_debug_report") == 2
     assert any(item["type"] == "verification_skipped" for item in trace_lines)
 
 

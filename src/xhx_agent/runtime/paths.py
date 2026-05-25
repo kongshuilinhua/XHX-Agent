@@ -16,5 +16,5 @@ def xhx_dir(workspace: Path) -> Path:
 
 def ensure_xhx_dirs(workspace: Path) -> None:
     root = xhx_dir(workspace)
-    for name in ("sessions", "traces", "evidence", "logbook", "checkpoints", "skills"):
+    for name in ("sessions", "traces", "evidence", "context", "logbook", "checkpoints", "skills"):
         (root / name).mkdir(parents=True, exist_ok=True)

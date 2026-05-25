@@ -8,6 +8,7 @@ from typing import Callable
 from pydantic import BaseModel
 
 from xhx_agent.context.compiler import compile_context_pack
+from xhx_agent.context.debug import write_context_debug_report
 from xhx_agent.context.pack import ContextPack
 from xhx_agent.evidence.store import EvidenceEntry
 from xhx_agent.evidence.store import EvidenceStore
@@ -270,7 +271,9 @@ class RuntimeApp:
         evidence.write_trace("run_start", {"task": task, "profile": profile.name, "dry_run": True})
         scan = scan_project(self.workspace)
         context_pack = compile_context_pack(workspace=self.workspace, task=task, scan=scan)
+        context_debug = write_context_debug_report(self.workspace, run_id, 1, context_pack)
         evidence.write_trace("context_pack", context_pack.model_dump())
+        evidence.write_trace("context_debug_report", {"turn": 1, "path": str(context_debug.relative_to(self.workspace))})
         risks: list[str] = []
         try:
             plan = self._build_plan(task, profile, context_pack)
@@ -345,7 +348,9 @@ class RuntimeApp:
                 evidence_entries=evidence_entries,
                 recent_error=recent_error,
             )
+            context_debug = write_context_debug_report(self.workspace, evidence.run_id, turn, context_pack)
             evidence.write_trace("context_pack", context_pack.model_dump())
+            evidence.write_trace("context_debug_report", {"turn": turn, "path": str(context_debug.relative_to(self.workspace))})
             try:
                 plan = self._build_plan(task, profile, context_pack)
             except ModelClientError as exc:
