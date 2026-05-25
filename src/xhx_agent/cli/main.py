@@ -35,6 +35,7 @@ def run(
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow confirm-level verification commands.")] = False,
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Only build the first model plan; do not execute tools.")] = False,
+    auto_repair: Annotated[bool, typer.Option("--auto-repair", help="Allow up to two repair attempts after failed verification.")] = False,
 ) -> None:
     runtime = RuntimeApp()
     if dry_run:
@@ -53,9 +54,9 @@ def run(
                 console.print(f"  - {risk}")
         return
     if json_output:
-        console.print(runtime.run_task_json(task, profile, assume_yes=yes))
+        console.print(runtime.run_task_json(task, profile, assume_yes=yes, auto_repair=auto_repair))
         return
-    result = runtime.run_task(task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command)
+    result = runtime.run_task(task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair)
     console.print(f"status: {result.status}")
     console.print(f"summary: {result.summary_path}")
     if result.commands:

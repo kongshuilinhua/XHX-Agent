@@ -9,6 +9,7 @@ from xhx_agent.tools.registry import ToolRegistry, ToolExecutionResult
 from xhx_agent.context.pack import ContextPack
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS
 from xhx_agent.safety.risk import RiskLevel
 
 
@@ -123,7 +124,7 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
         summary="assert 1 == 2\nline 1",
     )
 
-    monkeypatch.setattr("xhx_agent.runtime.app.run_terminal", lambda *_args, **_kwargs: failed_result)
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: failed_result)
 
     result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True)
 
@@ -139,6 +140,174 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
     assert "assert 1 == 2" in report
     assert "exit_code: 1" in report
     assert "Auto repair is not enabled" in report
+
+
+def test_runtime_auto_repair_attempts_second_patch(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+    plans = [
+        ModelPlan(
+            summary="make initial wrong change",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={
+                        "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-value = 1
++value = 2
+*** End Patch
+"""
+                    },
+                )
+            ],
+        ),
+        ModelPlan(
+            summary="repair change",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={
+                        "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-value = 2
++value = 3
+*** End Patch
+"""
+                    },
+                )
+            ],
+        ),
+    ]
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+        return plans.pop(0)
+
+    verification_results = [
+        TerminalResult(
+            command="python -m pytest",
+            status="failed",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=1,
+            summary="expected value 3",
+        ),
+        TerminalResult(
+            command="python -m pytest",
+            status="success",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=0,
+            summary="passed",
+        ),
+    ]
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: verification_results.pop(0))
+
+    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True)
+
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert result.repair_attempts == 1
+    assert result.repair is not None
+    assert not result.repair.should_repair
+    assert result.repair.reason == "Repair is only considered after failed verification."
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 3\n"
+
+
+def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+    values = [2, 3, 4]
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+        next_value = values.pop(0)
+        previous_value = next_value - 1
+        return ModelPlan(
+            summary=f"set value to {next_value}",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={
+                        "patch": f"""*** Begin Patch
+*** Update File: demo.py
+@@
+-value = {previous_value}
++value = {next_value}
+*** End Patch
+"""
+                    },
+                )
+            ],
+        )
+
+    def always_fail(_workspace: Path, command: str, *_args, **_kwargs) -> TerminalResult:
+        return TerminalResult(
+            command=command,
+            status="failed",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=1,
+            summary="still failing",
+        )
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", always_fail)
+
+    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True)
+
+    assert result.status == "failed"
+    assert result.verification == "failed"
+    assert result.repair_attempts == MAX_REPAIR_ATTEMPTS
+    assert result.repair is not None
+    assert not result.repair.should_repair
+    assert result.repair.reason == "Repair attempt limit reached."
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 4\n"
+    report = (tmp_path / result.summary_path).read_text(encoding="utf-8")
+    assert "Repair attempt limit reached." in report
+    assert f"repair_attempts: {MAX_REPAIR_ATTEMPTS}" in report
+    trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
+    evidence_files = list((tmp_path / ".xhx" / "evidence").glob("*.jsonl"))
+    trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
+    evidence_lines = [json.loads(line) for line in evidence_files[0].read_text(encoding="utf-8").splitlines()]
+    assert any(item["type"] == "repair_decision" for item in trace_lines)
+    assert any(item["kind"] == "decision" and item["source"] == "repair" for item in evidence_lines)
 
 
 def test_openai_profile_missing_api_key_fails_safely(tmp_path: Path) -> None:
