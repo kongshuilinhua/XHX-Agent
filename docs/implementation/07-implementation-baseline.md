@@ -326,6 +326,7 @@ v0.5 已完成：
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
 - `/verify` 可以基于当前 changed files 手动触发 Verification Router，验证仍经过 SafeExecutionKernel、权限确认、Raw Trace 和 Evidence Index。
 - `/repair` 可以在最近验证失败后手动执行一轮修复，复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
+- 普通输入支持最小 follow-up steering：已有上一轮结果时，会把上一轮 run id、状态、验证结果、changed files 和报告路径包装进新任务上下文。
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 
 v0.5 未完成 / 后续增强：
@@ -334,6 +335,7 @@ v0.5 未完成 / 后续增强：
 - 还没有真正 token 级模型流式输出。
 - 仪表盘是 Rich 重新渲染视图，还不是固定区域的动态刷新 UI。
 - `/repair` 仍限制为一轮手动修复，不是完整多轮交互式 repair 工作流。
+- follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。
 
 v0.6：Repo Intelligence Graph。
 

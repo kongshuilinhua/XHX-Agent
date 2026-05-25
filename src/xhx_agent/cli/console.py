@@ -45,6 +45,8 @@ class CommandConsole:
         self.last_result: RunResult | None = None
         self.last_manual_verification: ManualVerificationResult | None = None
         self.last_manual_repair: ManualRepairResult | None = None
+        self.last_user_task: str | None = None
+        self.last_runtime_task: str | None = None
         self.events: list[RuntimeEvent] = []
         self.state = ConsoleState()
         self.mode = "linear-edit"
@@ -108,10 +110,15 @@ class CommandConsole:
         return True
 
     def run_task(self, task: str) -> None:
+        runtime_task = self.build_runtime_task(task)
+        self.last_user_task = task
+        self.last_runtime_task = runtime_task
         self.print_dashboard()
         self.console.print(Panel(task, title="Task"))
+        if runtime_task != task:
+            self.console.print(Panel(runtime_task, title="Follow-up Context"))
         result = self.runtime.run_task(
-            task,
+            runtime_task,
             profile_name=self.profile_name,
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
@@ -122,6 +129,27 @@ class CommandConsole:
         self.state.apply_result(result)
         self.print_run_result(result)
         self.print_dashboard()
+
+    def build_runtime_task(self, task: str) -> str:
+        if self.last_result is None:
+            return task
+        return "\n".join(
+            [
+                "Follow-up task in the same console session.",
+                "",
+                "User request:",
+                task,
+                "",
+                "Previous run context:",
+                f"- run_id: {self.last_result.run_id}",
+                f"- status: {self.last_result.status}",
+                f"- verification: {self.last_result.verification}",
+                f"- changed_files: {', '.join(self.last_result.changed_files) or 'none'}",
+                f"- summary: {self.last_result.summary_path}",
+                "",
+                "Use the previous run context only when it is relevant. Keep normal safety, apply_patch, and verification rules.",
+            ]
+        )
 
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
