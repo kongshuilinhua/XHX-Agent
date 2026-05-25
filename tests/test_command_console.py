@@ -4,6 +4,9 @@ from rich.console import Console
 
 from xhx_agent.cli.console import CommandConsole
 from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.tools.terminal import TerminalResult
+from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.safety.risk import RiskLevel
 
 
 def _console() -> Console:
@@ -59,6 +62,32 @@ def test_command_console_state_commands_render_current_run(tmp_path: Path) -> No
     assert "Context Summary" in output
     assert "Evidence Summary" in output
     assert "Verification" in output
+
+
+def test_command_console_verify_runs_manual_verification(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    terminal_result = TerminalResult(
+        command="python -m pytest",
+        status="success",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+        exit_code=0,
+        summary="passed",
+    )
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: terminal_result)
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+    command_console.assume_yes = True
+    command_console.state.changed_files = ["demo.py"]
+
+    assert command_console.handle_input("/verify")
+
+    assert command_console.last_manual_verification is not None
+    assert command_console.last_manual_verification.status == "passed"
+    output = console.export_text()
+    assert "Manual Verification Result" in output
+    assert "python -m pytest" in output
 
 
 def test_command_console_plan_preview(tmp_path: Path) -> None:

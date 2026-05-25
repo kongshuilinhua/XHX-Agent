@@ -324,13 +324,15 @@ v0.5 已完成：
 - Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
 - `/dashboard` 使用 `tui.page` 渲染一个 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
-- `/context`、`/evidence`、`/verify`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
+- `/verify` 可以基于当前 changed files 手动触发 Verification Router，验证仍经过 SafeExecutionKernel、权限确认、Raw Trace 和 Evidence Index。
+- `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 
 v0.5 未完成 / 后续增强：
 
 - 还不是全屏 Textual TUI。
 - 还没有真正 token 级模型流式输出。
 - 仪表盘是 Rich 重新渲染视图，还不是固定区域的动态刷新 UI。
+- `/repair` 仍主要控制 auto-repair 开关，还不是完整的手动 repair 操作。
 
 v0.6：Repo Intelligence Graph。
 

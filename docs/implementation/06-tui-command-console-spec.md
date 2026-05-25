@@ -192,6 +192,7 @@ v0.5 只显示 Evidence Index 摘要，不展开 Raw Trace 全文。
 
 - 如果没有 changed files，显示 no changes。
 - 如果需要 confirm，进入权限确认。
+- v0.5 当前实现只验证当前 changed files，不重新规划、不修复失败、不改文件。
 
 ### /repair
 
