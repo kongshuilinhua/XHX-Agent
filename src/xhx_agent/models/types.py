@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,12 +12,21 @@ class ToolStep(BaseModel):
 
 class ModelPlan(BaseModel):
     summary: str
+    status: Literal["continue", "done"] = "continue"
     steps: list[ToolStep]
 
     @field_validator("steps")
     @classmethod
     def require_steps(cls, value: list[ToolStep]) -> list[ToolStep]:
-        if not value:
+        if value is None:
+            raise ValueError("Model plan steps must be a list.")
+        return value
+
+    @field_validator("steps")
+    @classmethod
+    def require_steps_unless_done(cls, value: list[ToolStep], info) -> list[ToolStep]:
+        status = info.data.get("status", "continue")
+        if status != "done" and not value:
             raise ValueError("Model plan must include at least one tool step.")
         return value
 

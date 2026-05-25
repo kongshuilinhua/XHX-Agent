@@ -32,8 +32,24 @@ def run(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON result.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow confirm-level verification commands.")] = False,
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only build the first model plan; do not execute tools.")] = False,
 ) -> None:
     runtime = RuntimeApp()
+    if dry_run:
+        result = runtime.preview_plan(task, profile)
+        if json_output:
+            console.print(result.model_dump_json(indent=2))
+            return
+        console.print(f"status: {result.status}")
+        console.print(f"summary: {result.summary}")
+        console.print(f"steps: {result.step_count}")
+        console.print(f"context: {result.context_used_tokens_estimate}/{result.context_budget_tokens} estimated tokens")
+        console.print(f"trace: {result.trace_path}")
+        if result.risk_summary:
+            console.print("risks:")
+            for risk in result.risk_summary:
+                console.print(f"  - {risk}")
+        return
     if json_output:
         console.print(runtime.run_task_json(task, profile, assume_yes=yes))
         return

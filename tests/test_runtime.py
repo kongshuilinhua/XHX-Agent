@@ -6,6 +6,7 @@ from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.tools.registry import ToolRegistry, ToolExecutionResult
+from xhx_agent.context.pack import ContextPack
 
 
 def test_init_project_writes_expected_files(tmp_path: Path) -> None:
@@ -102,7 +103,7 @@ def test_runtime_rejects_invalid_model_plan_before_tool_execution(tmp_path: Path
 
     registry.register("search", fake_runner)
     app = RuntimeApp(tmp_path, tool_registry=registry)
-    app._build_plan = lambda _task, _profile, _summary: ModelPlan(  # type: ignore[method-assign]
+    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
         summary="bad model plan",
         steps=[ToolStep(tool="terminal", arguments={"command": "python -m pytest"})],
     )
@@ -112,3 +113,81 @@ def test_runtime_rejects_invalid_model_plan_before_tool_execution(tmp_path: Path
     assert result.status == "failed"
     assert not executed
     assert any("unsupported tool" in risk.lower() for risk in result.risk_summary)
+
+
+def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    contexts: list[ContextPack] = []
+    app = RuntimeApp(tmp_path)
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, context: ContextPack) -> ModelPlan:
+        contexts.append(context)
+        if len(contexts) == 1:
+            return ModelPlan(
+                summary="read readme first",
+                steps=[ToolStep(tool="read_file", arguments={"path": "README.md"})],
+            )
+        assert any(item.kind == "tool_results" and "read_file" in item.content for item in context.items)
+        return ModelPlan(summary="analysis complete", status="done", steps=[])
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+
+    result = app.run_task("analyze README", profile_name="real")
+
+    assert result.status == "success"
+    assert len(contexts) == 2
+    trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
+    trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
+    assert sum(1 for item in trace_lines if item["type"] == "context_pack") == 2
+
+
+def test_preview_plan_does_not_execute_tools(tmp_path: Path) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    app = RuntimeApp(tmp_path)
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+        return ModelPlan(
+            summary="would patch file",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={
+                        "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-value = 1
++value = 2
+*** End Patch
+"""
+                    },
+                )
+            ],
+        )
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+
+    result = app.preview_plan("change demo")
+
+    assert result.status == "success"
+    assert result.step_count == 1
+    assert "value = 1" in (tmp_path / "demo.py").read_text(encoding="utf-8")
+    assert (tmp_path / result.trace_path).exists()

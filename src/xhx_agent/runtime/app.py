@@ -6,6 +6,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from xhx_agent.context.compiler import compile_context_pack
+from xhx_agent.context.pack import ContextPack
+from xhx_agent.evidence.store import EvidenceEntry
 from xhx_agent.evidence.store import EvidenceStore
 from xhx_agent.evidence.report import write_report
 from xhx_agent.models.mock import MockModelClient
@@ -37,6 +40,17 @@ class RunResult(BaseModel):
     risk_summary: list[str]
 
 
+class PlanPreview(BaseModel):
+    run_id: str
+    status: str
+    summary: str
+    step_count: int
+    context_budget_tokens: int
+    context_used_tokens_estimate: int
+    trace_path: str
+    risk_summary: list[str]
+
+
 class RuntimeApp:
     def __init__(self, workspace: Path | None = None, tool_registry: ToolRegistry | None = None) -> None:
         self.workspace = (workspace or Path.cwd()).resolve()
@@ -61,85 +75,96 @@ class RuntimeApp:
         evidence = EvidenceStore(self.workspace, run_id)
         evidence.write_trace("run_start", {"task": task, "profile": profile.name})
         scan = scan_project(self.workspace)
-        try:
-            plan = self._build_plan(task, profile, scan.model_dump())
-        except ModelClientError as exc:
-            evidence.write_trace("model_error", exc.to_trace_payload())
-            summary = write_report(
-                workspace=self.workspace,
-                run_id=run_id,
-                task=task,
-                plan=[
-                    "Load project configuration.",
-                    f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
-                    "Stop before tool execution because model planning failed.",
-                ],
-                changed_files=[],
-                commands=[],
-                verification="not_executed",
-                risks=[exc.message],
-            )
-            evidence.write_trace("run_end", {"status": "failed", "summary_path": str(summary)})
-            return RunResult(
-                run_id=run_id,
-                status="failed",
-                changed_files=[],
-                commands=[],
-                verification="not_executed",
-                summary_path=str(summary.relative_to(self.workspace)),
-                risk_summary=[exc.message],
-            )
-
-        plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
-        evidence.write_trace(plan_trace_type, plan.model_dump())
-        evidence.write_evidence(
-            kind="decision",
-            source=profile.provider,
-            summary=plan.summary,
-            artifact_ref=f"trace://{run_id}/{plan_trace_type}",
-            confidence=0.7 if profile.provider == "mock" else 0.6,
-        )
         changed_files: list[str] = []
         commands_run: list[str] = []
         risks: list[str] = []
         status = "success"
-        try:
-            self.tool_registry.validate_plan(plan)
-        except ModelClientError as exc:
-            status = "failed"
-            risks.append(exc.message)
-            evidence.write_trace("model_error", exc.to_trace_payload())
-
+        plan_summaries: list[str] = [
+            "Load project configuration.",
+            f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
+        ]
+        tool_summaries: list[str] = []
+        evidence_entries: list[EvidenceEntry] = []
+        recent_error: str | None = None
         tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
-        for step in plan.steps:
-            if status == "failed":
-                break
-            trace = evidence.write_trace("tool_call", step.model_dump())
+
+        for turn in range(1, _max_model_turns(profile) + 1):
+            context_pack = compile_context_pack(
+                workspace=self.workspace,
+                task=task,
+                scan=scan,
+                changed_files=changed_files,
+                tool_summaries=tool_summaries,
+                evidence_entries=evidence_entries,
+                recent_error=recent_error,
+            )
+            evidence.write_trace("context_pack", context_pack.model_dump())
             try:
-                result = self.tool_registry.execute(tool_context, step)
-                evidence.write_trace("tool_result", result.trace_payload)
-                if result.status != "success":
-                    status = "failed"
-                    risks.append(result.error or result.summary or f"{step.tool} failed")
-                    break
-                changed_files.extend(result.changed_files)
-                if result.evidence_kind and result.evidence_source and result.evidence_summary:
-                    evidence.write_evidence(
-                        result.evidence_kind,
-                        result.evidence_source,
-                        result.evidence_summary,
-                        f"trace://{trace.id}",
-                        confidence=0.9 if result.evidence_kind == "patch" else 0.8,
-                    )
-            except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
+                plan = self._build_plan(task, profile, context_pack)
+            except ModelClientError as exc:
+                evidence.write_trace("model_error", exc.to_trace_payload())
                 status = "failed"
-                risks.append(str(exc))
-                evidence.write_trace("tool_error", {"tool": step.tool, "error": str(exc)})
+                risks.append(exc.message)
+                break
+
+            plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
+            evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
+            plan_summaries.append(f"Turn {turn}: {plan.summary}")
+            evidence_entries.append(
+                evidence.write_evidence(
+                    kind="decision",
+                    source=profile.provider,
+                    summary=plan.summary,
+                    artifact_ref=f"trace://{run_id}/{plan_trace_type}/{turn}",
+                    confidence=0.7 if profile.provider == "mock" else 0.6,
+                )
+            )
+
+            if plan.status == "done":
+                break
+
+            try:
+                self.tool_registry.validate_plan(plan)
+            except ModelClientError as exc:
+                status = "failed"
+                risks.append(exc.message)
+                evidence.write_trace("model_error", exc.to_trace_payload())
+                break
+
+            for step in plan.steps:
+                trace = evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
+                try:
+                    result = self.tool_registry.execute(tool_context, step)
+                    evidence.write_trace("tool_result", {"turn": turn, **result.trace_payload})
+                    tool_summaries.append(f"{step.tool}: {result.status}: {result.summary}")
+                    if result.status != "success":
+                        status = "failed"
+                        recent_error = result.error or result.summary or f"{step.tool} failed"
+                        risks.append(recent_error)
+                        break
+                    changed_files.extend(result.changed_files)
+                    if result.evidence_kind and result.evidence_source and result.evidence_summary:
+                        evidence_entries.append(
+                            evidence.write_evidence(
+                                result.evidence_kind,
+                                result.evidence_source,
+                                result.evidence_summary,
+                                f"trace://{trace.id}",
+                                confidence=0.9 if result.evidence_kind == "patch" else 0.8,
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
+                    status = "failed"
+                    recent_error = str(exc)
+                    risks.append(recent_error)
+                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc)})
+                    break
+            if status == "failed" or plan.status == "done" or _should_stop_after_turn(profile, changed_files, plan.steps):
                 break
 
         verification_plan = infer_verification(self.workspace, changed_files)
         commands = [item.command for item in verification_plan.commands]
-        verification_status = verification_plan.skip_reason or "not_executed"
+        verification_status = "not_executed" if status == "failed" else verification_plan.skip_reason or "not_executed"
         if status != "failed":
             for command in commands:
                 result = run_terminal(self.workspace, command, assume_yes=assume_yes)
@@ -166,12 +191,7 @@ class RuntimeApp:
             workspace=self.workspace,
             run_id=run_id,
             task=task,
-            plan=[
-                "Load project configuration.",
-                f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
-                plan.summary,
-                "Write run summary.",
-            ],
+            plan=plan_summaries + ["Write run summary."],
             changed_files=sorted(set(changed_files)),
             commands=commands_run or commands,
             verification=verification_status,
@@ -191,7 +211,42 @@ class RuntimeApp:
     def run_task_json(self, task: str, profile_name: str | None = None, assume_yes: bool = False) -> str:
         return json.dumps(self.run_task(task, profile_name, assume_yes=assume_yes).model_dump(), ensure_ascii=False, indent=2)
 
-    def _build_plan(self, task: str, profile: ModelProfile, workspace_summary: dict[str, object]) -> ModelPlan:
+    def preview_plan(self, task: str, profile_name: str | None = None) -> PlanPreview:
+        config = load_config(self.workspace)
+        profile = get_profile(self.workspace, profile_name or config.default_profile)
+        run_id = f"dry-run-{int(time.time())}"
+        evidence = EvidenceStore(self.workspace, run_id)
+        evidence.write_trace("run_start", {"task": task, "profile": profile.name, "dry_run": True})
+        scan = scan_project(self.workspace)
+        context_pack = compile_context_pack(workspace=self.workspace, task=task, scan=scan)
+        evidence.write_trace("context_pack", context_pack.model_dump())
+        risks: list[str] = []
+        try:
+            plan = self._build_plan(task, profile, context_pack)
+            evidence.write_trace("model_plan_preview", plan.model_dump())
+            self.tool_registry.validate_plan(plan)
+            summary = plan.summary
+            status = "success"
+            step_count = len(plan.steps)
+        except ModelClientError as exc:
+            evidence.write_trace("model_error", exc.to_trace_payload())
+            risks.append(exc.message)
+            summary = exc.message
+            status = "failed"
+            step_count = 0
+        evidence.write_trace("run_end", {"status": status, "dry_run": True})
+        return PlanPreview(
+            run_id=run_id,
+            status=status,
+            summary=summary,
+            step_count=step_count,
+            context_budget_tokens=context_pack.budget_tokens,
+            context_used_tokens_estimate=context_pack.used_tokens_estimate,
+            trace_path=str(evidence.trace_path.relative_to(self.workspace)),
+            risk_summary=risks,
+        )
+
+    def _build_plan(self, task: str, profile: ModelProfile, context_pack: ContextPack) -> ModelPlan:
         if profile.provider == "mock":
             return MockModelClient().plan(task, self.workspace)
         if profile.provider == "openai-compatible":
@@ -200,9 +255,21 @@ class RuntimeApp:
                 api_key_env=profile.api_key_env,
                 model=profile.model,
                 temperature=profile.temperature,
-            ).plan(task, workspace_summary)
+            ).plan(task, context_pack)
         raise ModelClientError(
             code="unsupported_provider",
             message=f"Unsupported model provider: {profile.provider}",
             details={"provider": profile.provider},
         )
+
+
+def _max_model_turns(profile: ModelProfile) -> int:
+    return 2 if profile.provider == "mock" else 4
+
+
+def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], steps: list[object]) -> bool:
+    if profile.provider == "mock":
+        return True
+    if changed_files:
+        return True
+    return not steps

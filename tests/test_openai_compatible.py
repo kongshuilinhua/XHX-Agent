@@ -24,9 +24,12 @@ def test_openai_compatible_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_openai_compatible_parses_model_plan(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    captured_body = ""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_body
         body = request.read().decode("utf-8")
+        captured_body = body
         assert "/chat/completions" in str(request.url)
         assert "Bearer test-key" == request.headers["Authorization"]
         assert "demo-model" in body
@@ -55,6 +58,8 @@ def test_openai_compatible_parses_model_plan(monkeypatch: pytest.MonkeyPatch) ->
     assert plan.summary == "Read README"
     assert plan.steps[0].tool == "read_file"
     assert plan.steps[0].arguments == {"path": "README.md"}
+    assert "context_pack" in captured_body
+    assert "detected_languages" in captured_body
 
 
 def test_openai_compatible_http_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
