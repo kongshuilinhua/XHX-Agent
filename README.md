@@ -1,0 +1,111 @@
+# xhx-agent
+
+xhx-agent 是一个上下文预算驱动、证据可追溯、执行可控的本地编码 Agent。它面向真实代码仓库，负责读取项目、规划任务、执行安全补丁、运行验证命令，并输出可审计的任务报告。
+
+## 当前实现状态
+
+当前代码已完成 v0.1-A 最小闭环：默认 mock profile 可以离线跑通 read/search、apply_patch、验证推断、确认执行、Raw Trace、Evidence Index 和 Markdown 报告。它还不是完整自动编码 Agent，不要把当前版本理解为已经能在任意真实仓库中自动修代码。
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| 项目文档与路线图 | 已实现 | README、架构文档、实施规格和测试计划已写入 `docs/`。 |
+| `uv` Python 项目骨架 | 已实现 | 已提供 `xhx` / `xhx-agent` CLI 入口。 |
+| `xhx init` | 已实现 | 创建 `.xhx/`、默认配置、profile 和 `XHX.md`。 |
+| 项目扫描 | 已实现 | 可识别 Python、JavaScript、TypeScript 的基础项目特征。 |
+| 命令风险分类 | 已实现 | 支持 safe / confirm / deny 的基础分类。 |
+| Mock v0.1-A 闭环 | 已实现 | 面向 fixture 和 smoke test 的 mock 计划可串起 read/search、patch、验证和报告。 |
+| `apply_patch` 写入 | 部分实现 | 支持本项目定义的结构化 patch 子集，仍不是完整通用 patch 引擎。 |
+| 工具注册与计划校验 | 已实现 | Runtime 通过 Tool Registry 执行工具，并在执行前拒绝未知工具和坏参数。 |
+| Raw Trace / Evidence Index | 部分实现 | v0.1-A 已记录 JSONL 轨迹和摘要，不实现复杂 TrailGraph。 |
+| OpenAI-compatible 真实模型调用 | 部分实现 | 已有非流式 Chat Completions 计划请求、API key 环境变量读取和结构化错误处理；仍要求模型按 JSON 计划协议返回工具步骤，不等于通用自动修代码。 |
+| 通用自动修代码 | 未实现 | 当前不能保证自动修复任意仓库问题。 |
+| TUI / Command Console | 未实现 | 计划在 v0.5 实现。 |
+| DAG 多 Agent 调度 | 未实现 | 计划在 v0.7 实现。 |
+| Skill / MCP | 未实现 | 计划在 v0.8 实现。 |
+
+项目参考 HPD-Agent 的图调度思路、pi 的 Runtime/Skill 工程结构、aider 的仓库地图与补丁实践，以及 Cline、OpenHands、SWE-agent、Continue 等项目在上下文、安全、验证和评测上的经验。
+
+核心目标不是“记录一切并塞进 Prompt”，而是构建一个 **Context-Budgeted Agent Runtime**：
+
+- 完整轨迹写入磁盘。
+- 证据摘要进入索引。
+- 每轮只把少量高价值上下文编译进 Prompt。
+- 所有执行都经过权限、补丁、验证和修复策略。
+
+## 目标
+
+- 构建一个基于 Python + LangGraph 的本地编码 Agent。
+- 支持从用户需求到代码修改、验证、总结的完整闭环。
+- 用上下文预算控制每轮进入模型的信息量，避免 token 爆炸。
+- 用 Evidence Runtime 保留完整审计轨迹，并按需检索证据。
+- 用 Safe Execution Kernel 管理工具权限、补丁、验证、回滚和修复。
+- 从可用 CLI 逐步演进成完整多 Agent 项目。
+
+## 核心概念
+
+- **Context Pack Compiler**：每轮 LLM 调用前编译上下文包，按预算选择项目规则、当前计划、相关代码、证据摘要和最近错误。
+- **Evidence Runtime**：完整记录 Raw Trace，维护 Evidence Index，只将少量 Context Evidence 放入 Prompt。
+- **Safe Execution Kernel**：统一处理工具请求、风险分级、用户确认、补丁写入、验证和失败停止条件。
+- **Adaptive Planner**：根据任务复杂度选择 direct、research-only、linear-edit、plan-review-act、dag-execute 或 repair-loop。
+- **Verification Router**：根据变更类型和项目结构推断最小验证命令。
+- **TrailGraph**：Evidence Runtime 的内部表示之一，用于组织任务、证据和决策关系。
+
+## 版本规划
+
+- **v0.1 最小 Agent Runtime**：CLI、模型配置、基础工具、`apply_patch`、验证推断和 Markdown 总结。
+- **v0.2 Safe Execution Kernel**：命令权限、风险分级、checkpoint、changed files、验证失败处理。
+- **v0.3 Context Pack Compiler**：上下文预算、项目地图、证据摘要选择、历史压缩。
+- **v0.4 Evidence Runtime**：Raw Trace、Evidence Index、按需展开、审计报告。
+- **v0.5 TUI / Command Console**：接近 Claude Code 的终端交互体验和 `/` 命令系统。
+- **v0.6 Repo Intelligence Graph**：repo map、Tree-sitter、符号搜索、影响面分析。
+- **v0.7 Adaptive Planner + DAG**：简单任务线性执行，复杂任务进入 DAG 和多 Agent 调度。
+- **v0.8 Skills / Extensions / MCP**：轻量 Skill、Hook、可选 MCP 工具接入。
+- **v0.9 Evaluation / Headless / Replay**：fixture 仓库、benchmark、JSON 输出、轨迹回放。
+- **v1.0 完整 Agent 项目**：稳定 CLI、完整 Runtime、代码智能、多 Agent、Skill、评测和文档。
+
+详见 [版本路线图](docs/02-version-roadmap.md)。
+
+## 文档导航
+
+- [项目概览](docs/00-overview.md)
+- [架构设计](docs/01-architecture.md)
+- [版本路线图](docs/02-version-roadmap.md)
+- [Evidence Runtime 与 TrailGraph](docs/03-trailgraph.md)
+- [工具与安全](docs/04-tools-and-safety.md)
+- [Skills 与扩展](docs/05-skills-and-extensions.md)
+- [测试与评测](docs/06-testing-and-evaluation.md)
+- [参考 Agent 项目](docs/07-reference-agents.md)
+- [Context Pack Compiler](docs/08-context-pack-compiler.md)
+- [Safe Execution Kernel](docs/09-safe-execution-kernel.md)
+- [Adaptive Planner](docs/10-adaptive-planner.md)
+- [Verification Router](docs/11-verification-router.md)
+- [完整开发文档](docs/12-development-plan.md)
+- [实施文档索引](docs/implementation/00-implementation-index.md)
+
+## 第一阶段实现目标
+
+v0.1 只实现最小 Agent Runtime，不直接堆完整 LSP、RAG、MCP 或多 Agent。
+
+1. 启动 CLI/REPL。
+2. 加载模型配置。
+3. 扫描项目并生成 `XHX.md`。
+4. 读取和搜索文件。
+5. 通过 `apply_patch` 应用安全补丁。
+6. 推断验证命令，并在用户确认后执行。
+7. 输出包含文件、命令、验证结果和风险的 Markdown 总结。
+
+## 反模式
+
+- 不把完整命令日志塞进 Prompt。
+- 不让每个任务默认走 DAG。
+- 不让 Skill 绕过权限策略。
+- 不在 v0.1 实现完整 LSP、RAG 或 MCP。
+- 不自动 commit 或 push。
+
+## 基本假设
+
+- 第一版运行栈使用 Python + LangGraph。
+- 第一版交互方式使用 CLI/REPL。
+- 第一版优先支持 Python 和 JavaScript/TypeScript 仓库。
+- 星穹铁道主题彩蛋暂缓，等核心 Runtime 可用后再加。
+- 第一批文档面向工程落地，不写成宣传型文案。
