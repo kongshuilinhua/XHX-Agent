@@ -48,6 +48,23 @@ def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None
     assert command_console.events
 
 
+def test_command_console_builds_follow_up_task_from_last_result(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+
+    assert command_console.build_runtime_task("first task") == "first task"
+    assert command_console.handle_input("analyze this repo")
+
+    follow_up = command_console.build_runtime_task("now verify the docs")
+
+    assert "Follow-up task in the same console session." in follow_up
+    assert "User request:\nnow verify the docs" in follow_up
+    assert f"- run_id: {command_console.last_result.run_id}" in follow_up  # type: ignore[union-attr]
+    assert f"- verification: {command_console.last_result.verification}" in follow_up  # type: ignore[union-attr]
+    assert f"- summary: {command_console.last_result.summary_path}" in follow_up  # type: ignore[union-attr]
+
+
 def test_command_console_state_commands_render_current_run(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     console = _console()

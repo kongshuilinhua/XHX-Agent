@@ -254,8 +254,8 @@ v0.5 中 `dag-execute` 可以显示为 planned。
 普通文本：
 
 - 如果没有 active run，创建新任务。
-- 如果 run 正在执行，默认作为 follow-up。
-- 后续可以支持 steer。
+- 如果已有上一轮结果，作为 follow-up，并携带上一轮 run id、状态、验证结果、changed files 和报告路径。
+- v0.5 当前实现只支持任务之间的 follow-up 上下文包装，还不支持运行中的实时 steer。
 
 快捷键：
 
