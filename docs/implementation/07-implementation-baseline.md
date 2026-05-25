@@ -35,6 +35,7 @@ v0.1-A 真实模型接入
 | `1db7523` | `Implement v0.1-C model planning diagnostics` | v0.1-A / v0.1-B 稳定性补强 | 增强真实模型计划解析和循环停止诊断，不单独作为新路线节点。 |
 | `ffe7cf4` | `Implement v0.1-D atomic patch engine` | v0.1-B 写入工具补强，兼作 v0.2 前置 | 强化 `apply_patch` 原子性。历史提交名保留，但后续文档不再使用 v0.1-D 作为版本。 |
 | `d32122c` | `Complete v0.1-C verification loop` | v0.1-C | 补齐交互确认、验证结果摘要、失败停止和验证报告。 |
+| `3279d04` | `Add v0.2 safety checkpoint groundwork` | v0.2 前半 | 增加 checkpoint、policy trace/evidence 和默认不自动 repair 的失败停止报告。 |
 
 ## v0.1-A 真实模型接入
 
@@ -196,30 +197,33 @@ v0.1-A 真实模型接入
 
 - v0.1-C 验证闭环完成。
 
-当前状态：部分实现。
+当前状态：基本完成。
 
 已完成：
 
 - 修改后验证前写入 `.xhx/checkpoints/<run-id>.json`。
 - checkpoint 记录 changed files 的 sha256、size、Git HEAD 和 dirty 状态。
+- 已抽出 `SafeExecutionKernel`，由 Runtime 通过该边界执行工具、创建 checkpoint、运行验证和记录 policy。
 - tool policy decision 写入 Raw Trace 和 Evidence Index。
 - terminal policy decision 写入 Raw Trace 和 Evidence Index。
 - changed files 随 `RunResult`、checkpoint、报告和 evidence 贯通。
-- repair loop 上限框架已存在，默认不自动 repair，不会无限循环。
+- `--auto-repair` 可在验证失败后最多执行 2 轮 repair loop。
+- repair loop 会把最近验证失败摘要反馈给下一轮模型计划。
+- repair loop 达到上限后停止，不会无限循环。
 - 验证失败时记录 repair decision，并明确说明未尝试自动修复。
+- repair 成功或失败都会在报告中记录 attempts、decision、verification 和 risk。
 
 未完成：
 
-- 还没有真正执行 repair loop。
 - 还没有自动回滚或 checkpoint restore。
-- 工具执行仍由 Runtime 包装 policy，尚未抽成独立 ExecutionKernel 类。
 - patch 尚未强制绑定具体 evidence id。
+- SafeExecutionKernel 仍是单进程最小内核，还没有独立沙箱或进程隔离。
 
-下一步必须优先补齐：
+进入 v0.3-v0.4 前仍需处理：
 
-1. 抽出 Safe Execution Kernel 边界，减少 Runtime 直接编排安全逻辑。
-2. 实现最多 2 轮 repair loop，但必须保证失败停止。
-3. 明确 checkpoint restore 策略：先提供只读报告，再决定是否自动回滚。
+1. 明确 checkpoint restore 策略：先提供只读报告，再决定是否自动回滚。
+2. 在 Evidence Runtime 中实现 patch 到具体 evidence id 的强绑定。
+3. 保持 SafeExecutionKernel 边界稳定，避免 Runtime 重新直接编排安全逻辑。
 
 ## v0.3-v0.4 Context + Evidence
 

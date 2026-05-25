@@ -19,6 +19,7 @@ def write_report(
     verification_results: list[TerminalResult] | None = None,
     checkpoint_path: str | None = None,
     repair: RepairDecision | None = None,
+    repair_attempts: int = 0,
 ) -> Path:
     ensure_xhx_dirs(workspace)
     path = xhx_dir(workspace) / "logbook" / f"{run_id}.md"
@@ -54,7 +55,7 @@ def write_report(
 
 ## Repair
 
-{_repair_details(repair)}
+{_repair_details(repair, repair_attempts)}
 
 ## Evidence Summary
 
@@ -98,12 +99,13 @@ def _verification_details(results: list[TerminalResult]) -> str:
     return "\n\n".join(sections)
 
 
-def _repair_details(repair: RepairDecision | None) -> str:
+def _repair_details(repair: RepairDecision | None, repair_attempts: int = 0) -> str:
     if repair is None:
         return "- none"
     return "\n".join(
         [
             f"- should_repair: {str(repair.should_repair).lower()}",
+            f"- repair_attempts: {repair_attempts}",
             f"- attempts_used: {repair.attempts_used}",
             f"- max_attempts: {repair.max_attempts}",
             f"- reason: {repair.reason}",

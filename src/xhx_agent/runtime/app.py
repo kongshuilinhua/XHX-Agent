@@ -20,11 +20,11 @@ from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
-from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, create_checkpoint
-from xhx_agent.safety.policy import decide_tool
-from xhx_agent.safety.repair import RepairDecision, decide_repair
+from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path
+from xhx_agent.safety.kernel import SafeExecutionKernel
+from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
-from xhx_agent.tools.terminal import TerminalResult, run_terminal
+from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
 
 
@@ -44,6 +44,7 @@ class RunResult(BaseModel):
     verification_results: list[TerminalResult] = []
     checkpoint_path: str | None = None
     repair: RepairDecision | None = None
+    repair_attempts: int = 0
     summary_path: str
     risk_summary: list[str]
 
@@ -85,11 +86,13 @@ class RuntimeApp:
         profile_name: str | None = None,
         assume_yes: bool = False,
         confirm_callback: ConfirmationCallback | None = None,
+        auto_repair: bool = False,
     ) -> RunResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"run-{int(time.time())}"
         evidence = EvidenceStore(self.workspace, run_id)
+        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
         evidence.write_trace("run_start", {"task": task, "profile": profile.name})
         scan = scan_project(self.workspace)
         changed_files: list[str] = []
@@ -97,6 +100,7 @@ class RuntimeApp:
         verification_results: list[TerminalResult] = []
         checkpoint: Checkpoint | None = None
         repair_decision: RepairDecision | None = None
+        repair_attempts = 0
         risks: list[str] = []
         status = "success"
         turns_completed = 0
@@ -109,144 +113,44 @@ class RuntimeApp:
         recent_error: str | None = None
         tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
-        for turn in range(1, _max_model_turns(profile) + 1):
-            context_pack = compile_context_pack(
-                workspace=self.workspace,
-                task=task,
-                scan=scan,
-                changed_files=changed_files,
-                tool_summaries=tool_summaries,
-                evidence_entries=evidence_entries,
-                recent_error=recent_error,
-            )
-            evidence.write_trace("context_pack", context_pack.model_dump())
-            try:
-                plan = self._build_plan(task, profile, context_pack)
-            except ModelClientError as exc:
-                evidence.write_trace("model_error", exc.to_trace_payload())
-                status = "failed"
-                risks.append(exc.message)
-                break
-
-            plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
-            evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
-            turns_completed = turn
-            plan_summaries.append(f"Turn {turn}: {plan.summary}")
-            evidence_entries.append(
-                evidence.write_evidence(
-                    kind="decision",
-                    source=profile.provider,
-                    summary=plan.summary,
-                    artifact_ref=f"trace://{run_id}/{plan_trace_type}/{turn}",
-                    confidence=0.7 if profile.provider == "mock" else 0.6,
-                )
-            )
-
-            if plan.status == "done":
-                break
-
-            try:
-                self.tool_registry.validate_plan(plan)
-            except ModelClientError as exc:
-                status = "failed"
-                risks.append(exc.message)
-                evidence.write_trace("model_error", exc.to_trace_payload())
-                break
-
-            for step in plan.steps:
-                policy = decide_tool(step.tool)
-                evidence.write_trace("policy_decision", {"scope": "tool", "tool": step.tool, **policy.model_dump(mode="json")})
-                evidence.write_evidence(
-                    "policy",
-                    f"tool:{step.tool}",
-                    f"{policy.decision}: {policy.reason}",
-                    f"trace://{run_id}/policy/tool/{turn}/{step.tool}",
-                    confidence=0.9,
-                )
-                if policy.decision == "deny":
-                    status = "failed"
-                    recent_error = policy.reason
-                    risks.append(policy.reason)
-                    break
-                trace = evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
-                try:
-                    result = self.tool_registry.execute(tool_context, step)
-                    evidence.write_trace("tool_result", {"turn": turn, **result.trace_payload})
-                    tool_summaries.append(f"{step.tool}: {result.status}: {result.summary}")
-                    if result.status != "success":
-                        status = "failed"
-                        recent_error = result.error or result.summary or f"{step.tool} failed"
-                        risks.append(recent_error)
-                        break
-                    changed_files.extend(result.changed_files)
-                    if result.evidence_kind and result.evidence_source and result.evidence_summary:
-                        evidence_entries.append(
-                            evidence.write_evidence(
-                                result.evidence_kind,
-                                result.evidence_source,
-                                result.evidence_summary,
-                                f"trace://{trace.id}",
-                                confidence=0.9 if result.evidence_kind == "patch" else 0.8,
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
-                    status = "failed"
-                    recent_error = str(exc)
-                    risks.append(recent_error)
-                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc)})
-                    break
-            if status == "failed" or plan.status == "done" or _should_stop_after_turn(profile, changed_files, plan.steps):
-                break
-        else:
-            status = "failed"
-            message = f"Model did not finish within {_max_model_turns(profile)} turn(s)."
-            recent_error = message
-            risks.append(message)
-            evidence.write_trace("model_error", {"code": "max_turns_exceeded", "message": message})
+        status, turns_completed, recent_error = self._run_model_tool_loop(
+            task=task,
+            profile=profile,
+            scan=scan,
+            evidence=evidence,
+            kernel=kernel,
+            tool_context=tool_context,
+            changed_files=changed_files,
+            tool_summaries=tool_summaries,
+            evidence_entries=evidence_entries,
+            plan_summaries=plan_summaries,
+            risks=risks,
+            recent_error=recent_error,
+            starting_turn=1,
+        )
 
         verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
         commands = [item.command for item in verification_plan.commands] if verification_plan else []
         verification_status = (
             "not_executed" if status == "failed" else verification_plan.skip_reason if verification_plan else "skipped_no_changes"
         )
-        if status != "failed" and changed_files:
-            checkpoint = create_checkpoint(self.workspace, run_id, sorted(set(changed_files)))
-            evidence.write_trace("checkpoint", checkpoint.model_dump())
-            evidence.write_evidence(
-                "checkpoint",
-                checkpoint.id,
-                f"Checkpoint recorded {len(checkpoint.files)} changed file(s) before verification.",
-                f"checkpoint://{checkpoint.id}",
-                confidence=0.95,
-            )
+        if status != "failed" and not changed_files:
+            verification_status = "skipped_no_changes"
+            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
+
+        while status != "failed" and changed_files:
+            checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
+            verification_results.clear()
+            commands_run.clear()
+            verification_status = verification_plan.skip_reason if verification_plan else "not_executed"
             for command in commands:
-                result = run_terminal(
-                    self.workspace,
+                result = kernel.run_verification(
                     command,
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
                 )
                 commands_run.append(command)
                 verification_results.append(result)
-                evidence.write_trace(
-                    "policy_decision",
-                    {"scope": "terminal", "command": command, **result.policy.model_dump(mode="json")},
-                )
-                evidence.write_evidence(
-                    "policy",
-                    f"terminal:{command}",
-                    f"{result.policy.decision}: {result.policy.reason}",
-                    f"trace://{run_id}/policy/terminal/{command}",
-                    confidence=0.9,
-                )
-                evidence.write_trace("verification", result.model_dump())
-                evidence.write_evidence(
-                    "test",
-                    command,
-                    _verification_evidence_summary(result),
-                    f"trace://{run_id}/verification/{command}",
-                    confidence=0.95 if result.status == "success" else 0.6,
-                )
                 if result.status == "confirm":
                     verification_status = "requires_confirmation"
                     risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
@@ -257,9 +161,11 @@ class RuntimeApp:
                     risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
                     break
                 verification_status = "passed"
-            repair_decision = decide_repair(verification_status, attempts_used=0, auto_repair_enabled=False)
+            repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
             evidence.write_trace("repair_decision", repair_decision.model_dump())
-            if verification_status == "failed":
+            if verification_status != "failed":
+                break
+            if not repair_decision.should_repair:
                 evidence.write_evidence(
                     "error",
                     "repair",
@@ -268,9 +174,44 @@ class RuntimeApp:
                     confidence=0.8,
                 )
                 risks.append(f"Repair not attempted: {repair_decision.reason}")
-        elif status != "failed":
-            verification_status = "skipped_no_changes"
-            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
+                break
+            repair_attempts += 1
+            evidence.write_evidence(
+                "decision",
+                "repair",
+                f"Repair attempt {repair_attempts}/{MAX_REPAIR_ATTEMPTS}: {repair_decision.reason}",
+                f"trace://{run_id}/repair/{repair_attempts}",
+                confidence=0.7,
+            )
+            recent_error = _last_verification_error(verification_results)
+            tool_summaries.append(f"verification failed: {recent_error}")
+            before_repair_changed = len(changed_files)
+            status = "success"
+            status, turns_completed, recent_error = self._run_model_tool_loop(
+                task=f"Repair after failed verification: {task}",
+                profile=profile,
+                scan=scan,
+                evidence=evidence,
+                kernel=kernel,
+                tool_context=tool_context,
+                changed_files=changed_files,
+                tool_summaries=tool_summaries,
+                evidence_entries=evidence_entries,
+                plan_summaries=plan_summaries,
+                risks=risks,
+                recent_error=recent_error,
+                starting_turn=turns_completed + 1,
+                max_turns=1,
+            )
+            if status == "failed":
+                break
+            if len(changed_files) == before_repair_changed:
+                status = "failed"
+                message = "Repair loop produced no additional changes."
+                risks.append(message)
+                evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
+                break
+            continue
         summary = write_report(
             workspace=self.workspace,
             run_id=run_id,
@@ -283,6 +224,7 @@ class RuntimeApp:
             verification_results=verification_results,
             checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
             repair=repair_decision,
+            repair_attempts=repair_attempts,
         )
         evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         return RunResult(
@@ -295,12 +237,23 @@ class RuntimeApp:
             verification_results=verification_results,
             checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
             repair=repair_decision,
+            repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(self.workspace)),
             risk_summary=risks,
         )
 
-    def run_task_json(self, task: str, profile_name: str | None = None, assume_yes: bool = False) -> str:
-        return json.dumps(self.run_task(task, profile_name, assume_yes=assume_yes).model_dump(), ensure_ascii=False, indent=2)
+    def run_task_json(
+        self,
+        task: str,
+        profile_name: str | None = None,
+        assume_yes: bool = False,
+        auto_repair: bool = False,
+    ) -> str:
+        return json.dumps(
+            self.run_task(task, profile_name, assume_yes=assume_yes, auto_repair=auto_repair).model_dump(),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def preview_plan(self, task: str, profile_name: str | None = None) -> PlanPreview:
         config = load_config(self.workspace)
@@ -353,6 +306,104 @@ class RuntimeApp:
             details={"provider": profile.provider},
         )
 
+    def _run_model_tool_loop(
+        self,
+        *,
+        task: str,
+        profile: ModelProfile,
+        scan,
+        evidence: EvidenceStore,
+        kernel: SafeExecutionKernel,
+        tool_context: ToolContext,
+        changed_files: list[str],
+        tool_summaries: list[str],
+        evidence_entries: list[EvidenceEntry],
+        plan_summaries: list[str],
+        risks: list[str],
+        recent_error: str | None,
+        starting_turn: int,
+        max_turns: int | None = None,
+    ) -> tuple[str, int, str | None]:
+        status = "success"
+        turns_completed = starting_turn - 1
+        turn_limit = max_turns or _max_model_turns(profile)
+        for offset in range(turn_limit):
+            turn = starting_turn + offset
+            context_pack = compile_context_pack(
+                workspace=self.workspace,
+                task=task,
+                scan=scan,
+                changed_files=changed_files,
+                tool_summaries=tool_summaries,
+                evidence_entries=evidence_entries,
+                recent_error=recent_error,
+            )
+            evidence.write_trace("context_pack", context_pack.model_dump())
+            try:
+                plan = self._build_plan(task, profile, context_pack)
+            except ModelClientError as exc:
+                evidence.write_trace("model_error", exc.to_trace_payload())
+                risks.append(exc.message)
+                return "failed", turns_completed, exc.message
+
+            plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
+            evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
+            turns_completed = turn
+            plan_summaries.append(f"Turn {turn}: {plan.summary}")
+            evidence_entries.append(
+                evidence.write_evidence(
+                    kind="decision",
+                    source=profile.provider,
+                    summary=plan.summary,
+                    artifact_ref=f"trace://{evidence.run_id}/{plan_trace_type}/{turn}",
+                    confidence=0.7 if profile.provider == "mock" else 0.6,
+                )
+            )
+
+            if plan.status == "done":
+                return status, turns_completed, recent_error
+
+            try:
+                self.tool_registry.validate_plan(plan)
+            except ModelClientError as exc:
+                risks.append(exc.message)
+                evidence.write_trace("model_error", exc.to_trace_payload())
+                return "failed", turns_completed, exc.message
+
+            for step in plan.steps:
+                try:
+                    result, trace, policy = kernel.execute_tool(tool_context, step, turn)
+                    if result is None or trace is None:
+                        risks.append(policy.reason)
+                        return "failed", turns_completed, policy.reason
+                    tool_summaries.append(f"{step.tool}: {result.status}: {result.summary}")
+                    if result.status != "success":
+                        recent_error = result.error or result.summary or f"{step.tool} failed"
+                        risks.append(recent_error)
+                        return "failed", turns_completed, recent_error
+                    changed_files.extend(result.changed_files)
+                    if result.evidence_kind and result.evidence_source and result.evidence_summary:
+                        evidence_entries.append(
+                            evidence.write_evidence(
+                                result.evidence_kind,
+                                result.evidence_source,
+                                result.evidence_summary,
+                                f"trace://{trace.id}",
+                                confidence=0.9 if result.evidence_kind == "patch" else 0.8,
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
+                    recent_error = str(exc)
+                    risks.append(recent_error)
+                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc)})
+                    return "failed", turns_completed, recent_error
+            if _should_stop_after_turn(profile, changed_files, plan.steps):
+                return status, turns_completed, recent_error
+        message = f"Model did not finish within {turn_limit} turn(s)."
+        risks.append(message)
+        evidence.write_trace("model_error", {"code": "max_turns_exceeded", "message": message})
+        return "failed", turns_completed, message
+
 
 def _max_model_turns(profile: ModelProfile) -> int:
     return 2 if profile.provider == "mock" else 4
@@ -366,11 +417,13 @@ def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], ste
     return not steps
 
 
-def _verification_evidence_summary(result: TerminalResult) -> str:
-    exit_code = "none" if result.exit_code is None else str(result.exit_code)
-    summary = result.summary or result.policy.reason
-    return f"{result.status}: exit_code={exit_code}; {summary}"
-
-
 def checkpoint_path_value(workspace: Path, run_id: str) -> Path:
     return checkpoint_path(workspace, run_id).relative_to(workspace)
+
+
+def _last_verification_error(results: list[TerminalResult]) -> str:
+    if not results:
+        return "Verification failed."
+    last = results[-1]
+    exit_code = "none" if last.exit_code is None else str(last.exit_code)
+    return f"{last.command} failed with exit_code={exit_code}: {last.summary or last.policy.reason}"
