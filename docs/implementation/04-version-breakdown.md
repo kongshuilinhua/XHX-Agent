@@ -143,6 +143,7 @@ v0.1 只能拆成三个固定子阶段：
 模块任务：
 
 - `tui`：terminal abstraction、component、input、render loop。
+- `tui.page`：把 ConsoleState 渲染成可复用 Rich 终端页面，先服务 `/dashboard`，后续可迁移到 Textual。
 - `cli`：interactive mode 切换。
 - `runtime`：发出 run、context、plan、policy、tool、verification、repair 和 report 事件。
 - `tui.state`：把 RuntimeEvent 归约成 ConsoleState，供 Rich 控制台和后续 Textual TUI 复用。

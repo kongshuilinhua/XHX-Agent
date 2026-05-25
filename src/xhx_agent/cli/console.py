@@ -4,7 +4,6 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.columns import Columns
 from rich.panel import Panel
 from rich.table import Table
 
@@ -13,6 +12,7 @@ from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.tui.page import render_console_page
 from xhx_agent.tui.state import ConsoleState
 
 
@@ -310,20 +310,12 @@ class CommandConsole:
 
     def print_dashboard(self) -> None:
         self.console.print(
-            Panel(
-                Columns(
-                    [
-                        self.status_table(),
-                        self.plan_table(),
-                        self.activity_table(),
-                        self.last_run_table(),
-                        self.event_table(),
-                        self.command_table(),
-                    ],
-                    equal=True,
-                    expand=True,
-                ),
-                title="xhx-agent",
+            render_console_page(
+                self.state,
+                workspace=str(self.workspace),
+                profile=self.profile_name or load_config(self.workspace).default_profile,
+                auto_repair=self.auto_repair,
+                assume_yes=self.assume_yes,
             )
         )
 
