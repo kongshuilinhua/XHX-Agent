@@ -12,6 +12,7 @@
 4. [全版本任务拆分](04-version-breakdown.md)：查看 v0.1 到 v1.0 的版本落点。
 5. [测试 Fixture 与验收](05-testing-fixtures.md)：确认测试仓库、验收命令和矩阵。
 6. [TUI / Command Console 规格](06-tui-command-console-spec.md)：查看 v0.5 终端交互设计。
+7. [版本实施基线](07-implementation-baseline.md)：固定版本名称、当前状态、进入条件和路线变更规则。
 
 ## 文档分层
 
@@ -59,3 +60,4 @@ xhx-agent 参考 pi 的模块边界，但不照搬 TypeScript monorepo。
 - v0.1 可以先实现最小功能，但目录和契约要按长期结构放置。
 - 每个版本都必须可运行、可测试、可验收。
 - 文档描述 planned 能力时必须保持“当前版本”和“后续版本”边界。
+- 开发时以 [版本实施基线](07-implementation-baseline.md) 为准，不新增未记录的小版本名。

@@ -4,6 +4,8 @@
 
 更细的实施级规格见 [实施文档索引](implementation/00-implementation-index.md)。总纲用于判断方向，实施文档用于拆任务、定接口和写测试。
 
+后续开发以 [版本实施基线](implementation/07-implementation-baseline.md) 为准。版本名称、进入条件和验收标准必须先在基线文档中确认，不允许实现时临时新增小版本名。
+
 ## 1. 项目目标
 
 `xhx-agent` 的目标是实现一个完整的本地编码 Agent。它不是简单的问答工具，而是一个可以在真实代码仓库中完成任务的 Agent Runtime。
@@ -868,6 +870,7 @@ model_name
 2. [运行时契约](implementation/02-runtime-contracts.md)。
 3. [v0.1 实施规格](implementation/03-v0.1-implementation-spec.md)。
 4. [测试 Fixture 与验收](implementation/05-testing-fixtures.md)。
+5. [版本实施基线](implementation/07-implementation-baseline.md)。
 
 ## 9. 明确反模式
 

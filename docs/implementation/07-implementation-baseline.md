@@ -1,0 +1,336 @@
+# 版本实施基线
+
+本文档是后续开发的执行基线。它固定版本名称、版本顺序、验收条件和变更规则，避免实现过程中随意新增小版本或改变路线。
+
+## 使用规则
+
+- 开发前先确认当前版本和目标版本。
+- 版本名称只能使用本文档列出的名称。
+- 不新增 `v0.1-D`、`v0.1-E` 这类临时版本名。
+- 需要偏离路线时，必须先更新本文档的“路线变更记录”，说明原因、影响和新的验收条件。
+- 每次提交后必须同步 README 的“当前实现状态”。
+- 当前实现状态必须区分已实现、部分实现、未实现，不能把规划能力写成已完成能力。
+
+## 当前版本线
+
+```text
+v0.1-A 真实模型接入
+  -> v0.1-B Tool-call loop
+  -> v0.1-C 验证闭环
+  -> v0.2 Safe Execution Kernel 强化
+  -> v0.3-v0.4 Context + Evidence
+  -> v0.5-v0.7 产品能力
+  -> v0.8-v0.9 扩展、评测、回放
+  -> v1.0 完整可发布版本
+```
+
+## 当前提交归属
+
+已有提交按下面方式归类，不再改写历史提交名。
+
+| 提交 | 原提交名 | 归属版本 | 说明 |
+| --- | --- | --- | --- |
+| `61df280` | `Initial xhx-agent v0.1-A` | v0.1-A / v0.1-B / v0.1-C 的 mock 骨架 | 建立 CLI、配置、mock 闭环、基础工具、验证和报告。 |
+| `6fbe08d` | `Implement v0.1-B context planning loop` | v0.1-B，含 v0.3 前置能力 | 增加 tool-call loop、Context Pack 最小版和 dry-run。Context Pack 是后续前置，不代表 v0.3 完成。 |
+| `1db7523` | `Implement v0.1-C model planning diagnostics` | v0.1-A / v0.1-B 稳定性补强 | 增强真实模型计划解析和循环停止诊断，不单独作为新路线节点。 |
+| `ffe7cf4` | `Implement v0.1-D atomic patch engine` | v0.1-B 写入工具补强，兼作 v0.2 前置 | 强化 `apply_patch` 原子性。历史提交名保留，但后续文档不再使用 v0.1-D 作为版本。 |
+
+## v0.1-A 真实模型接入
+
+目标：真实模型能返回结构化工具计划，不再只依赖 mock。
+
+必须实现：
+
+- `OpenAICompatibleClient`。
+- OpenAI-compatible `base_url`、`api_key_env`、`model`、`temperature` 配置。
+- API key 从环境变量读取。
+- 普通 JSON 输出解析。
+- 常见 JSON fenced block 解析。
+- 分段 content 解析。
+- JSON / schema 错误结构化诊断。
+- 保留 `MockModelClient` 作为测试线。
+
+验收标准：
+
+- 缺少 API key 时失败可解释，不执行工具。
+- HTTP 错误、非 JSON 响应、坏 plan schema 都写入 trace。
+- 模型返回合法 JSON plan 时能生成 `ModelPlan`。
+- mock 测试不依赖真实网络。
+
+当前状态：部分完成。
+
+已完成：
+
+- OpenAI-compatible 非流式 Chat Completions 请求。
+- API key 环境变量读取。
+- mock model。
+- JSON plan 解析、fenced block、分段 content、错误诊断。
+- `--dry-run` 可预览计划并写 trace。
+
+未完成：
+
+- 流式模型输出。
+- provider 级 response format 适配。
+- 更完整的真实模型端到端验收。
+
+下一步如果继续 v0.1-A：
+
+- 增加可选 `response_format` 配置。
+- 增加真实模型 profile 的手动验收文档。
+- 保持 mock 测试为 CI 默认路径。
+
+## v0.1-B Tool-call loop
+
+目标：Runtime 能执行“模型 -> 工具调用 -> 工具结果 -> 再调用模型”的最小循环。
+
+必须实现：
+
+- 模型返回 tool steps。
+- 支持 `read_file`、`search`、`apply_patch`。
+- Tool Registry 校验工具名和参数。
+- 工具结果写 trace。
+- 工具结果摘要进入下一轮模型上下文。
+- `apply_patch` 作为唯一仓库写入工具。
+- patch 必须写入 evidence。
+
+验收标准：
+
+- 模型不能调用未注册工具。
+- 坏工具参数不会执行。
+- 工具失败时停止并报告。
+- 成功 patch 后记录 changed files。
+- Python / Node fixture 能通过工具循环完成修改。
+
+当前状态：部分完成。
+
+已完成：
+
+- Tool Registry。
+- `read_file`、`search`、`apply_patch`。
+- 工具结果反馈下一轮模型。
+- `apply_patch` 多 hunk、多文件、Add File、路径逃逸拒绝、失败不落盘。
+- patch 成功写入 Evidence Index。
+
+未完成：
+
+- 工具层还没有完全统一进入 Safe Execution Kernel。
+- patch 尚未强制绑定具体 evidence id。
+- terminal 仍主要用于验证，不允许模型直接调用。
+
+下一步如果继续 v0.1-B：
+
+- 保持工具集合小而稳定。
+- 不引入 DAG。
+- 不引入 Skill/MCP。
+
+## v0.1-C 验证闭环
+
+目标：完成真实 v0.1 的“读 -> 改 -> 测 -> 报告”闭环。
+
+必须实现：
+
+- Verification Router。
+- 根据 changed files 和项目结构推断验证命令。
+- terminal confirm / `--yes` 执行。
+- 验证结果写 Raw Trace。
+- 验证结果写 Evidence Index。
+- 验证失败立即停止并报告。
+- 不急着做 repair loop。
+
+验收标准：
+
+- Python fixture 修改后运行 `uv run pytest` 或 `python -m pytest`。
+- Node fixture 修改后运行 `npm test`、`npm run typecheck` 或 `npm run build`。
+- 用户不传 `--yes` 时 confirm 级命令不自动执行。
+- 只读任务不触发验证。
+- 验证失败时状态为 failed，报告中有命令、退出码摘要和风险。
+- 每次任务生成 Markdown 报告。
+
+当前状态：部分完成。
+
+已完成：
+
+- Python / Node 基础验证推断。
+- `--yes` 执行 confirm 级验证命令。
+- 验证结果写 Raw Trace 和 Evidence Index。
+- 只读任务标记为 `skipped_no_changes`。
+- Python / Node fixture smoke 通过。
+
+未完成：
+
+- 交互式 terminal confirm 体验还很弱。
+- 验证失败报告缺少更稳定的输出截断和退出码摘要格式。
+- 验证命令选择还没有按具体 changed files 缩小到测试文件。
+
+下一步必须优先补齐：
+
+1. terminal confirm 交互：无 `--yes` 时清晰提示 command、risk、reason。
+2. verification report：保存 command、exit_code、stdout/stderr 摘要、skip reason。
+3. 验证失败停止：明确 `status=failed`，不进入 repair。
+4. README 更新：标注 v0.1-C 完成度。
+
+## v0.2 Safe Execution Kernel 强化
+
+目标：失败能安全停住，危险操作不会自动执行。
+
+必须实现：
+
+- Git checkpoint。
+- changed files 追踪增强。
+- repair loop 最多 2 轮。
+- deny / confirm 策略补强。
+- policy decision 写 trace 和 evidence。
+
+验收标准：
+
+- `rm -rf`、`git reset --hard`、全局安装默认拒绝。
+- confirm 命令必须由用户确认或 `--yes` 放行。
+- repair loop 不会无限循环。
+- 修复失败时保留 trace、evidence 和报告。
+
+进入条件：
+
+- v0.1-C 验证闭环完成。
+
+## v0.3-v0.4 Context + Evidence
+
+目标：解决 token 爆炸和可追溯问题。
+
+v0.3 必须实现：
+
+- Context Pack Compiler 正式化。
+- token budget。
+- top-k evidence selection。
+- changed files selection。
+- recent failure selection。
+- context debug report。
+
+v0.4 必须实现：
+
+- Raw Trace 完善。
+- Evidence Index 完善。
+- patch 绑定 evidence id。
+- report evidence 渲染。
+- artifact_ref 按需展开。
+
+进入条件：
+
+- v0.2 Safe Execution Kernel 完成。
+
+当前前置状态：
+
+- 已有最小 Context Pack。
+- 已有 Raw Trace / Evidence Index 基础写入。
+- 这些只能算前置能力，不代表 v0.3 或 v0.4 已完成。
+
+## v0.5-v0.7 产品能力
+
+目标：从可用 CLI 演进到接近 Claude Code 的产品体验和复杂任务能力。
+
+v0.5：TUI / Command Console。
+
+- 终端交互窗口。
+- 流式输出。
+- 工具状态。
+- 权限确认 UI。
+- `/` 命令系统。
+
+v0.6：Repo Intelligence Graph。
+
+- repo map。
+- Tree-sitter 符号提取。
+- symbol search。
+- context builder。
+- impact analysis。
+
+v0.7：Adaptive Planner + DAG。
+
+- mode classifier。
+- DAG planner。
+- read-only parallel execution。
+- write serialization。
+- Reviewer quality gate。
+
+进入条件：
+
+- v0.3-v0.4 的上下文和证据机制稳定。
+
+## v0.8-v0.9 扩展、评测、回放
+
+v0.8：Skills / Extensions / MCP。
+
+- Skill metadata。
+- trigger matching。
+- progressive disclosure。
+- hooks。
+- optional MCP client。
+
+v0.9：Evaluation / Headless / Replay。
+
+- `xhx run "<task>" --json` 完整化。
+- JSONL RPC。
+- Trail replay。
+- benchmark。
+- metrics。
+
+进入条件：
+
+- v0.5-v0.7 的产品和规划能力稳定。
+
+## v1.0 完整可发布版本
+
+目标：形成可以作为完整项目发布的本地编码 Agent。
+
+必须具备：
+
+- 稳定 CLI/REPL/TUI。
+- 稳定 OpenAI-compatible profile。
+- 稳定读改测闭环。
+- Safe Execution Kernel。
+- Context Pack Compiler。
+- Evidence Runtime。
+- Repo Intelligence Graph。
+- Adaptive Planner + DAG。
+- Skill / MCP。
+- Headless / Replay / Evaluation。
+- README、安装指南、示例、测试和故障排查。
+
+## 路线变更规则
+
+只有以下情况可以改路线：
+
+- 当前版本的验收标准无法支撑下一个版本。
+- 发现安全风险，必须先修。
+- 发现架构耦合，继续开发会造成明显返工。
+- 用户明确要求调整优先级。
+
+变更步骤：
+
+1. 在本节新增一条记录。
+2. 写明原计划、新计划、原因、影响范围。
+3. 更新 README 当前状态。
+4. 再开始代码实现。
+
+## 路线变更记录
+
+### 2026-05-25：收敛 v0.1 小版本命名
+
+原计划：
+
+- 实现过程中出现了 `v0.1-D`、`v0.1-E` 这类临时版本名。
+
+新计划：
+
+- 只保留 `v0.1-A`、`v0.1-B`、`v0.1-C` 三个 v0.1 子阶段。
+- 已提交的 patch engine 强化归入 v0.1-B 写入工具补强和 v0.2 前置能力。
+- 后续直接补齐 v0.1-C，再进入 v0.2。
+
+原因：
+
+- 临时版本名会破坏用户确认过的 7 步路线。
+- 后续开发需要稳定的验收基线。
+
+影响：
+
+- 不改写历史 Git 提交。
+- README 和实施文档改为使用本基线版本名。
