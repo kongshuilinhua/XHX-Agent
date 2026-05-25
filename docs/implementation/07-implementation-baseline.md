@@ -322,7 +322,7 @@ v0.5 已完成：
 - Runtime 支持轻量事件回调。
 - Runtime 发出 `policy_decision`、`tool_result`、`verification_result` 等事件，控制台用 `ConsoleState` 做状态归约。
 - Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
-- `/dashboard` 渲染状态、当前计划、活动、最近运行、最近事件和命令列表。
+- `/dashboard` 使用 `tui.page` 渲染一个 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
 - `/context`、`/evidence`、`/verify`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 

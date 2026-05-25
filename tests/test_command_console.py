@@ -81,9 +81,10 @@ def test_command_console_dashboard_renders_sections(tmp_path: Path) -> None:
     assert command_console.handle_input("/dashboard")
 
     output = console.export_text()
-    assert "Console Status" in output
-    assert "Last Run" in output
-    assert "Recent Events" in output
+    assert "Conversation" in output
+    assert "Runtime State" in output
+    assert "Context" in output
+    assert "Commands" in output
     assert "/dashboard" in output
 
 
