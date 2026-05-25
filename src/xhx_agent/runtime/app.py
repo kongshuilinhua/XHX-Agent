@@ -170,6 +170,7 @@ class RuntimeApp:
                     command,
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
+                    event_callback=event_callback,
                 )
                 emit_event(
                     event_callback,
@@ -285,6 +286,7 @@ class RuntimeApp:
             run_id=run_id,
             status=status,
             verification=verification_status,
+            changed_files=sorted(set(changed_files)),
             summary_path=str(summary.relative_to(self.workspace)),
         )
         return RunResult(
@@ -458,7 +460,7 @@ class RuntimeApp:
             for step in plan.steps:
                 try:
                     emit_event(event_callback, "tool_start", f"Tool started: {step.tool}", turn=turn, tool=step.tool)
-                    result, trace, policy = kernel.execute_tool(tool_context, step, turn)
+                    result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
                     if result is None or trace is None:
                         risks.append(policy.reason)
                         return "failed", turns_completed, policy.reason

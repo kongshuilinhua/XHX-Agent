@@ -84,16 +84,24 @@ keyboard input
 TUI 消费这些事件：
 
 - `run_start`：显示运行开始。
+- `scan`：更新项目语言和文件数量。
+- `context_pack`：更新上下文预算、选中条目和省略条目。
+- `model_plan_start`：显示计划生成中。
+- `model_plan`：更新当前计划摘要、状态和步骤数量。
 - `model_delta`：追加流式文本。
 - `tool_start`：显示工具开始。
 - `policy_decision`：显示确认或拒绝状态。
-- `tool_end`：显示工具结果摘要。
+- `tool_result`：显示工具结果摘要。
 - `verification_start`：显示验证中。
-- `verification_end`：显示验证结果。
+- `verification_result`：显示验证结果。
+- `checkpoint`：更新本轮 changed files。
+- `repair_decision`：显示修复判断。
 - `repair_start`：显示修复轮次。
-- `repair_end`：显示修复结果。
+- `restore_plan`：显示失败后的只读恢复计划状态。
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
+
+v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。
 
 ## 权限确认
 

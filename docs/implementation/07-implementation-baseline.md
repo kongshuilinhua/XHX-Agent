@@ -320,8 +320,11 @@ v0.5 已完成：
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
 - Runtime 支持轻量事件回调。
+- Runtime 发出 `policy_decision`、`tool_result`、`verification_result` 等事件，控制台用 `ConsoleState` 做状态归约。
 - Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
-- `/dashboard` 渲染状态、最近运行、最近事件和命令列表。
+- `/dashboard` 渲染状态、当前计划、活动、最近运行、最近事件和命令列表。
+- `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
+- `/context`、`/evidence`、`/verify`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 
 v0.5 未完成 / 后续增强：
 
