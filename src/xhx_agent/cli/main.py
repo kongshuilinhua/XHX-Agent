@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 from rich.console import Console
 
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
+from xhx_agent.safety.policy import PolicyDecision
 
 
 app = typer.Typer(help="xhx-agent local coding agent CLI.")
@@ -53,7 +55,7 @@ def run(
     if json_output:
         console.print(runtime.run_task_json(task, profile, assume_yes=yes))
         return
-    result = runtime.run_task(task, profile, assume_yes=yes)
+    result = runtime.run_task(task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command)
     console.print(f"status: {result.status}")
     console.print(f"summary: {result.summary_path}")
     if result.commands:
@@ -93,3 +95,15 @@ def config_list() -> None:
 def config_set_profile(profile: str) -> None:
     # v0.1 keeps config mutation out of scope; this command validates intent.
     console.print(f"Profile switching is planned. Requested profile: {profile}")
+
+
+def _confirm_terminal_command(command: str, decision: PolicyDecision) -> bool:
+    console.print("Verification command requires confirmation.")
+    console.print(f"command: {command}")
+    console.print(f"risk: {decision.risk.value}")
+    console.print(f"reason: {decision.reason}")
+    try:
+        return typer.confirm("Run this command?", default=False, abort=False)
+    except (click.Abort, EOFError, KeyboardInterrupt):
+        console.print("Verification command declined.")
+        return False

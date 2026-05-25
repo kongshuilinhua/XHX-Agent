@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Callable
 
 from pydantic import BaseModel
 
@@ -20,7 +21,7 @@ from xhx_agent.runtime.config import load_config, write_default_config
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
-from xhx_agent.tools.terminal import run_terminal
+from xhx_agent.tools.terminal import TerminalResult, run_terminal
 from xhx_agent.verification.router import infer_verification
 
 
@@ -37,6 +38,7 @@ class RunResult(BaseModel):
     changed_files: list[str]
     commands: list[str]
     verification: str
+    verification_results: list[TerminalResult] = []
     summary_path: str
     risk_summary: list[str]
 
@@ -50,6 +52,9 @@ class PlanPreview(BaseModel):
     context_used_tokens_estimate: int
     trace_path: str
     risk_summary: list[str]
+
+
+ConfirmationCallback = Callable[[str, object], bool]
 
 
 class RuntimeApp:
@@ -69,7 +74,13 @@ class RuntimeApp:
             xhx_md_created=xhx_md_created,
         )
 
-    def run_task(self, task: str, profile_name: str | None = None, assume_yes: bool = False) -> RunResult:
+    def run_task(
+        self,
+        task: str,
+        profile_name: str | None = None,
+        assume_yes: bool = False,
+        confirm_callback: ConfirmationCallback | None = None,
+    ) -> RunResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"run-{int(time.time())}"
@@ -78,6 +89,7 @@ class RuntimeApp:
         scan = scan_project(self.workspace)
         changed_files: list[str] = []
         commands_run: list[str] = []
+        verification_results: list[TerminalResult] = []
         risks: list[str] = []
         status = "success"
         turns_completed = 0
@@ -178,24 +190,30 @@ class RuntimeApp:
         )
         if status != "failed" and changed_files:
             for command in commands:
-                result = run_terminal(self.workspace, command, assume_yes=assume_yes)
+                result = run_terminal(
+                    self.workspace,
+                    command,
+                    assume_yes=assume_yes,
+                    confirm_callback=confirm_callback,
+                )
                 commands_run.append(command)
+                verification_results.append(result)
                 evidence.write_trace("verification", result.model_dump())
                 evidence.write_evidence(
                     "test",
                     command,
-                    f"{result.status}: {result.summary or result.policy.reason}",
+                    _verification_evidence_summary(result),
                     f"trace://{run_id}/verification/{command}",
                     confidence=0.95 if result.status == "success" else 0.6,
                 )
                 if result.status == "confirm":
                     verification_status = "requires_confirmation"
-                    risks.append(f"Verification requires confirmation: {command}")
+                    risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
                     break
                 if result.status != "success":
                     status = "failed"
                     verification_status = "failed"
-                    risks.append(f"Verification failed: {command}")
+                    risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
                     break
                 verification_status = "passed"
         elif status != "failed":
@@ -210,6 +228,7 @@ class RuntimeApp:
             commands=commands_run or commands,
             verification=verification_status,
             risks=risks,
+            verification_results=verification_results,
         )
         evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         return RunResult(
@@ -219,6 +238,7 @@ class RuntimeApp:
             changed_files=sorted(set(changed_files)),
             commands=commands_run or commands,
             verification=verification_status,
+            verification_results=verification_results,
             summary_path=str(summary.relative_to(self.workspace)),
             risk_summary=risks,
         )
@@ -288,3 +308,9 @@ def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], ste
     if changed_files:
         return True
     return not steps
+
+
+def _verification_evidence_summary(result: TerminalResult) -> str:
+    exit_code = "none" if result.exit_code is None else str(result.exit_code)
+    summary = result.summary or result.policy.reason
+    return f"{result.status}: exit_code={exit_code}; {summary}"

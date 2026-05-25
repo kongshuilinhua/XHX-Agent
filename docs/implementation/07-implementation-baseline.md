@@ -152,22 +152,25 @@ v0.1-A 真实模型接入
 
 - Python / Node 基础验证推断。
 - `--yes` 执行 confirm 级验证命令。
+- 无 `--yes` 时可以通过 CLI 交互确认验证命令。
 - 验证结果写 Raw Trace 和 Evidence Index。
 - 只读任务标记为 `skipped_no_changes`。
+- 验证失败时明确 `status=failed`，不进入 repair。
+- Markdown 报告包含 command、risk、decision、exit_code 和输出摘要。
+- 输出摘要有行数和字符数截断，避免大日志直接进入报告。
+- Python 测试文件变更时可以推断 targeted pytest 命令。
 - Python / Node fixture smoke 通过。
 
 未完成：
 
-- 交互式 terminal confirm 体验还很弱。
-- 验证失败报告缺少更稳定的输出截断和退出码摘要格式。
-- 验证命令选择还没有按具体 changed files 缩小到测试文件。
+- 验证命令选择还没有从源码文件精确映射到对应测试文件。
+- terminal confirm 仍是 CLI 级基础交互，TUI 权限确认要到 v0.5。
 
 下一步必须优先补齐：
 
-1. terminal confirm 交互：无 `--yes` 时清晰提示 command、risk、reason。
-2. verification report：保存 command、exit_code、stdout/stderr 摘要、skip reason。
-3. 验证失败停止：明确 `status=failed`，不进入 repair。
-4. README 更新：标注 v0.1-C 完成度。
+1. 源码文件到测试文件的更细验证路由。
+2. 补充一次 CLI 非 JSON 交互确认 smoke。
+3. 确认 v0.1-C 验收全部通过后，进入 v0.2。
 
 ## v0.2 Safe Execution Kernel 强化
 
