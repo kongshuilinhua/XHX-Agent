@@ -55,3 +55,29 @@ def test_tool_registry_executes_apply_patch(tmp_path: Path) -> None:
     assert result.status == "success"
     assert result.changed_files == ["demo.py"]
     assert "value = 2" in (tmp_path / "demo.py").read_text(encoding="utf-8")
+
+
+def test_tool_registry_apply_patch_returns_structured_failure(tmp_path: Path) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    registry = default_tool_registry()
+    step = ToolStep(
+        tool="apply_patch",
+        arguments={
+            "patch": """*** Begin Patch
+*** Update File: demo.py
+@@
+-missing = 1
++value = 2
+*** End Patch
+"""
+        },
+    )
+
+    registry.validate_plan(ModelPlan(summary="bad patch", steps=[step]))
+    result = registry.execute(ToolContext(workspace=tmp_path), step)
+
+    assert result.status == "failed"
+    assert result.changed_files == []
+    assert result.error
+    assert result.evidence_kind is None
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 1\n"
