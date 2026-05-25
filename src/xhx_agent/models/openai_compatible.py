@@ -12,7 +12,9 @@ from xhx_agent.models.types import ModelClientError, ModelPlan
 
 
 SYSTEM_PROMPT = """You are the planning layer of xhx-agent.
-Return only one JSON object with this schema:
+Return only one JSON object. Do not include prose outside JSON.
+
+Schema:
 {
   "summary": "short plan summary",
   "status": "continue",
@@ -22,6 +24,10 @@ Return only one JSON object with this schema:
     {"tool": "apply_patch", "arguments": {"patch": "*** Begin Patch\\n...\\n*** End Patch\\n"}}
   ]
 }
+
+Valid status values:
+- "continue": more tool work is needed; steps must contain at least one tool call.
+- "done": no more tool work is useful; steps must be [].
 
 Allowed tools are search, read_file, and apply_patch.
 Use relative paths only.
@@ -130,13 +136,36 @@ def _extract_chat_content(data: dict[str, Any]) -> str:
             message="Model response did not include choices[0].message.content.",
             details={"response": data},
         ) from exc
-    if not isinstance(content, str) or not content.strip():
+    normalized = _normalize_chat_content(content)
+    if not normalized.strip():
         raise ModelClientError(
             code="invalid_response",
             message="Model response content was empty.",
             details={"content": content},
         )
-    return content
+    return normalized
+
+
+def _normalize_chat_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                chunks.append(part)
+                continue
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                chunks.append(text)
+                continue
+            nested_content = part.get("content")
+            if isinstance(nested_content, str):
+                chunks.append(nested_content)
+        return "\n".join(chunks)
+    return ""
 
 
 def _parse_plan_content(content: str) -> ModelPlan:
@@ -146,8 +175,13 @@ def _parse_plan_content(content: str) -> ModelPlan:
     except json.JSONDecodeError as exc:
         raise ModelClientError(
             code="invalid_plan_json",
-            message="Model plan content was not valid JSON.",
-            details={"content": content[:1000]},
+            message=f"Model plan content was not valid JSON at line {exc.lineno}, column {exc.colno}.",
+            details={
+                "line": exc.lineno,
+                "column": exc.colno,
+                "position": exc.pos,
+                "excerpt": _excerpt_around(json_text, exc.pos),
+            },
         ) from exc
     try:
         return ModelPlan.model_validate(raw_plan)
@@ -160,20 +194,64 @@ def _parse_plan_content(content: str) -> ModelPlan:
 
 
 def _extract_json_object(content: str) -> str:
-    stripped = content.strip()
+    stripped = _strip_markdown_fence(content.strip())
     if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
+        stripped = _strip_markdown_fence(stripped)
     start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
+    if start == -1:
         raise ModelClientError(
             code="invalid_plan_json",
             message="Model plan content did not contain a JSON object.",
-            details={"content": content[:1000]},
+            details={"excerpt": stripped[:1000]},
         )
-    return stripped[start : end + 1]
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(stripped)):
+        char = stripped[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return stripped[start : index + 1]
+    raise ModelClientError(
+        code="invalid_plan_json",
+        message="Model plan content did not contain a complete JSON object.",
+        details={
+            "line": stripped.count("\n", 0, len(stripped)) + 1,
+            "column": len(stripped.rsplit("\n", 1)[-1]) + 1,
+            "position": len(stripped),
+            "excerpt": stripped[start : start + 1000],
+        },
+    )
+
+
+def _strip_markdown_fence(content: str) -> str:
+    lines = content.splitlines()
+    if not lines or not lines[0].strip().startswith("```"):
+        return content
+    lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _excerpt_around(text: str, position: int, radius: int = 160) -> str:
+    start = max(0, position - radius)
+    end = min(len(text), position + radius)
+    prefix = "..." if start else ""
+    suffix = "..." if end < len(text) else ""
+    return f"{prefix}{text[start:end]}{suffix}"
