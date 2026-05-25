@@ -1,0 +1,290 @@
+# TUI / Command Console 规格
+
+本文档定义 v0.5 的终端交互界面。目标是接近 Claude Code 的使用体验，但保持模块解耦：TUI 只处理渲染、输入和确认，不直接调用模型或工具。
+
+## 目标
+
+TUI 必须让用户看到 Agent 正在做什么，并能在关键时刻控制执行。
+
+必须支持：
+
+- 输入框。
+- 流式输出。
+- 工具调用状态。
+- 权限确认。
+- 当前计划展示。
+- 验证状态展示。
+- repair loop 状态展示。
+- `/` 命令系统。
+- diff / evidence / context 摘要查看。
+
+## 非目标
+
+v0.5 不做：
+
+- Web UI。
+- 文件树编辑器。
+- 完整 IDE。
+- 鼠标驱动的多窗格复杂布局。
+- 直接在 TUI 内执行未授权工具。
+
+## 模块边界
+
+TUI 依赖：
+
+- Runtime event。
+- Runtime command API。
+- CLI command definitions。
+
+TUI 不依赖：
+
+- `models.openai_compatible`
+- `tools.terminal`
+- `tools.patch`
+- `evidence` 写入接口。
+
+所有动作必须通过 Runtime：
+
+```text
+keyboard input
+  -> tui command parser
+  -> runtime public command
+  -> runtime emits events
+  -> tui updates state
+```
+
+## 布局
+
+默认布局：
+
+```text
+┌ xhx-agent ─────────────────────────────────────────────┐
+│ status: planning | running | verifying | waiting       │
+├────────────────────────────────────────────────────────┤
+│ conversation / streaming assistant output              │
+│                                                        │
+│ tool: search README.md              done               │
+│ tool: apply_patch src/foo.py        waiting confirm    │
+│                                                        │
+├────────────────────────────────────────────────────────┤
+│ plan / evidence / context / diff panel                 │
+├────────────────────────────────────────────────────────┤
+│ > user input                                           │
+└────────────────────────────────────────────────────────┘
+```
+
+小终端宽度时：
+
+- 保留 conversation 和 input。
+- 状态面板折叠为单行。
+- plan/evidence/context/diff 通过 `/plan`、`/evidence`、`/context`、`/diff` 临时展开。
+
+## RuntimeEvent 到 UI 状态
+
+TUI 消费这些事件：
+
+- `run_start`：显示运行开始。
+- `model_delta`：追加流式文本。
+- `tool_start`：显示工具开始。
+- `policy_decision`：显示确认或拒绝状态。
+- `tool_end`：显示工具结果摘要。
+- `verification_start`：显示验证中。
+- `verification_end`：显示验证结果。
+- `repair_start`：显示修复轮次。
+- `repair_end`：显示修复结果。
+- `run_end`：显示最终摘要。
+- `error`：显示错误。
+
+## 权限确认
+
+当 Runtime 发出 confirm decision：
+
+```text
+Command requires confirmation:
+  npm test
+Reason:
+  npm test may execute project scripts.
+
+[y] allow once   [n] deny
+```
+
+规则：
+
+- `y` 只允许本次执行。
+- `n` 拒绝本次执行。
+- 拒绝后 Runtime 不得绕过。
+- TUI 不自己执行命令，只把确认结果传回 Runtime。
+
+## `/` 命令
+
+### /help
+
+显示可用命令和一句话说明。
+
+### /model
+
+行为：
+
+- 无参数：显示当前 profile。
+- 带参数：请求 Runtime 切换 profile。
+
+示例：
+
+```text
+/model
+/model default
+```
+
+### /status
+
+显示：
+
+- 当前 cwd。
+- 当前 run id。
+- 当前 mode。
+- changed files。
+- 最近验证结果。
+- 当前 profile。
+
+### /plan
+
+显示当前任务计划。
+
+如果没有计划：
+
+```text
+No active plan.
+```
+
+### /evidence
+
+显示本次 run 的 Evidence 摘要。
+
+v0.5 只显示 Evidence Index 摘要，不展开 Raw Trace 全文。
+
+### /context
+
+显示当前 Context Pack 摘要：
+
+- goal。
+- mode。
+- project summary。
+- selected files。
+- selected evidence。
+- recent failures。
+- budget 使用情况。
+
+### /verify
+
+请求 Runtime 手动触发 Verification Router。
+
+规则：
+
+- 如果没有 changed files，显示 no changes。
+- 如果需要 confirm，进入权限确认。
+
+### /repair
+
+请求 Runtime 手动触发 repair loop。
+
+规则：
+
+- 只有最近验证失败时可用。
+- 超过 repair 上限时拒绝。
+
+### /diff
+
+显示本轮 changed files 和 diff 摘要。
+
+v0.5 不要求完整 diff viewer，但必须能显示文件列表和 patch 摘要。
+
+### /skills
+
+显示 Skill 列表。
+
+v0.5 可以只提示：
+
+```text
+Skills are planned for v0.8.
+```
+
+### /mode
+
+显示或切换执行模式。
+
+允许值：
+
+- `direct`
+- `research-only`
+- `linear-edit`
+- `plan-review-act`
+- `dag-execute`
+- `repair-loop`
+
+v0.5 中 `dag-execute` 可以显示为 planned。
+
+### /clear
+
+清空当前屏幕显示，不删除 session、trace 或 evidence。
+
+### /exit
+
+退出 TUI。
+
+如果 run 正在执行：
+
+- 请求 Runtime cancel。
+- 等待当前工具安全停止。
+- 写入 cancelled 状态。
+
+## 输入行为
+
+普通文本：
+
+- 如果没有 active run，创建新任务。
+- 如果 run 正在执行，默认作为 follow-up。
+- 后续可以支持 steer。
+
+快捷键：
+
+- `Enter`：提交。
+- `Ctrl+C`：请求取消或退出。
+- `Ctrl+L`：清屏。
+
+快捷键必须集中配置，不散落在组件代码里。
+
+## 渲染要求
+
+- 支持中文宽度。
+- 支持 Markdown 基础渲染。
+- 支持代码块。
+- 支持 diff 摘要。
+- 流式输出不能刷屏。
+- 终端 resize 后重新布局。
+
+## 测试要求
+
+单元测试：
+
+- `/` 命令解析。
+- TUI state reducer。
+- 权限确认输入。
+- 中文宽度处理。
+
+集成测试：
+
+- fake terminal 中完成 `/help`、`/status`、`/context`。
+- confirm 命令允许和拒绝。
+- runtime event 转 UI 状态。
+
+E2E：
+
+- 在 TUI 中完成一次 Python fixture 的读改测任务。
+
+## 反模式
+
+- TUI 直接调用工具。
+- TUI 直接写 Evidence Runtime。
+- TUI 把完整 Raw Trace 打到屏幕。
+- TUI 只做外观，不显示真实 Runtime 状态。
+- `/clear` 删除 session。

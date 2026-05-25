@@ -1,0 +1,32 @@
+[project]
+name = "xhx-agent"
+version = "0.1.0"
+description = "Context-budgeted local coding agent runtime."
+readme = "README.md"
+authors = [
+    { name = "'Elysia'", email = "'11175449+jc2915448593@user.noreply.gitee.com'" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "langgraph>=1.2.1",
+    "pydantic>=2.13.4",
+    "rich>=15.0.0",
+    "typer>=0.25.1",
+]
+
+[project.scripts]
+xhx = "xhx_agent.cli.main:app"
+xhx-agent = "xhx_agent.cli.main:app"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+norecursedirs = ["tests/fixtures"]
