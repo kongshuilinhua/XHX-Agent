@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
+from xhx_agent.context.pack import ContextPack
 from xhx_agent.models.types import ModelClientError, ModelPlan
 
 
@@ -14,6 +15,7 @@ SYSTEM_PROMPT = """You are the planning layer of xhx-agent.
 Return only one JSON object with this schema:
 {
   "summary": "short plan summary",
+  "status": "continue",
   "steps": [
     {"tool": "search", "arguments": {"query": "text", "glob": "*.py"}},
     {"tool": "read_file", "arguments": {"path": "relative/path"}},
@@ -25,6 +27,8 @@ Allowed tools are search, read_file, and apply_patch.
 Use relative paths only.
 Do not include terminal commands; xhx-agent routes verification after changes.
 If there is not enough evidence to patch, return only search/read_file steps.
+If the task is complete or no more tool work is useful, return {"summary":"...","status":"done","steps":[]}.
+Use only the supplied context pack; do not assume unread files.
 """
 
 
@@ -47,7 +51,7 @@ class OpenAICompatibleClient:
         self.temperature = temperature
         self.http_client = http_client or httpx.Client(timeout=timeout_seconds)
 
-    def plan(self, task: str, workspace_summary: dict[str, Any]) -> ModelPlan:
+    def plan(self, task: str, context_pack: ContextPack | dict[str, Any]) -> ModelPlan:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
             raise ModelClientError(
@@ -67,7 +71,7 @@ class OpenAICompatibleClient:
                     "content": json.dumps(
                         {
                             "task": task,
-                            "workspace_summary": workspace_summary,
+                            "context_pack": _context_payload(context_pack),
                         },
                         ensure_ascii=False,
                         indent=2,
@@ -109,6 +113,12 @@ class OpenAICompatibleClient:
 
         content = _extract_chat_content(data)
         return _parse_plan_content(content)
+
+
+def _context_payload(context_pack: ContextPack | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(context_pack, ContextPack):
+        return context_pack.to_model_payload()
+    return context_pack
 
 
 def _extract_chat_content(data: dict[str, Any]) -> str:
