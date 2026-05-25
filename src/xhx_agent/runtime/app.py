@@ -33,6 +33,7 @@ class InitResult(BaseModel):
 class RunResult(BaseModel):
     run_id: str
     status: str
+    turns: int = 0
     changed_files: list[str]
     commands: list[str]
     verification: str
@@ -79,6 +80,7 @@ class RuntimeApp:
         commands_run: list[str] = []
         risks: list[str] = []
         status = "success"
+        turns_completed = 0
         plan_summaries: list[str] = [
             "Load project configuration.",
             f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
@@ -109,6 +111,7 @@ class RuntimeApp:
 
             plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
             evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
+            turns_completed = turn
             plan_summaries.append(f"Turn {turn}: {plan.summary}")
             evidence_entries.append(
                 evidence.write_evidence(
@@ -161,11 +164,19 @@ class RuntimeApp:
                     break
             if status == "failed" or plan.status == "done" or _should_stop_after_turn(profile, changed_files, plan.steps):
                 break
+        else:
+            status = "failed"
+            message = f"Model did not finish within {_max_model_turns(profile)} turn(s)."
+            recent_error = message
+            risks.append(message)
+            evidence.write_trace("model_error", {"code": "max_turns_exceeded", "message": message})
 
-        verification_plan = infer_verification(self.workspace, changed_files)
-        commands = [item.command for item in verification_plan.commands]
-        verification_status = "not_executed" if status == "failed" else verification_plan.skip_reason or "not_executed"
-        if status != "failed":
+        verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
+        commands = [item.command for item in verification_plan.commands] if verification_plan else []
+        verification_status = (
+            "not_executed" if status == "failed" else verification_plan.skip_reason if verification_plan else "skipped_no_changes"
+        )
+        if status != "failed" and changed_files:
             for command in commands:
                 result = run_terminal(self.workspace, command, assume_yes=assume_yes)
                 commands_run.append(command)
@@ -187,6 +198,9 @@ class RuntimeApp:
                     risks.append(f"Verification failed: {command}")
                     break
                 verification_status = "passed"
+        elif status != "failed":
+            verification_status = "skipped_no_changes"
+            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
         summary = write_report(
             workspace=self.workspace,
             run_id=run_id,
@@ -201,6 +215,7 @@ class RuntimeApp:
         return RunResult(
             run_id=run_id,
             status=status,
+            turns=turns_completed,
             changed_files=sorted(set(changed_files)),
             commands=commands_run or commands,
             verification=verification_status,

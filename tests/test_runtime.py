@@ -22,6 +22,7 @@ def test_run_task_writes_report(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     result = RuntimeApp(tmp_path).run_task("analyze this repo")
     assert result.status == "success"
+    assert result.verification == "skipped_no_changes"
     assert (tmp_path / result.summary_path).exists()
 
 
@@ -153,10 +154,49 @@ def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None
     result = app.run_task("analyze README", profile_name="real")
 
     assert result.status == "success"
+    assert result.turns == 2
     assert len(contexts) == 2
     trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
     trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
     assert sum(1 for item in trace_lines if item["type"] == "context_pack") == 2
+    assert any(item["type"] == "verification_skipped" for item in trace_lines)
+
+
+def test_runtime_stops_when_real_model_exceeds_max_turns(tmp_path: Path) -> None:
+    (tmp_path / "note.txt").write_text("demo\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+        return ModelPlan(
+            summary="keep searching",
+            steps=[ToolStep(tool="search", arguments={"query": "never-done"})],
+        )
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+
+    result = app.run_task("analyze forever", profile_name="real")
+
+    assert result.status == "failed"
+    assert result.turns == 4
+    assert result.verification == "not_executed"
+    assert any("did not finish" in risk for risk in result.risk_summary)
 
 
 def test_preview_plan_does_not_execute_tools(tmp_path: Path) -> None:
