@@ -52,6 +52,20 @@ def test_command_console_plan_preview(tmp_path: Path) -> None:
     assert "trace" in output
 
 
+def test_command_console_dashboard_renders_sections(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+
+    assert command_console.handle_input("/dashboard")
+
+    output = console.export_text()
+    assert "Console Status" in output
+    assert "Last Run" in output
+    assert "Recent Events" in output
+    assert "/dashboard" in output
+
+
 def test_command_console_exit_returns_false(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     command_console = CommandConsole(tmp_path, console=_console())
