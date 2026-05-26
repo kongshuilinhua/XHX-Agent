@@ -1,6 +1,7 @@
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
+from xhx_agent.runtime.app import RunResult
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:
@@ -72,13 +73,49 @@ def test_textual_command_console_handles_read_only_slash_commands(tmp_path) -> N
     assert "Unknown command: /unknown" in app.messages[-1]
 
 
-def test_textual_command_console_defers_task_execution_to_rich_console(tmp_path) -> None:
-    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+class FakeRuntime:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def run_task(self, task, **kwargs):
+        self.calls.append((task, kwargs))
+        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": task, "profile": "mock"}))
+        kwargs["event_callback"](RuntimeEvent(type="model_plan", message="Analyze task", payload={"status": "done", "step_count": 0}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_end",
+                message="Run finished.",
+                payload={"run_id": "run-1", "status": "success", "verification": "skipped_no_changes", "changed_files": [], "summary_path": ".xhx/logbook/run-1.md"},
+            )
+        )
+        return RunResult(
+            run_id="run-1",
+            status="success",
+            changed_files=[],
+            commands=[],
+            verification="skipped_no_changes",
+            summary_path=".xhx/logbook/run-1.md",
+            risk_summary=[],
+        )
+
+
+def test_textual_command_console_runs_task_through_runtime(tmp_path) -> None:
+    runtime = FakeRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
 
     assert app.handle_text_input("fix tests")
 
-    assert "not wired into fullscreen mode yet" in app.messages[-1]
-    assert app.state.task is None
+    assert runtime.calls
+    task, kwargs = runtime.calls[0]
+    assert task == "fix tests"
+    assert kwargs["profile_name"] == "mock"
+    assert kwargs["auto_repair"] is False
+    assert app.last_result is not None
+    assert app.last_result.status == "success"
+    assert app.state.status == "success"
+    assert app.state.task == "fix tests"
+    assert app.state.summary_path == ".xhx/logbook/run-1.md"
+    assert "Analyze task" in app.state.plan_summary
 
 
 def test_textual_command_console_clear_and_exit_are_local(tmp_path) -> None:
@@ -102,6 +139,21 @@ def test_textual_command_console_submitted_input_updates_window(tmp_path) -> Non
             await pilot.click("#input")
             await pilot.press("/", "h", "e", "l", "p", "enter")
             assert "available commands" in str(pilot.app.query_one("#conversation").content)
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
+def test_textual_command_console_submitted_task_updates_window(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("f", "i", "x", "enter")
+            assert "summary> .xhx/logbook/run-1.md" in str(pilot.app.query_one("#conversation").content)
+            assert "verification: skipped_no_changes" in str(pilot.app.query_one("#runtime").content)
 
     import asyncio
 
