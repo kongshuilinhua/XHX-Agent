@@ -472,3 +472,53 @@ def test_textual_cancel_without_running_task_is_noop(tmp_path) -> None:
 
     assert app.is_cancel_requested() is False
     assert "No running task to cancel" in app.messages[-1]
+
+
+def test_textual_live_command_reports_rich_only_boundary(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.handle_text_input("/live")
+
+    assert "live: rich-only" in app.messages[-1]
+
+
+def test_textual_builds_follow_up_task_from_last_result(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    assert app.build_runtime_task("first task") == "first task"
+    app.last_result = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=["src/calc.py"],
+        commands=["python -m pytest"],
+        verification="passed",
+        summary_path=".xhx/logbook/run-1.md",
+        risk_summary=[],
+    )
+
+    follow_up = app.build_runtime_task("now update docs")
+
+    assert "Follow-up task in the same console session." in follow_up
+    assert "User request:\nnow update docs" in follow_up
+    assert "- run_id: run-1" in follow_up
+    assert "- verification: passed" in follow_up
+    assert "- summary: .xhx/logbook/run-1.md" in follow_up
+
+
+def test_textual_run_task_uses_follow_up_context(tmp_path) -> None:
+    runtime = FakeRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+    app.last_result = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=["src/calc.py"],
+        commands=[],
+        verification="skipped_no_changes",
+        summary_path=".xhx/logbook/run-1.md",
+        risk_summary=[],
+    )
+
+    app.run_task("continue")
+
+    task, _kwargs = runtime.calls[0]
+    assert "Follow-up task in the same console session." in task
+    assert "User request:\ncontinue" in task
