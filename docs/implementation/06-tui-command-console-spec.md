@@ -113,6 +113,8 @@ v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 
+`tui.live` 负责 Rich Live 生命周期。它只接收 `ConsoleState` 和显示选项，调用 `tui.page` 生成 renderable，并在 Runtime event 到来时刷新固定区域。它不读取模型、工具、Evidence Runtime 或 session 文件。
+
 ## 权限确认
 
 当 Runtime 发出 confirm decision：
@@ -242,6 +244,23 @@ Skills are planned for v0.8.
 - `repair-loop`
 
 v0.5 中 `dag-execute` 可以显示为 planned。
+
+### /live
+
+切换 Rich Live 动态仪表盘。
+
+行为：
+
+- `/live`：显示当前 live 状态。
+- `/live on`：启用 Rich Live 动态刷新。
+- `/live off`：关闭 Rich Live 动态刷新，回到普通事件日志输出。
+
+规则：
+
+- 真实交互终端默认启用。
+- 记录型测试控制台默认关闭。
+- live 只负责刷新展示，不改变 Runtime 执行逻辑。
+- v0.5 的 live 仍基于 Rich，不是完整 Textual 全屏 TUI。
 
 ### /cancel
 

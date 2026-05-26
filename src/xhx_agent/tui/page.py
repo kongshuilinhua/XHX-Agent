@@ -23,6 +23,7 @@ SLASH_COMMAND_HINTS = [
     "/skills",
     "/mode",
     "/dashboard",
+    "/live",
     "/cancel",
     "/clear",
     "/exit",
