@@ -258,7 +258,7 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/help":
             self.messages.append(
-                "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /allow /deny /clear /exit"
+                "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /live /allow /deny /clear /exit"
             )
             return True
         if command == "/model":
