@@ -316,6 +316,7 @@ v0.5 已完成：
 - 新增 `xhx tui` 入口。
 - `xhx chat` 复用同一个 Command Console。
 - 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
+- 新增 `xhx tui --fullscreen` 实验性 Textual 窗口骨架，可以渲染 `ConsoleState` 的 header、conversation、runtime、changed files 和 command hints。
 - 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/live`、`/cancel`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
@@ -336,8 +337,8 @@ v0.5 已完成：
 
 v0.5 未完成 / 后续增强：
 
-- 还不是全屏 Textual TUI。
-- Rich Live 动态仪表盘已具备固定区域刷新基础，但还不是完整 Textual 组件系统。
+- Textual 全屏路径目前只是实验性 shell，还没有接入完整任务执行、slash 命令路由和权限确认。
+- Rich Live 动态仪表盘已具备固定区域刷新基础，但仍是 Rich 路径，不是完整 Textual 组件系统。
 - `/repair loop` 已支持最多两轮手动修复，但仍不是完整运行中 steer 的交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。
 - 取消能力只覆盖阶段边界，还不能中止已经启动的长时间外部命令。

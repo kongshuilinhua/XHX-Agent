@@ -12,6 +12,7 @@ from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.tui.textual_app import run_textual_console
 
 
 app = typer.Typer(help="xhx-agent local coding agent CLI.")
@@ -76,7 +77,12 @@ def chat() -> None:
 
 
 @app.command("tui")
-def tui() -> None:
+def tui(
+    fullscreen: Annotated[bool, typer.Option("--fullscreen", help="Run the experimental fullscreen Textual console.")] = False,
+) -> None:
+    if fullscreen:
+        run_textual_console()
+        return
     CommandConsole(console=console).run()
 
 

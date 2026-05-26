@@ -1,6 +1,11 @@
 from xhx_agent.cli.main import _confirm_terminal_command
+from xhx_agent.cli.main import app
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
+from typer.testing import CliRunner
+
+
+runner = CliRunner()
 
 
 def test_cli_confirmation_decline_returns_false(monkeypatch) -> None:
@@ -13,3 +18,10 @@ def test_cli_confirmation_decline_returns_false(monkeypatch) -> None:
     )
 
     assert not _confirm_terminal_command("uv run pytest", decision)
+
+
+def test_tui_help_exposes_fullscreen_option() -> None:
+    result = runner.invoke(app, ["tui", "--help"])
+
+    assert result.exit_code == 0
+    assert "--fullscreen" in result.output

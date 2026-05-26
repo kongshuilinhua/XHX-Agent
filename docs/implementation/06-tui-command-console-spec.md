@@ -103,17 +103,19 @@ TUI 消费这些事件：
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
 
-v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。
+v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。`xhx tui --fullscreen` 提供实验性 Textual 窗口骨架，当前只负责全屏布局和 `ConsoleState` 快照展示，完整任务执行、slash 命令路由和权限确认仍以 Rich Command Console 为稳定路径。
 
 当前边界：
 
 - `model_delta` 只表示模型原始文本增量，不代表工具已经执行。
 - 模型输出仍必须解析成 JSON plan 后才进入工具执行。
-- Rich 控制台会直接追加增量文本，但还不是固定区域的 Textual 流式 UI。
+- Rich 控制台会直接追加增量文本；Textual 全屏骨架已存在，但还没有接入完整流式执行和运行中 steer。
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 
 `tui.live` 负责 Rich Live 生命周期。它只接收 `ConsoleState` 和显示选项，调用 `tui.page` 生成 renderable，并在 Runtime event 到来时刷新固定区域。它不读取模型、工具、Evidence Runtime 或 session 文件。
+
+`tui.textual_app` 负责实验性全屏 shell。它只接收 `ConsoleState`，生成 header、conversation、runtime、changed files 和 command hints，不直接调用模型、工具或 Evidence Runtime。后续接入任务执行时也必须通过 Runtime 公开 API 和事件流。
 
 ## 权限确认
 
@@ -269,7 +271,7 @@ v0.5 中 `dag-execute` 可以显示为 planned。
 - 真实交互终端默认启用。
 - 记录型测试控制台默认关闭。
 - live 只负责刷新展示，不改变 Runtime 执行逻辑。
-- v0.5 的 live 仍基于 Rich，不是完整 Textual 全屏 TUI。
+- v0.5 的 live 仍基于 Rich；Textual 全屏路径通过 `xhx tui --fullscreen` 单独启动，当前是实验性 shell。
 
 ### /cancel
 
