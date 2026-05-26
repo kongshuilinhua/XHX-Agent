@@ -594,11 +594,13 @@ class RuntimeApp:
         confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
+        max_attempts: int = 1,
     ) -> ManualRepairResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"repair-{int(time.time())}"
         normalized_changed_files = sorted(set(changed_files))
+        attempt_limit = _manual_repair_attempt_limit(max_attempts)
         evidence = EvidenceStore(self.workspace, run_id)
         kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
         risks: list[str] = []
@@ -617,6 +619,7 @@ class RuntimeApp:
                 "mode": "manual_repair",
                 "changed_files": normalized_changed_files,
                 "profile": profile.name,
+                "max_attempts": attempt_limit,
             },
         )
         emit_event(
@@ -673,45 +676,55 @@ class RuntimeApp:
             detected_languages=scan.detected_languages,
             file_count=scan.file_count,
         )
-        repair_decision = decide_repair("failed", attempts_used=0, auto_repair_enabled=True)
-        evidence.write_trace("repair_decision", repair_decision.model_dump())
-        emit_event(
-            event_callback,
-            "repair_decision",
-            repair_decision.reason,
-            should_repair=repair_decision.should_repair,
-            attempts_used=repair_decision.attempts_used,
-            max_attempts=1,
-        )
-        if not repair_decision.should_repair:
-            risks.append(f"Manual repair not attempted: {repair_decision.reason}")
-            status = "failed"
-        elif _cancel_requested(cancel_check):
-            verification_status = "cancelled"
-            status = "cancelled"
-            risks.append("Manual repair cancelled by user before repair attempt.")
-            evidence.write_trace("cancel_requested", {"stage": "before_manual_repair_attempt"})
-            emit_event(event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id)
-        else:
-            repair_attempts = 1
-            emit_event(event_callback, "repair_start", "Manual repair attempt started.", attempt=1, max_attempts=1)
+        current_failed_results = list(failed_results)
+        plan_summaries = [
+            "Manual repair requested after failed verification.",
+            f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
+        ]
+        evidence_entries: list[EvidenceEntry] = []
+        recent_error = _last_verification_error(current_failed_results)
+        while repair_attempts < attempt_limit:
+            repair_decision = decide_repair("failed", attempts_used=repair_attempts, auto_repair_enabled=True)
+            evidence.write_trace("repair_decision", repair_decision.model_dump())
+            emit_event(
+                event_callback,
+                "repair_decision",
+                repair_decision.reason,
+                should_repair=repair_decision.should_repair,
+                attempts_used=repair_decision.attempts_used,
+                max_attempts=attempt_limit,
+            )
+            if not repair_decision.should_repair:
+                risks.append(f"Manual repair not attempted: {repair_decision.reason}")
+                status = "failed"
+                break
+            if _cancel_requested(cancel_check):
+                verification_status = "cancelled"
+                status = "cancelled"
+                risks.append("Manual repair cancelled by user before repair attempt.")
+                evidence.write_trace("cancel_requested", {"stage": "before_manual_repair_attempt"})
+                emit_event(event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id)
+                break
+
+            repair_attempts += 1
+            emit_event(
+                event_callback,
+                "repair_start",
+                "Manual repair attempt started.",
+                attempt=repair_attempts,
+                max_attempts=attempt_limit,
+            )
             evidence.write_evidence(
                 "decision",
                 "manual-repair",
-                f"Manual repair attempt 1/1: {repair_decision.reason}",
-                f"trace://{run_id}/repair/1",
+                f"Manual repair attempt {repair_attempts}/{attempt_limit}: {repair_decision.reason}",
+                f"trace://{run_id}/repair/{repair_attempts}",
                 confidence=0.75,
             )
             mutable_changed_files = list(normalized_changed_files)
-            plan_summaries = [
-                "Manual repair requested after failed verification.",
-                f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
-            ]
-            tool_summaries = [f"verification failed: {_last_verification_error(failed_results)}"]
-            evidence_entries: list[EvidenceEntry] = []
-            recent_error = _last_verification_error(failed_results)
+            tool_summaries = [f"verification failed: {_last_verification_error(current_failed_results)}"]
             status, turns_completed, recent_error = self._run_model_tool_loop(
-                task=f"Manual repair after failed verification: {task}",
+                task=f"Manual repair attempt {repair_attempts}/{attempt_limit} after failed verification: {task}",
                 profile=profile,
                 scan=scan,
                 evidence=evidence,
@@ -784,12 +797,38 @@ class RuntimeApp:
                         status = "failed"
                         verification_status = "failed"
                         risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
+                        current_failed_results = [result]
                         break
                     verification_status = "passed"
+                if verification_status == "passed":
+                    status = "success"
+                    break
+                if verification_status in {"requires_confirmation", "cancelled"}:
+                    break
             else:
                 verification_status = "not_executed"
                 if recent_error:
                     risks.append(recent_error)
+                break
+            if verification_status != "failed":
+                break
+        if status == "failed" and verification_status == "failed" and repair_attempts >= attempt_limit:
+            repair_decision = RepairDecision(
+                should_repair=False,
+                attempts_used=repair_attempts,
+                max_attempts=attempt_limit,
+                reason="Manual repair attempt limit reached.",
+            )
+            evidence.write_trace("repair_decision", repair_decision.model_dump())
+            emit_event(
+                event_callback,
+                "repair_decision",
+                repair_decision.reason,
+                should_repair=False,
+                attempts_used=repair_attempts,
+                max_attempts=attempt_limit,
+            )
+            risks.append(repair_decision.reason)
         if status == "failed" and checkpoint is not None:
             kernel.create_restore_plan(checkpoint)
             restore_plan_created = True
@@ -800,7 +839,7 @@ class RuntimeApp:
             task=f"manual repair: {task}",
             plan=[
                 "Check failed verification state.",
-                "Run one manual repair attempt.",
+                f"Run up to {attempt_limit} manual repair attempt(s).",
                 "Verify repaired changed files.",
             ],
             changed_files=normalized_changed_files,
@@ -813,7 +852,8 @@ class RuntimeApp:
             repair=RepairDecision(
                 should_repair=False,
                 attempts_used=repair_attempts,
-                reason="Manual repair performs at most one attempt in v0.5.",
+                max_attempts=attempt_limit,
+                reason=f"Manual repair performs at most {attempt_limit} attempt(s) in v0.5.",
             ),
             repair_attempts=repair_attempts,
         )
@@ -1093,6 +1133,10 @@ def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
         return bool(cancel_check())
     except Exception:
         return False
+
+
+def _manual_repair_attempt_limit(max_attempts: int) -> int:
+    return max(1, min(max_attempts, MAX_REPAIR_ATTEMPTS))
 
 
 def checkpoint_path_value(workspace: Path, run_id: str) -> Path:

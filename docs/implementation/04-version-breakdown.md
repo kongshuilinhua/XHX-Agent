@@ -140,6 +140,7 @@ v0.1 只能拆成三个固定子阶段：
 - 当前计划、验证状态、repair 状态展示。
 - `/` 命令系统。
 - 阶段边界取消。
+- 最多两轮手动 repair loop。
 
 模块任务：
 
@@ -159,6 +160,7 @@ v0.1 只能拆成三个固定子阶段：
 - OpenAI-compatible streaming delta 解析测试。
 - Rich Live dashboard 渲染和 `/live` 命令测试。
 - `/cancel` 命令、cancel event reducer 和取消状态渲染测试。
+- `/repair loop` 两轮修复和验证测试。
 - 权限确认同意和拒绝。
 - fake terminal 渲染快照。
 
