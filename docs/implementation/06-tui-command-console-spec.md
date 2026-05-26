@@ -222,6 +222,13 @@ v0.5 只显示 Evidence Index 摘要，不展开 Raw Trace 全文。
 
 v0.5 不要求完整 diff viewer，但必须能显示文件列表和 patch 摘要。
 
+当前实现通过 Runtime 的只读 diff API 获取摘要：
+
+- TUI 不直接执行 git 或工具。
+- Runtime 使用 `git diff -- <changed-files>` 的 argv 调用，不经过 shell。
+- 输出默认截断，避免大 diff 刷屏。
+- 没有 git worktree 或没有 diff 输出时，只显示 changed files 和说明。
+
 ### /skills
 
 显示 Skill 列表。

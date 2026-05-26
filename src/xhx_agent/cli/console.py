@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
+from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -284,7 +284,7 @@ class CommandConsole:
             ("/context", "List context debug reports."),
             ("/verify", "Run verification for current changed files."),
             ("/repair [run|loop|on|off]", "Run manual repair, repair loop, or toggle auto repair."),
-            ("/diff", "Show changed files from last run."),
+            ("/diff", "Show changed files and a read-only git diff summary."),
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
             ("/dashboard", "Render the console dashboard."),
@@ -512,10 +512,38 @@ class CommandConsole:
             self.console.print(Panel("\n".join(result.risk_summary), title="Repair Risks"))
 
     def print_changed_files(self) -> None:
-        if not self.last_result:
-            self.console.print("No task has run in this console.")
+        changed_files = self.current_changed_files()
+        if not changed_files:
+            if not self.last_result:
+                self.console.print("No task has run in this console.")
+            else:
+                self.console.print("No changed files in the current console state.")
             return
-        self.console.print(Panel("\n".join(self.last_result.changed_files) or "none", title="Changed Files"))
+        self.print_diff_summary(self.runtime.diff_changed_files(changed_files))
+
+    def current_changed_files(self) -> list[str]:
+        if self.state.changed_files:
+            return list(self.state.changed_files)
+        if self.last_manual_repair and self.last_manual_repair.changed_files:
+            return list(self.last_manual_repair.changed_files)
+        if self.last_manual_verification and self.last_manual_verification.changed_files:
+            return list(self.last_manual_verification.changed_files)
+        if self.last_result and self.last_result.changed_files:
+            return list(self.last_result.changed_files)
+        return []
+
+    def print_diff_summary(self, result: DiffSummary) -> None:
+        table = Table(title="Diff Summary")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("summary", result.summary)
+        table.add_row("changed_files", "\n".join(result.changed_files) or "none")
+        table.add_row("truncated", str(result.truncated).lower())
+        self.console.print(table)
+        if result.diff_text:
+            self.console.print(Panel(result.diff_text, title="Git Diff"))
+        if result.risk_summary:
+            self.console.print(Panel("\n".join(result.risk_summary), title="Diff Notes"))
 
     def set_mode(self, argument: str) -> None:
         if argument:

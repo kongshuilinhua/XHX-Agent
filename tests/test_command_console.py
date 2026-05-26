@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from rich.console import Console
 
@@ -344,6 +345,25 @@ def test_command_console_repair_loop_uses_two_attempts(tmp_path: Path, monkeypat
     assert command_console.last_manual_repair.repair_attempts == 2
     assert command_console.last_manual_repair.verification == "passed"
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 3\n"
+
+
+def test_command_console_diff_renders_runtime_diff_summary(tmp_path: Path) -> None:
+    (tmp_path / "demo.txt").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "demo.txt"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    (tmp_path / "demo.txt").write_text("new\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+    command_console.state.changed_files = ["demo.txt"]
+
+    assert command_console.handle_input("/diff")
+
+    output = console.export_text()
+    assert "Diff Summary" in output
+    assert "demo.txt" in output
+    assert "-old" in output
+    assert "+new" in output
 
 
 def test_command_console_plan_preview(tmp_path: Path) -> None:
