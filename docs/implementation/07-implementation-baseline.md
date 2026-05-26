@@ -316,7 +316,7 @@ v0.5 已完成：
 - 新增 `xhx tui` 入口。
 - `xhx chat` 复用同一个 Command Console。
 - 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
-- 新增 `xhx tui --fullscreen` 实验性 Textual 窗口，可以渲染 `ConsoleState` 的 header、conversation、runtime、changed files 和 command hints，支持普通任务执行事件刷新、`/context`、`/evidence`、`/diff`、`/verify`、一次性 `/allow` / `/deny` 权限确认，并支持 `/help`、`/status`、`/clear`、`/exit` 本地命令。
+- 新增 `xhx tui --fullscreen` 实验性 Textual 窗口，可以渲染 `ConsoleState` 的 header、conversation、runtime、changed files 和 command hints，支持普通任务执行事件刷新、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/mode`、一次性 `/allow` / `/deny` 权限确认，并支持 `/help`、`/status`、`/clear`、`/exit` 本地命令。
 - 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/live`、`/cancel`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
@@ -337,7 +337,7 @@ v0.5 已完成：
 
 v0.5 未完成 / 后续增强：
 
-- Textual 全屏路径目前仍是实验性 shell，已支持普通任务执行、`/context`、`/evidence`、`/diff`、`/verify` 和一次性权限确认，但还没有接入全部 slash 命令路由和运行中 steer。
+- Textual 全屏路径目前仍是实验性 shell，已支持普通任务执行、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/mode` 和一次性权限确认，但还没有接入全部 slash 命令路由和运行中 steer。
 - Rich Live 动态仪表盘已具备固定区域刷新基础，但仍是 Rich 路径，不是完整 Textual 组件系统。
 - `/repair loop` 已支持最多两轮手动修复，但仍不是完整运行中 steer 的交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。

@@ -1,9 +1,10 @@
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
-from xhx_agent.runtime.app import DiffSummary, ManualVerificationResult, RunResult
+from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, PlanPreview, RunResult
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
+from xhx_agent.tools.terminal import TerminalResult
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:
@@ -80,6 +81,8 @@ class FakeRuntime:
         self.calls = []
         self.verify_calls = []
         self.diff_calls = []
+        self.plan_calls = []
+        self.repair_calls = []
 
     def run_task(self, task, **kwargs):
         self.calls.append((task, kwargs))
@@ -128,6 +131,42 @@ class FakeRuntime:
             summary=f"{len(changed_files)} changed file(s).",
             diff_text="diff --git a/src/calc.py b/src/calc.py\n+return a + b\n",
             truncated=False,
+            risk_summary=[],
+        )
+
+    def preview_plan(self, task, profile_name=None):
+        self.plan_calls.append((task, profile_name))
+        return PlanPreview(
+            run_id="dry-run-1",
+            status="success",
+            summary=f"Preview {task}",
+            step_count=2,
+            context_budget_tokens=6000,
+            context_used_tokens_estimate=120,
+            trace_path=".xhx/traces/dry-run-1.jsonl",
+            risk_summary=[],
+        )
+
+    def repair_after_failed_verification(self, **kwargs):
+        self.repair_calls.append(kwargs)
+        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Manual repair started.", payload={"run_id": "repair-1", "task": kwargs["task"], "profile": "mock"}))
+        kwargs["event_callback"](RuntimeEvent(type="repair_start", message="Manual repair attempt started.", payload={"attempt": 1, "max_attempts": kwargs["max_attempts"]}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_end",
+                message="Manual repair finished.",
+                payload={"run_id": "repair-1", "status": "success", "verification": "passed", "changed_files": kwargs["changed_files"], "summary_path": ".xhx/logbook/repair-1.md"},
+            )
+        )
+        return ManualRepairResult(
+            run_id="repair-1",
+            status="success",
+            changed_files=list(kwargs["changed_files"]),
+            commands=["python -m pytest"],
+            verification="passed",
+            verification_results=[],
+            repair_attempts=1,
+            summary_path=".xhx/logbook/repair-1.md",
             risk_summary=[],
         )
 
@@ -291,3 +330,69 @@ def test_textual_diff_command_uses_runtime_read_only_summary(tmp_path) -> None:
     assert runtime.diff_calls == [["src/calc.py"]]
     assert "1 changed file(s)." in app.messages[-1]
     assert "+return a + b" in app.messages[-1]
+
+
+def test_textual_plan_command_previews_task_through_runtime(tmp_path) -> None:
+    runtime = FakeRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+
+    assert app.handle_text_input("/plan analyze repo")
+
+    assert runtime.plan_calls == [("analyze repo", "mock")]
+    assert "plan preview: success" in app.messages[-1]
+    assert "Preview analyze repo" in app.messages[-1]
+    assert "steps=2" in app.messages[-1]
+
+
+def test_textual_mode_command_shows_and_updates_state_mode(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.handle_text_input("/mode")
+    assert "mode: linear-edit" in app.messages[-1]
+
+    assert app.handle_text_input("/mode research-only")
+
+    assert app.state.mode == "research-only"
+    assert "mode: research-only" in app.messages[-1]
+
+
+def test_textual_repair_command_requires_failed_verification(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
+
+    assert app.handle_text_input("/repair")
+
+    assert "requires a failed verification" in app.messages[-1]
+
+
+def test_textual_repair_command_runs_manual_repair_after_failed_verification(tmp_path) -> None:
+    runtime = FakeRuntime()
+    failed_result = TerminalResult(
+        command="python -m pytest",
+        status="failed",
+        policy=PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason="safe", requires_user=False),
+        exit_code=1,
+        summary="assertion failed",
+    )
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+    app.last_manual_verification = ManualVerificationResult(
+        run_id="verify-1",
+        status="failed",
+        changed_files=["src/calc.py"],
+        commands=["python -m pytest"],
+        verification_results=[failed_result],
+        summary_path=".xhx/logbook/verify-1.md",
+        risk_summary=["Verification failed."],
+    )
+
+    assert app.handle_text_input("/repair loop")
+
+    assert len(runtime.repair_calls) == 1
+    repair_call = runtime.repair_calls[0]
+    assert repair_call["task"] == "manual repair"
+    assert repair_call["changed_files"] == ["src/calc.py"]
+    assert repair_call["failed_verification_results"] == [failed_result]
+    assert repair_call["profile_name"] == "mock"
+    assert repair_call["max_attempts"] == 2
+    assert app.last_manual_repair is not None
+    assert app.last_manual_repair.verification == "passed"
+    assert "manual repair: success, verification: passed" in app.messages[-1]
