@@ -5,6 +5,7 @@ from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerific
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 from xhx_agent.tools.terminal import TerminalResult
+from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:
@@ -396,3 +397,78 @@ def test_textual_repair_command_runs_manual_repair_after_failed_verification(tmp
     assert app.last_manual_repair is not None
     assert app.last_manual_repair.verification == "passed"
     assert "manual repair: success, verification: passed" in app.messages[-1]
+
+
+def test_textual_model_command_lists_and_switches_profiles(tmp_path) -> None:
+    profiles_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(name="mock", provider="mock", base_url="", api_key_env="", model="mock", stream=False),
+                ModelProfile(name="local", provider="openai-compatible", model="qwen-plus"),
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.handle_text_input("/model")
+
+    assert "profiles:" in app.messages[-1]
+    assert "mock* [mock/mock]" in app.messages[-1]
+    assert "local [openai-compatible/qwen-plus]" in app.messages[-1]
+
+    assert app.handle_text_input("/model local")
+
+    assert app.profile == "local"
+    assert "active profile: local" in app.messages[-1]
+
+
+def test_textual_skills_command_lists_local_skill_dirs(tmp_path) -> None:
+    skill_dir = tmp_path / ".xhx" / "skills" / "python-debugger"
+    skill_dir.mkdir(parents=True)
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.handle_text_input("/skills")
+
+    assert "skills:" in app.messages[-1]
+    assert ".xhx/skills/python-debugger" in app.messages[-1]
+
+
+def test_textual_dashboard_command_prints_state_summary(tmp_path) -> None:
+    state = ConsoleState()
+    state.status = "running_tool"
+    state.run_id = "run-1"
+    state.changed_files = ["src/calc.py"]
+    state.context_used_tokens_estimate = 120
+    state.context_budget_tokens = 6000
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+
+    assert app.handle_text_input("/dashboard")
+
+    assert "dashboard:" in app.messages[-1]
+    assert "status=running_tool" in app.messages[-1]
+    assert "run=run-1" in app.messages[-1]
+    assert "changed=1" in app.messages[-1]
+
+
+def test_textual_cancel_sets_state_for_running_task(tmp_path) -> None:
+    state = ConsoleState()
+    state.status = "running_tool"
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+
+    assert app.handle_text_input("/cancel")
+
+    assert app.is_cancel_requested() is True
+    assert app.state.status == "cancelling"
+    assert "Cancel requested" in app.messages[-1]
+
+
+def test_textual_cancel_without_running_task_is_noop(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.handle_text_input("/cancel")
+
+    assert app.is_cancel_requested() is False
+    assert "No running task to cancel" in app.messages[-1]
