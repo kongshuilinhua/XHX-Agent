@@ -48,6 +48,8 @@ class ConsoleState:
     plan_summary: str | None = None
     plan_status: str | None = None
     plan_step_count: int = 0
+    model_output: str = ""
+    model_delta_count: int = 0
     context_turn: int | None = None
     context_selected: int = 0
     context_omitted: int = 0
@@ -86,6 +88,10 @@ class ConsoleState:
             self.context_budget_tokens = int(payload.get("budget_tokens", 0) or 0)
         elif event.type == "model_plan_start":
             self.status = "planning"
+        elif event.type == "model_delta":
+            self.status = "planning"
+            self.model_delta_count += 1
+            self.model_output = _trim_model_output(self.model_output + event.message)
         elif event.type == "model_plan":
             self.status = "planning"
             self.plan_summary = event.message
@@ -220,3 +226,9 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _trim_model_output(text: str, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]

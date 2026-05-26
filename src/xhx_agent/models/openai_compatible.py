@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -9,6 +10,9 @@ from pydantic import ValidationError
 
 from xhx_agent.context.pack import ContextPack
 from xhx_agent.models.types import ModelClientError, ModelPlan
+
+
+ModelDeltaCallback = Callable[[str], None]
 
 
 SYSTEM_PROMPT = """You are the planning layer of xhx-agent.
@@ -48,6 +52,7 @@ class OpenAICompatibleClient:
         api_key_env: str,
         model: str,
         temperature: float = 0.2,
+        stream: bool = False,
         timeout_seconds: float = 60,
         http_client: httpx.Client | None = None,
     ) -> None:
@@ -55,9 +60,15 @@ class OpenAICompatibleClient:
         self.api_key_env = api_key_env
         self.model = model
         self.temperature = temperature
+        self.stream = stream
         self.http_client = http_client or httpx.Client(timeout=timeout_seconds)
 
-    def plan(self, task: str, context_pack: ContextPack | dict[str, Any]) -> ModelPlan:
+    def plan(
+        self,
+        task: str,
+        context_pack: ContextPack | dict[str, Any],
+        delta_callback: ModelDeltaCallback | None = None,
+    ) -> ModelPlan:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
             raise ModelClientError(
@@ -69,7 +80,7 @@ class OpenAICompatibleClient:
         payload = {
             "model": self.model,
             "temperature": self.temperature,
-            "stream": False,
+            "stream": self.stream,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -85,6 +96,11 @@ class OpenAICompatibleClient:
                 },
             ],
         }
+        if self.stream:
+            return self._stream_plan(payload, api_key, delta_callback)
+        return self._non_stream_plan(payload, api_key)
+
+    def _non_stream_plan(self, payload: dict[str, Any], api_key: str) -> ModelPlan:
         try:
             response = self.http_client.post(
                 f"{self.base_url}/chat/completions",
@@ -118,6 +134,46 @@ class OpenAICompatibleClient:
             ) from exc
 
         content = _extract_chat_content(data)
+        return _parse_plan_content(content)
+
+    def _stream_plan(
+        self,
+        payload: dict[str, Any],
+        api_key: str,
+        delta_callback: ModelDeltaCallback | None = None,
+    ) -> ModelPlan:
+        try:
+            with self.http_client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    raise ModelClientError(
+                        code="http_error",
+                        message=f"Model request returned HTTP {response.status_code}.",
+                        details={"status_code": response.status_code, "body": response.read().decode("utf-8", errors="replace")[:1000]},
+                    )
+                content = _collect_stream_content(response, delta_callback)
+        except ModelClientError:
+            raise
+        except httpx.HTTPError as exc:
+            raise ModelClientError(
+                code="network_error",
+                message=f"Model request failed: {exc}",
+                details={"error": str(exc)},
+            ) from exc
+
+        if not content.strip():
+            raise ModelClientError(
+                code="invalid_response",
+                message="Model streaming response content was empty.",
+                details={},
+            )
         return _parse_plan_content(content)
 
 
@@ -166,6 +222,43 @@ def _normalize_chat_content(content: Any) -> str:
                 chunks.append(nested_content)
         return "\n".join(chunks)
     return ""
+
+
+def _collect_stream_content(response: httpx.Response, delta_callback: ModelDeltaCallback | None = None) -> str:
+    chunks: list[str] = []
+    for line in response.iter_lines():
+        if not line:
+            continue
+        if line.startswith("data:"):
+            line = line.removeprefix("data:").strip()
+        if line == "[DONE]":
+            break
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ModelClientError(
+                code="invalid_response",
+                message="Model streaming response included invalid JSON.",
+                details={"line": line[:1000]},
+            ) from exc
+        delta = _extract_stream_delta(data)
+        if not delta:
+            continue
+        chunks.append(delta)
+        if delta_callback is not None:
+            delta_callback(delta)
+    return "".join(chunks)
+
+
+def _extract_stream_delta(data: dict[str, Any]) -> str:
+    try:
+        delta = data["choices"][0].get("delta", {})
+    except (KeyError, IndexError, TypeError):
+        return ""
+    if not isinstance(delta, dict):
+        return ""
+    content = delta.get("content")
+    return _normalize_chat_content(content)
 
 
 def _parse_plan_content(content: str) -> ModelPlan:

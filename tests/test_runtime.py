@@ -594,6 +594,45 @@ def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None
     assert any(item["type"] == "verification_skipped" for item in trace_lines)
 
 
+def test_runtime_emits_model_delta_events_for_streaming_profiles(tmp_path: Path, monkeypatch) -> None:
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=True,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    app = RuntimeApp(tmp_path)
+
+    def fake_plan(_self, _task, _context, delta_callback=None):
+        if delta_callback:
+            delta_callback('{"summary":"streamed')
+            delta_callback(' plan","status":"done","steps":[]}')
+        return ModelPlan(summary="streamed plan", status="done", steps=[])
+
+    monkeypatch.setattr("xhx_agent.runtime.app.OpenAICompatibleClient.plan", fake_plan)
+    events = []
+
+    result = app.run_task("analyze", profile_name="real", event_callback=events.append)
+
+    assert result.status == "success"
+    assert [event.message for event in events if event.type == "model_delta"] == [
+        '{"summary":"streamed',
+        ' plan","status":"done","steps":[]}',
+    ]
+
+
 def test_runtime_stops_when_real_model_exceeds_max_turns(tmp_path: Path) -> None:
     (tmp_path / "note.txt").write_text("demo\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()

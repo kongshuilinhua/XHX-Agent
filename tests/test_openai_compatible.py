@@ -127,6 +127,40 @@ def test_openai_compatible_parses_segmented_content(monkeypatch: pytest.MonkeyPa
     assert plan.steps[0].tool == "read_file"
 
 
+def test_openai_compatible_streams_model_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    chunks = [
+        'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"Read"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":" README\\",\\"steps\\":[{\\"tool\\":\\"read_file\\",\\"arguments\\":{\\"path\\":\\"README.md\\"}}]}"}}]}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    captured_body = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_body
+        captured_body = request.read().decode("utf-8")
+        return httpx.Response(200, content="".join(chunks))
+
+    deltas: list[str] = []
+    client = OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        stream=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    plan = client.plan("read readme", {"detected_languages": []}, delta_callback=deltas.append)
+
+    assert plan.summary == "Read README"
+    assert plan.steps[0].tool == "read_file"
+    assert deltas == [
+        '{"summary":"Read',
+        ' README","steps":[{"tool":"read_file","arguments":{"path":"README.md"}}]}',
+    ]
+    assert '"stream":true' in captured_body
+
+
 def test_parse_plan_content_ignores_trailing_prose_after_json() -> None:
     plan = _parse_plan_content(
         'Here is the plan:\n{"summary":"Search term","steps":[{"tool":"search","arguments":{"query":"demo {term}"}}]}\nDone.'

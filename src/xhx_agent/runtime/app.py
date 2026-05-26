@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from pathlib import Path
@@ -841,21 +842,62 @@ class RuntimeApp:
             risk_summary=risks,
         )
 
-    def _build_plan(self, task: str, profile: ModelProfile, context_pack: ContextPack) -> ModelPlan:
+    def _build_plan(
+        self,
+        task: str,
+        profile: ModelProfile,
+        context_pack: ContextPack,
+        event_callback: EventCallback | None = None,
+        turn: int | None = None,
+    ) -> ModelPlan:
         if profile.provider == "mock":
             return MockModelClient().plan(task, self.workspace)
         if profile.provider == "openai-compatible":
+            def emit_model_delta(delta: str) -> None:
+                emit_event(
+                    event_callback,
+                    "model_delta",
+                    delta,
+                    turn=turn,
+                    profile=profile.name,
+                    length=len(delta),
+                )
+
             return OpenAICompatibleClient(
                 base_url=profile.base_url,
                 api_key_env=profile.api_key_env,
                 model=profile.model,
                 temperature=profile.temperature,
-            ).plan(task, context_pack)
+                stream=profile.stream,
+            ).plan(task, context_pack, delta_callback=emit_model_delta if profile.stream else None)
         raise ModelClientError(
             code="unsupported_provider",
             message=f"Unsupported model provider: {profile.provider}",
             details={"provider": profile.provider},
         )
+
+    def _build_plan_for_turn(
+        self,
+        task: str,
+        profile: ModelProfile,
+        context_pack: ContextPack,
+        event_callback: EventCallback | None,
+        turn: int,
+    ) -> ModelPlan:
+        build_plan = self._build_plan
+        parameters = inspect.signature(build_plan).parameters
+        accepts_runtime_events = "event_callback" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+        )
+        if accepts_runtime_events:
+            return build_plan(
+                task,
+                profile,
+                context_pack,
+                event_callback=event_callback,
+                turn=turn,
+            )
+        return build_plan(task, profile, context_pack)
 
     def _run_model_tool_loop(
         self,
@@ -918,7 +960,13 @@ class RuntimeApp:
                     emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
                     return "cancelled", turns_completed, message
                 emit_event(event_callback, "model_plan_start", "Building model plan.", turn=turn, profile=profile.name)
-                plan = self._build_plan(task, profile, context_pack)
+                plan = self._build_plan_for_turn(
+                    task,
+                    profile,
+                    context_pack,
+                    event_callback=event_callback,
+                    turn=turn,
+                )
             except ModelClientError as exc:
                 evidence.write_trace("model_error", exc.to_trace_payload())
                 risks.append(exc.message)
