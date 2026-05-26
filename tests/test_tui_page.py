@@ -36,6 +36,7 @@ def test_render_console_page_shows_runtime_sections() -> None:
     assert "model>" in output
     assert "model_deltas" in output
     assert "/dashboard" in output
+    assert "/live" in output
     assert "/cancel" in output
 
 

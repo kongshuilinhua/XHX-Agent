@@ -316,7 +316,7 @@ v0.5 已完成：
 - 新增 `xhx tui` 入口。
 - `xhx chat` 复用同一个 Command Console。
 - 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
-- 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/clear`、`/exit`。
+- 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/live`、`/cancel`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
 - Runtime 支持轻量事件回调。
@@ -324,6 +324,8 @@ v0.5 已完成：
 - OpenAI-compatible profile 在 `stream=true` 时可消费 SSE 增量，并把模型输出追加为 `model_delta` 事件。
 - Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
 - `/dashboard` 使用 `tui.page` 渲染一个 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。
+- `tui.live` 提供 Rich Live 动态仪表盘，真实交互终端中可以用固定区域刷新当前 Runtime 状态；记录型测试控制台默认关闭。
+- `/live on|off` 可以切换 Rich Live 动态仪表盘。
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
 - `/verify` 可以基于当前 changed files 手动触发 Verification Router，验证仍经过 SafeExecutionKernel、权限确认、Raw Trace 和 Evidence Index。
 - `/repair` 可以在最近验证失败后手动执行一轮修复，复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
@@ -334,8 +336,7 @@ v0.5 已完成：
 v0.5 未完成 / 后续增强：
 
 - 还不是全屏 Textual TUI。
-- 模型增量输出已打通到 Rich 控制台，但还不是固定区域的稳定流式 UI。
-- 仪表盘是 Rich 重新渲染视图，还不是固定区域的动态刷新 UI。
+- Rich Live 动态仪表盘已具备固定区域刷新基础，但还不是完整 Textual 组件系统。
 - `/repair` 仍限制为一轮手动修复，不是完整多轮交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。
 - 取消能力只覆盖阶段边界，还不能中止已经启动的长时间外部命令。

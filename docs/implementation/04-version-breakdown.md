@@ -145,6 +145,7 @@ v0.1 只能拆成三个固定子阶段：
 
 - `tui`：terminal abstraction、component、input、render loop。
 - `tui.page`：把 ConsoleState 渲染成可复用 Rich 终端页面，先服务 `/dashboard`，后续可迁移到 Textual。
+- `tui.live`：封装 Rich Live 生命周期，按 RuntimeEvent 刷新固定区域仪表盘。
 - `cli`：interactive mode 切换。
 - `runtime`：发出 run、context、plan、policy、tool、verification、repair 和 report 事件。
 - `models`：OpenAI-compatible SSE 增量解析，输出文本 delta 给 Runtime。
@@ -156,6 +157,7 @@ v0.1 只能拆成三个固定子阶段：
 - `/help`、`/model`、`/status`、`/plan`、`/context`、`/evidence`、`/diff` 解析。
 - RuntimeEvent 到 ConsoleState 的 reducer 测试。
 - OpenAI-compatible streaming delta 解析测试。
+- Rich Live dashboard 渲染和 `/live` 命令测试。
 - `/cancel` 命令、cancel event reducer 和取消状态渲染测试。
 - 权限确认同意和拒绝。
 - fake terminal 渲染快照。

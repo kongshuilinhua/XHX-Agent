@@ -16,6 +16,7 @@ from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.tui.live import LiveDashboard
 from xhx_agent.tui.page import render_console_page
 from xhx_agent.tui.state import ConsoleState
 
@@ -33,6 +34,7 @@ SLASH_COMMANDS = {
     "/skills",
     "/mode",
     "/dashboard",
+    "/live",
     "/cancel",
     "/clear",
     "/exit",
@@ -40,7 +42,12 @@ SLASH_COMMANDS = {
 
 
 class CommandConsole:
-    def __init__(self, workspace: Path | None = None, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        console: Console | None = None,
+        live_enabled: bool | None = None,
+    ) -> None:
         self.workspace = (workspace or Path.cwd()).resolve()
         self.console = console or Console()
         self.runtime = RuntimeApp(self.workspace)
@@ -57,6 +64,8 @@ class CommandConsole:
         self.mode = "linear-edit"
         self.state.mode = self.mode
         self.cancel_requested = False
+        self.live_enabled = self.console.is_interactive if live_enabled is None else live_enabled
+        self.live_dashboard: LiveDashboard | None = None
 
     def run(self) -> None:
         self.console.print(Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent"))
@@ -113,6 +122,8 @@ class CommandConsole:
             self.set_mode(argument.strip())
         elif command == "/dashboard":
             self.print_dashboard()
+        elif command == "/live":
+            self.set_live(argument.strip())
         elif command == "/cancel":
             self.request_cancel()
         elif command == "/clear":
@@ -127,21 +138,33 @@ class CommandConsole:
         runtime_task = self.build_runtime_task(task)
         self.last_user_task = task
         self.last_runtime_task = runtime_task
-        self.print_dashboard()
         self.console.print(Panel(task, title="Task"))
         if runtime_task != task:
             self.console.print(Panel(runtime_task, title="Follow-up Context"))
         try:
             with self.cancel_signal_handler():
-                result = self.runtime.run_task(
-                    runtime_task,
-                    profile_name=self.profile_name,
-                    assume_yes=self.assume_yes,
-                    confirm_callback=self.confirm_terminal_command,
-                    auto_repair=self.auto_repair,
-                    event_callback=self.handle_event,
-                    cancel_check=self.is_cancel_requested,
-                )
+                if self.live_enabled:
+                    with self.open_live_dashboard():
+                        result = self.runtime.run_task(
+                            runtime_task,
+                            profile_name=self.profile_name,
+                            assume_yes=self.assume_yes,
+                            confirm_callback=self.confirm_terminal_command,
+                            auto_repair=self.auto_repair,
+                            event_callback=self.handle_event,
+                            cancel_check=self.is_cancel_requested,
+                        )
+                else:
+                    self.print_dashboard()
+                    result = self.runtime.run_task(
+                        runtime_task,
+                        profile_name=self.profile_name,
+                        assume_yes=self.assume_yes,
+                        confirm_callback=self.confirm_terminal_command,
+                        auto_repair=self.auto_repair,
+                        event_callback=self.handle_event,
+                        cancel_check=self.is_cancel_requested,
+                    )
         except KeyboardInterrupt:
             self.request_cancel("Keyboard interrupt requested cancellation.", force=True)
             self.console.print("Task interrupted before the runtime could finish cancellation cleanup.")
@@ -150,6 +173,23 @@ class CommandConsole:
         self.state.apply_result(result)
         self.print_run_result(result)
         self.print_dashboard()
+
+    @contextmanager
+    def open_live_dashboard(self) -> Iterator[LiveDashboard]:
+        dashboard = LiveDashboard(
+            self.console,
+            self.state,
+            workspace=str(self.workspace),
+            profile=self.active_profile_name(),
+            auto_repair=self.auto_repair,
+            assume_yes=self.assume_yes,
+        )
+        self.live_dashboard = dashboard
+        try:
+            with dashboard:
+                yield dashboard
+        finally:
+            self.live_dashboard = None
 
     @contextmanager
     def cancel_signal_handler(self) -> Iterator[None]:
@@ -191,8 +231,12 @@ class CommandConsole:
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
         self.state.reduce(event)
+        self.refresh_live_dashboard()
         if event.type == "model_delta":
-            self.console.print(event.message, end="")
+            if not self.live_enabled:
+                self.console.print(event.message, end="")
+            return
+        if self.live_enabled:
             return
         self.console.print(f"[dim]{event.type}[/dim] {event.message}")
         if event.type in {"tool_result", "verification_result", "run_end"} and event.payload:
@@ -210,6 +254,7 @@ class CommandConsole:
         self.cancel_requested = True
         event = RuntimeEvent(type="cancel_requested", message=reason, payload={"source": "console"})
         self.handle_event(event)
+        self.refresh_live_dashboard()
         self.console.print("Cancel requested. The current task will stop at the next safe runtime boundary.")
         return True
 
@@ -243,6 +288,7 @@ class CommandConsole:
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
             ("/dashboard", "Render the console dashboard."),
+            ("/live [on|off]", "Toggle Rich Live dashboard refresh."),
             ("/cancel", "Request cancellation at the next safe runtime boundary."),
             ("/clear", "Clear terminal."),
             ("/exit", "Exit console."),
@@ -279,6 +325,7 @@ class CommandConsole:
         table.add_row("state", self.state.status)
         table.add_row("run_id", self.state.run_id or "none")
         table.add_row("cancel_requested", str(self.cancel_requested).lower())
+        table.add_row("live", str(self.live_enabled).lower())
         table.add_row("auto_repair", str(self.auto_repair).lower())
         table.add_row("assume_yes", str(self.assume_yes).lower())
         table.add_row("events", str(len(self.events)))
@@ -472,12 +519,33 @@ class CommandConsole:
             self.state.mode = argument
         self.console.print(f"mode: {self.mode}")
 
+    def set_live(self, argument: str) -> None:
+        lowered = argument.lower()
+        if lowered in {"on", "true", "1"}:
+            self.live_enabled = True
+        elif lowered in {"off", "false", "0"}:
+            self.live_enabled = False
+        self.console.print(f"live: {str(self.live_enabled).lower()}")
+
+    def active_profile_name(self) -> str:
+        return self.profile_name or load_config(self.workspace).default_profile
+
+    def refresh_live_dashboard(self) -> None:
+        if self.live_dashboard is None:
+            return
+        self.live_dashboard.update_options(
+            profile=self.active_profile_name(),
+            auto_repair=self.auto_repair,
+            assume_yes=self.assume_yes,
+        )
+        self.live_dashboard.refresh()
+
     def print_dashboard(self) -> None:
         self.console.print(
             render_console_page(
                 self.state,
                 workspace=str(self.workspace),
-                profile=self.profile_name or load_config(self.workspace).default_profile,
+                profile=self.active_profile_name(),
                 auto_repair=self.auto_repair,
                 assume_yes=self.assume_yes,
             )

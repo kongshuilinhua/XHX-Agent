@@ -5,6 +5,7 @@ from rich.console import Console
 from xhx_agent.cli.console import CommandConsole
 from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.safety.policy import PolicyDecision
@@ -13,6 +14,10 @@ from xhx_agent.safety.risk import RiskLevel
 
 def _console() -> Console:
     return Console(record=True, force_terminal=False, width=120)
+
+
+def _runtime_event() -> RuntimeEvent:
+    return RuntimeEvent(type="model_plan_start", message="Building model plan.", payload={"turn": 1})
 
 
 def test_command_console_handles_status_and_repair_toggle(tmp_path: Path) -> None:
@@ -27,6 +32,22 @@ def test_command_console_handles_status_and_repair_toggle(tmp_path: Path) -> Non
     output = console.export_text()
     assert "auto_repair: true" in output
     assert "Console Status" in output
+
+
+def test_command_console_live_toggle_and_status(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console, live_enabled=False)
+
+    assert command_console.handle_input("/live on")
+    assert command_console.live_enabled is True
+    assert command_console.handle_input("/status")
+    assert command_console.handle_input("/live off")
+
+    output = console.export_text()
+    assert "live: true" in output
+    assert "live" in output
+    assert "live: false" in output
 
 
 def test_command_console_cancel_sets_state(tmp_path: Path) -> None:
@@ -52,6 +73,33 @@ def test_command_console_cancel_without_running_task_is_noop(tmp_path: Path) -> 
 
     assert command_console.cancel_requested is False
     assert "No running task to cancel" in console.export_text()
+
+
+def test_command_console_refreshes_live_dashboard_on_events(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    command_console = CommandConsole(tmp_path, console=_console(), live_enabled=True)
+
+    class FakeDashboard:
+        refreshed = 0
+        profile = ""
+        auto_repair = False
+        assume_yes = False
+
+        def update_options(self, *, profile: str, auto_repair: bool, assume_yes: bool) -> None:
+            self.profile = profile
+            self.auto_repair = auto_repair
+            self.assume_yes = assume_yes
+
+        def refresh(self) -> None:
+            self.refreshed += 1
+
+    dashboard = FakeDashboard()
+    command_console.live_dashboard = dashboard  # type: ignore[assignment]
+
+    command_console.handle_event(command_console.state.events[0] if command_console.state.events else _runtime_event())
+
+    assert dashboard.refreshed == 1
+    assert dashboard.profile == "mock"
 
 
 def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None:
