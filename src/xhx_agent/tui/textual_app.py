@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Input, Static
 
-from xhx_agent.runtime.app import ManualVerificationResult, RunResult, RuntimeApp
+from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
@@ -128,6 +128,7 @@ class TextualCommandConsoleApp(App[None]):
         self.state = state or ConsoleState()
         self.last_result: RunResult | None = None
         self.last_manual_verification: ManualVerificationResult | None = None
+        self.last_manual_repair: ManualRepairResult | None = None
         self.next_confirm_response: bool | None = None
         self.messages: list[str] = []
         self.exit_requested = False
@@ -212,7 +213,8 @@ class TextualCommandConsoleApp(App[None]):
         return allowed
 
     def handle_slash_command(self, command_line: str) -> bool:
-        command, _, _argument = command_line.partition(" ")
+        command, _, argument = command_line.partition(" ")
+        argument = argument.strip()
         if command == "/exit":
             self.exit_requested = True
             return False
@@ -229,8 +231,14 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/help":
             self.messages.append(
-                "system> available commands: /help /status /context /evidence /diff /verify /allow /deny /clear /exit"
+                "system> available commands: /help /status /plan /context /evidence /diff /verify /repair /mode /allow /deny /clear /exit"
             )
+            return True
+        if command == "/plan":
+            self.print_plan_preview(argument or None)
+            return True
+        if command == "/mode":
+            self.set_mode(argument)
             return True
         if command == "/context":
             self.print_context_summary()
@@ -243,6 +251,10 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/verify":
             self.run_manual_verification()
+            return True
+        if command == "/repair":
+            max_attempts = 2 if argument.lower() in {"loop", "auto"} else 1
+            self.run_manual_repair(max_attempts=max_attempts)
             return True
         if command == "/status":
             self.messages.append(
@@ -269,6 +281,66 @@ class TextualCommandConsoleApp(App[None]):
         self.last_manual_verification = result
         self.messages.append(f"system> manual verification: {result.status}")
 
+    def run_manual_repair(self, max_attempts: int = 1) -> None:
+        failed_results = []
+        changed_files: list[str] = []
+        task = self.state.task or "manual repair"
+        if self.last_manual_verification and self.last_manual_verification.status == "failed":
+            failed_results = self.last_manual_verification.verification_results
+            changed_files = list(self.last_manual_verification.changed_files)
+        elif self.last_result and self.last_result.verification == "failed":
+            failed_results = self.last_result.verification_results
+            changed_files = list(self.last_result.changed_files)
+            task = self.last_result.run_id
+        else:
+            self.messages.append("system> manual repair requires a failed verification result")
+            return
+        result = self.runtime.repair_after_failed_verification(
+            task=task,
+            changed_files=changed_files,
+            failed_verification_results=failed_results,
+            profile_name=self.profile,
+            assume_yes=self.assume_yes,
+            confirm_callback=self.confirm_terminal_command,
+            event_callback=self.handle_runtime_event,
+            max_attempts=max_attempts,
+        )
+        self.last_manual_repair = result
+        self.state.changed_files = list(result.changed_files)
+        self.state.verification = result.verification
+        self.state.summary_path = result.summary_path
+        self.state.repair_attempts = result.repair_attempts
+        self.messages.append(f"system> manual repair: {result.status}, verification: {result.verification}")
+
+    def print_plan_preview(self, task: str | None = None) -> None:
+        if not task:
+            if not self.state.plan_summary:
+                self.messages.append("system> plan: no active plan")
+                return
+            self.messages.append(
+                "system> "
+                f"plan: {self.state.plan_summary}; "
+                f"status={self.state.plan_status or 'unknown'}; "
+                f"steps={self.state.plan_step_count}"
+            )
+            return
+        result = self.runtime.preview_plan(task, self.profile)
+        parts = [
+            f"system> plan preview: {result.status}",
+            result.summary,
+            f"steps={result.step_count}",
+            f"context={result.context_used_tokens_estimate}/{result.context_budget_tokens}",
+            f"trace={result.trace_path}",
+        ]
+        if result.risk_summary:
+            parts.append("risks=" + "; ".join(result.risk_summary))
+        self.messages.append(" | ".join(parts))
+
+    def set_mode(self, argument: str) -> None:
+        if argument:
+            self.state.mode = argument
+        self.messages.append(f"system> mode: {self.state.mode}")
+
     def print_context_summary(self) -> None:
         languages = ", ".join(self.state.detected_languages) or "unknown"
         self.messages.append(
@@ -292,9 +364,7 @@ class TextualCommandConsoleApp(App[None]):
         self.messages.append("system> policy evidence: " + " | ".join(items))
 
     def print_diff_summary(self) -> None:
-        changed_files = list(self.state.changed_files)
-        if not changed_files and self.last_result:
-            changed_files = list(self.last_result.changed_files)
+        changed_files = self.current_changed_files()
         if not changed_files:
             self.messages.append("system> diff: no changed files")
             return
@@ -308,6 +378,17 @@ class TextualCommandConsoleApp(App[None]):
         if result.risk_summary:
             parts.append("notes: " + "; ".join(result.risk_summary))
         self.messages.append("system> diff: " + "\n".join(parts))
+
+    def current_changed_files(self) -> list[str]:
+        if self.state.changed_files:
+            return list(self.state.changed_files)
+        if self.last_manual_repair and self.last_manual_repair.changed_files:
+            return list(self.last_manual_repair.changed_files)
+        if self.last_manual_verification and self.last_manual_verification.changed_files:
+            return list(self.last_manual_verification.changed_files)
+        if self.last_result and self.last_result.changed_files:
+            return list(self.last_result.changed_files)
+        return []
 
 
 def run_textual_console(
