@@ -191,8 +191,11 @@ class TextualCommandConsoleApp(App[None]):
 
     def run_task(self, task: str) -> None:
         self.messages.append(f"user> {task}")
+        runtime_task = self.build_runtime_task(task)
+        if runtime_task != task:
+            self.messages.append("system> follow-up context attached")
         result = self.runtime.run_task(
-            task,
+            runtime_task,
             profile_name=self.profile,
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
@@ -203,6 +206,27 @@ class TextualCommandConsoleApp(App[None]):
         self.last_result = result
         self.state.apply_result(result)
         self.messages.append(f"system> run finished: {result.status}, verification: {result.verification}")
+
+    def build_runtime_task(self, task: str) -> str:
+        if self.last_result is None:
+            return task
+        return "\n".join(
+            [
+                "Follow-up task in the same console session.",
+                "",
+                "User request:",
+                task,
+                "",
+                "Previous run context:",
+                f"- run_id: {self.last_result.run_id}",
+                f"- status: {self.last_result.status}",
+                f"- verification: {self.last_result.verification}",
+                f"- changed_files: {', '.join(self.last_result.changed_files) or 'none'}",
+                f"- summary: {self.last_result.summary_path}",
+                "",
+                "Use the previous run context only when it is relevant. Keep normal safety, apply_patch, and verification rules.",
+            ]
+        )
 
     def handle_runtime_event(self, event: RuntimeEvent) -> None:
         self.state.reduce(event)
@@ -267,6 +291,9 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/dashboard":
             self.print_dashboard_summary()
+            return True
+        if command == "/live":
+            self.messages.append("system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels")
             return True
         if command == "/cancel":
             self.request_cancel()
