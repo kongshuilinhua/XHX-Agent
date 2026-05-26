@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Input, Static
 
-from xhx_agent.runtime.app import RunResult, RuntimeApp
+from xhx_agent.runtime.app import ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
@@ -127,6 +127,8 @@ class TextualCommandConsoleApp(App[None]):
         self.assume_yes = assume_yes
         self.state = state or ConsoleState()
         self.last_result: RunResult | None = None
+        self.last_manual_verification: ManualVerificationResult | None = None
+        self.next_confirm_response: bool | None = None
         self.messages: list[str] = []
         self.exit_requested = False
         self.widgets_ready = False
@@ -203,11 +205,11 @@ class TextualCommandConsoleApp(App[None]):
         self.refresh_snapshot()
 
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
-        self.messages.append(
-            "system> permission required in fullscreen mode; "
-            f"declined by default: {command} ({decision.risk.value})"
-        )
-        return False
+        allowed = bool(self.next_confirm_response)
+        self.next_confirm_response = None
+        verb = "allowed" if allowed else "declined"
+        self.messages.append(f"system> permission {verb}: {command} ({decision.risk.value})")
+        return allowed
 
     def handle_slash_command(self, command_line: str) -> bool:
         command, _, _argument = command_line.partition(" ")
@@ -217,8 +219,19 @@ class TextualCommandConsoleApp(App[None]):
         if command == "/clear":
             self.action_clear()
             return True
+        if command == "/allow":
+            self.next_confirm_response = True
+            self.messages.append("system> next permission prompt will be allowed once")
+            return True
+        if command == "/deny":
+            self.next_confirm_response = False
+            self.messages.append("system> next permission prompt will be declined once")
+            return True
         if command == "/help":
-            self.messages.append("system> available commands: /help /status /clear /exit")
+            self.messages.append("system> available commands: /help /status /verify /allow /deny /clear /exit")
+            return True
+        if command == "/verify":
+            self.run_manual_verification()
             return True
         if command == "/status":
             self.messages.append(
@@ -231,6 +244,19 @@ class TextualCommandConsoleApp(App[None]):
             return True
         self.messages.append(f"system> Unknown command: {command}")
         return True
+
+    def run_manual_verification(self) -> None:
+        changed_files = list(self.state.changed_files)
+        if not changed_files and self.last_result:
+            changed_files = list(self.last_result.changed_files)
+        result = self.runtime.verify_changed_files(
+            changed_files,
+            assume_yes=self.assume_yes,
+            confirm_callback=self.confirm_terminal_command,
+            event_callback=self.handle_runtime_event,
+        )
+        self.last_manual_verification = result
+        self.messages.append(f"system> manual verification: {result.status}")
 
 
 def run_textual_console(
