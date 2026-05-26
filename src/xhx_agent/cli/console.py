@@ -191,6 +191,9 @@ class CommandConsole:
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
         self.state.reduce(event)
+        if event.type == "model_delta":
+            self.console.print(event.message, end="")
+            return
         self.console.print(f"[dim]{event.type}[/dim] {event.message}")
         if event.type in {"tool_result", "verification_result", "run_end"} and event.payload:
             table = Table(show_header=False, box=None, padding=(0, 1))

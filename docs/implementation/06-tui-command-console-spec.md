@@ -103,7 +103,13 @@ TUI 消费这些事件：
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
 
-v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。
+v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。
+
+当前边界：
+
+- `model_delta` 只表示模型原始文本增量，不代表工具已经执行。
+- 模型输出仍必须解析成 JSON plan 后才进入工具执行。
+- Rich 控制台会直接追加增量文本，但还不是固定区域的 Textual 流式 UI。
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 

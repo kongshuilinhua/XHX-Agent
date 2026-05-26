@@ -77,6 +77,8 @@ def _conversation_panel(state: ConsoleState) -> Panel:
         rows.append(Text(f"user> {state.task}", style="bold"))
     if state.plan_summary:
         rows.append(Text(f"plan> {state.plan_summary}"))
+    if state.model_output:
+        rows.append(Text(f"model> {_compact_model_output(state.model_output)}", style="cyan"))
     if state.tools:
         rows.append(_activity_table(state))
     else:
@@ -134,6 +136,7 @@ def _context_table(state: ConsoleState) -> Table:
     table.add_row("budget", budget)
     table.add_row("languages", ", ".join(state.detected_languages) or "unknown")
     table.add_row("files", str(state.file_count))
+    table.add_row("model_deltas", str(state.model_delta_count))
     return table
 
 
@@ -163,3 +166,10 @@ def _events_table(state: ConsoleState) -> Table:
 def _footer_panel() -> Panel:
     hints = "  ".join(SLASH_COMMAND_HINTS)
     return Panel(Text(hints, overflow="fold"), title="Commands", border_style="green")
+
+
+def _compact_model_output(text: str, limit: int = 600) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    return "..." + normalized[-limit:]

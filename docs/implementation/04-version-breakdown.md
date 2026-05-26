@@ -147,6 +147,7 @@ v0.1 只能拆成三个固定子阶段：
 - `tui.page`：把 ConsoleState 渲染成可复用 Rich 终端页面，先服务 `/dashboard`，后续可迁移到 Textual。
 - `cli`：interactive mode 切换。
 - `runtime`：发出 run、context、plan、policy、tool、verification、repair 和 report 事件。
+- `models`：OpenAI-compatible SSE 增量解析，输出文本 delta 给 Runtime。
 - `runtime`：在模型规划、工具执行和验证命令前检查取消请求并发出 cancel 事件。
 - `tui.state`：把 RuntimeEvent 归约成 ConsoleState，供 Rich 控制台和后续 Textual TUI 复用。
 
@@ -154,6 +155,7 @@ v0.1 只能拆成三个固定子阶段：
 
 - `/help`、`/model`、`/status`、`/plan`、`/context`、`/evidence`、`/diff` 解析。
 - RuntimeEvent 到 ConsoleState 的 reducer 测试。
+- OpenAI-compatible streaming delta 解析测试。
 - `/cancel` 命令、cancel event reducer 和取消状态渲染测试。
 - 权限确认同意和拒绝。
 - fake terminal 渲染快照。

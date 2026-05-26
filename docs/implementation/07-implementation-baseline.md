@@ -320,7 +320,8 @@ v0.5 已完成：
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
 - Runtime 支持轻量事件回调。
-- Runtime 发出 `policy_decision`、`tool_result`、`verification_result` 等事件，控制台用 `ConsoleState` 做状态归约。
+- Runtime 发出 `model_delta`、`policy_decision`、`tool_result`、`verification_result` 等事件，控制台用 `ConsoleState` 做状态归约。
+- OpenAI-compatible profile 在 `stream=true` 时可消费 SSE 增量，并把模型输出追加为 `model_delta` 事件。
 - Command Console 实时打印 run、context、model、tool、verification、repair 和 report 事件。
 - `/dashboard` 使用 `tui.page` 渲染一个 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
@@ -333,7 +334,7 @@ v0.5 已完成：
 v0.5 未完成 / 后续增强：
 
 - 还不是全屏 Textual TUI。
-- 还没有真正 token 级模型流式输出。
+- 模型增量输出已打通到 Rich 控制台，但还不是固定区域的稳定流式 UI。
 - 仪表盘是 Rich 重新渲染视图，还不是固定区域的动态刷新 UI。
 - `/repair` 仍限制为一轮手动修复，不是完整多轮交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。

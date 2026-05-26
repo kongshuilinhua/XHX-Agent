@@ -64,6 +64,10 @@ def test_console_state_reduces_runtime_events() -> None:
     assert state.detected_languages == ["python"]
     assert state.context_selected == 3
     assert state.plan_summary == "Patch calc"
+    state.reduce(RuntimeEvent(type="model_delta", message='{"summary":"Patch', payload={"turn": 1, "length": 18}))
+    state.reduce(RuntimeEvent(type="model_delta", message=' calc"}', payload={"turn": 1, "length": 7}))
+    assert state.model_output == '{"summary":"Patch calc"}'
+    assert state.model_delta_count == 2
     assert state.tools[0].status == "success"
     assert state.policy_decisions[0].requires_user
     assert state.verification == "passed"
