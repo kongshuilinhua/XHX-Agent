@@ -9,6 +9,7 @@ from textual.widgets import Footer, Header, Input, Static
 
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
+from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
@@ -132,6 +133,7 @@ class TextualCommandConsoleApp(App[None]):
         self.next_confirm_response: bool | None = None
         self.messages: list[str] = []
         self.exit_requested = False
+        self.cancel_requested = False
         self.widgets_ready = False
 
     def compose(self) -> ComposeResult:
@@ -196,6 +198,7 @@ class TextualCommandConsoleApp(App[None]):
             confirm_callback=self.confirm_terminal_command,
             auto_repair=self.auto_repair,
             event_callback=self.handle_runtime_event,
+            cancel_check=self.is_cancel_requested,
         )
         self.last_result = result
         self.state.apply_result(result)
@@ -231,8 +234,11 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/help":
             self.messages.append(
-                "system> available commands: /help /status /plan /context /evidence /diff /verify /repair /mode /allow /deny /clear /exit"
+                "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /allow /deny /clear /exit"
             )
+            return True
+        if command == "/model":
+            self.print_model(argument or None)
             return True
         if command == "/plan":
             self.print_plan_preview(argument or None)
@@ -256,6 +262,15 @@ class TextualCommandConsoleApp(App[None]):
             max_attempts = 2 if argument.lower() in {"loop", "auto"} else 1
             self.run_manual_repair(max_attempts=max_attempts)
             return True
+        if command == "/skills":
+            self.print_skills()
+            return True
+        if command == "/dashboard":
+            self.print_dashboard_summary()
+            return True
+        if command == "/cancel":
+            self.request_cancel()
+            return True
         if command == "/status":
             self.messages.append(
                 "system> "
@@ -277,6 +292,7 @@ class TextualCommandConsoleApp(App[None]):
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
             event_callback=self.handle_runtime_event,
+            cancel_check=self.is_cancel_requested,
         )
         self.last_manual_verification = result
         self.messages.append(f"system> manual verification: {result.status}")
@@ -303,6 +319,7 @@ class TextualCommandConsoleApp(App[None]):
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
             event_callback=self.handle_runtime_event,
+            cancel_check=self.is_cancel_requested,
             max_attempts=max_attempts,
         )
         self.last_manual_repair = result
@@ -340,6 +357,49 @@ class TextualCommandConsoleApp(App[None]):
         if argument:
             self.state.mode = argument
         self.messages.append(f"system> mode: {self.state.mode}")
+
+    def print_model(self, profile_name: str | None = None) -> None:
+        if profile_name:
+            self.profile = profile_name
+            self.messages.append(f"system> active profile: {self.profile}")
+            return
+        profiles = load_profiles(self.workspace).profiles
+        items = []
+        for profile in profiles:
+            marker = "*" if profile.name == self.profile else ""
+            items.append(f"{profile.name}{marker} [{profile.provider}/{profile.model or ''}]")
+        self.messages.append("system> profiles: " + (" | ".join(items) if items else "none"))
+
+    def print_skills(self) -> None:
+        skill_root = self.workspace / ".xhx" / "skills"
+        if not skill_root.exists():
+            self.messages.append("system> skills: none")
+            return
+        skills = [path.relative_to(self.workspace).as_posix() for path in sorted(skill_root.iterdir())]
+        self.messages.append("system> skills: " + (" | ".join(skills) if skills else "none"))
+
+    def print_dashboard_summary(self) -> None:
+        self.messages.append(
+            "system> "
+            f"dashboard: status={self.state.status}; "
+            f"run={self.state.run_id or 'none'}; "
+            f"verification={self.state.verification}; "
+            f"changed={len(self.state.changed_files)}; "
+            f"context={self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0}; "
+            f"events={len(self.state.events)}"
+        )
+
+    def request_cancel(self, reason: str = "Cancel requested by user.") -> bool:
+        if self.state.status in {"idle", "success", "failed", "cancelled", "skipped_no_changes"}:
+            self.messages.append("system> No running task to cancel")
+            return False
+        self.cancel_requested = True
+        self.handle_runtime_event(RuntimeEvent(type="cancel_requested", message=reason, payload={"source": "textual"}))
+        self.messages.append("system> Cancel requested. The current task will stop at the next safe runtime boundary.")
+        return True
+
+    def is_cancel_requested(self) -> bool:
+        return self.cancel_requested
 
     def print_context_summary(self) -> None:
         languages = ", ".join(self.state.detected_languages) or "unknown"
