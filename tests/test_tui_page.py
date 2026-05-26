@@ -33,3 +33,25 @@ def test_render_console_page_shows_runtime_sections() -> None:
     assert "Changed Files" in output
     assert "src/calc.py" in output
     assert "/dashboard" in output
+    assert "/cancel" in output
+
+
+def test_render_console_page_shows_cancel_state() -> None:
+    state = ConsoleState()
+    state.reduce(RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix tests", "profile": "mock"}))
+    state.reduce(RuntimeEvent(type="cancel_requested", message="Cancel requested by user.", payload={"source": "console"}))
+
+    console = Console(record=True, force_terminal=False, width=120)
+    console.print(
+        render_console_page(
+            state,
+            workspace="D:/repo",
+            profile="mock",
+            auto_repair=False,
+            assume_yes=False,
+        )
+    )
+    output = console.export_text()
+
+    assert "cancel: yes" in output
+    assert "Cancel requested by user." in output

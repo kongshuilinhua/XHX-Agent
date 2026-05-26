@@ -88,6 +88,7 @@ class ManualRepairResult(BaseModel):
 
 
 ConfirmationCallback = Callable[[str, object], bool]
+CancelCheck = Callable[[], bool]
 
 
 class RuntimeApp:
@@ -115,6 +116,7 @@ class RuntimeApp:
         confirm_callback: ConfirmationCallback | None = None,
         auto_repair: bool = False,
         event_callback: EventCallback | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> RunResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
@@ -150,6 +152,45 @@ class RuntimeApp:
         recent_error: str | None = None
         tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
+        if _cancel_requested(cancel_check):
+            status = "cancelled"
+            verification_status = "cancelled"
+            risks.append("Run cancelled by user before model planning.")
+            evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
+            emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
+            summary = write_report(
+                workspace=self.workspace,
+                run_id=run_id,
+                task=task,
+                plan=plan_summaries + ["Run cancelled before model planning."],
+                changed_files=[],
+                commands=[],
+                verification=verification_status,
+                risks=risks,
+            )
+            evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+            emit_event(
+                event_callback,
+                "run_end",
+                "Run cancelled.",
+                run_id=run_id,
+                status=status,
+                verification=verification_status,
+                changed_files=[],
+                summary_path=str(summary.relative_to(self.workspace)),
+            )
+            return RunResult(
+                run_id=run_id,
+                status=status,
+                turns=turns_completed,
+                changed_files=[],
+                commands=[],
+                verification=verification_status,
+                verification_results=[],
+                summary_path=str(summary.relative_to(self.workspace)),
+                risk_summary=risks,
+            )
+
         status, turns_completed, recent_error = self._run_model_tool_loop(
             task=task,
             profile=profile,
@@ -165,18 +206,32 @@ class RuntimeApp:
             recent_error=recent_error,
             starting_turn=1,
             event_callback=event_callback,
+            cancel_check=cancel_check,
         )
 
         verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
         commands = [item.command for item in verification_plan.commands] if verification_plan else []
         verification_status = (
-            "not_executed" if status == "failed" else verification_plan.skip_reason if verification_plan else "skipped_no_changes"
+            "cancelled"
+            if status == "cancelled"
+            else "not_executed"
+            if status == "failed"
+            else verification_plan.skip_reason
+            if verification_plan
+            else "skipped_no_changes"
         )
-        if status != "failed" and not changed_files:
+        if status not in {"failed", "cancelled"} and not changed_files:
             verification_status = "skipped_no_changes"
             evidence.write_trace("verification_skipped", {"reason": "No changed files."})
 
-        while status != "failed" and changed_files:
+        while status not in {"failed", "cancelled"} and changed_files:
+            if _cancel_requested(cancel_check):
+                status = "cancelled"
+                verification_status = "cancelled"
+                risks.append("Run cancelled by user before verification.")
+                evidence.write_trace("cancel_requested", {"stage": "before_verification"})
+                emit_event(event_callback, "run_cancelled", "Run cancelled before verification.", run_id=run_id)
+                break
             checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
             emit_event(
                 event_callback,
@@ -189,6 +244,19 @@ class RuntimeApp:
             commands_run.clear()
             verification_status = verification_plan.skip_reason if verification_plan else "not_executed"
             for command in commands:
+                if _cancel_requested(cancel_check):
+                    status = "cancelled"
+                    verification_status = "cancelled"
+                    risks.append("Run cancelled by user before verification command.")
+                    evidence.write_trace("cancel_requested", {"stage": "before_verification_command", "command": command})
+                    emit_event(
+                        event_callback,
+                        "run_cancelled",
+                        "Run cancelled before verification command.",
+                        run_id=run_id,
+                        command=command,
+                    )
+                    break
                 emit_event(event_callback, "verification_start", "Verification started.", command=command)
                 result = kernel.run_verification(
                     command,
@@ -216,6 +284,8 @@ class RuntimeApp:
                     risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
                     break
                 verification_status = "passed"
+            if status == "cancelled":
+                break
             repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
             evidence.write_trace("repair_decision", repair_decision.model_dump())
             emit_event(
@@ -273,7 +343,10 @@ class RuntimeApp:
                 starting_turn=turns_completed + 1,
                 max_turns=1,
                 event_callback=event_callback,
+                cancel_check=cancel_check,
             )
+            if status == "cancelled":
+                break
             if status == "failed":
                 break
             if len(changed_files) == before_repair_changed:
@@ -385,6 +458,7 @@ class RuntimeApp:
         assume_yes: bool = False,
         confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> ManualVerificationResult:
         run_id = f"verify-{int(time.time())}"
         normalized_changed_files = sorted(set(changed_files))
@@ -440,6 +514,18 @@ class RuntimeApp:
         if not commands:
             risks.append(plan.skip_reason or "No verification command inferred.")
         for command in commands:
+            if _cancel_requested(cancel_check):
+                verification_status = "cancelled"
+                risks.append("Manual verification cancelled by user before command execution.")
+                evidence.write_trace("cancel_requested", {"stage": "manual_verification", "command": command})
+                emit_event(
+                    event_callback,
+                    "run_cancelled",
+                    "Manual verification cancelled before command execution.",
+                    run_id=run_id,
+                    command=command,
+                )
+                break
             emit_event(event_callback, "verification_start", "Manual verification started.", command=command)
             result = kernel.run_verification(
                 command,
@@ -506,6 +592,7 @@ class RuntimeApp:
         assume_yes: bool = False,
         confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> ManualRepairResult:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
@@ -598,6 +685,12 @@ class RuntimeApp:
         if not repair_decision.should_repair:
             risks.append(f"Manual repair not attempted: {repair_decision.reason}")
             status = "failed"
+        elif _cancel_requested(cancel_check):
+            verification_status = "cancelled"
+            status = "cancelled"
+            risks.append("Manual repair cancelled by user before repair attempt.")
+            evidence.write_trace("cancel_requested", {"stage": "before_manual_repair_attempt"})
+            emit_event(event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id)
         else:
             repair_attempts = 1
             emit_event(event_callback, "repair_start", "Manual repair attempt started.", attempt=1, max_attempts=1)
@@ -632,9 +725,10 @@ class RuntimeApp:
                 starting_turn=1,
                 max_turns=1,
                 event_callback=event_callback,
+                cancel_check=cancel_check,
             )
             normalized_changed_files = sorted(set(mutable_changed_files))
-            if status != "failed":
+            if status not in {"failed", "cancelled"}:
                 checkpoint = kernel.create_checkpoint(normalized_changed_files)
                 emit_event(
                     event_callback,
@@ -649,6 +743,22 @@ class RuntimeApp:
                 if not commands_run:
                     risks.append(plan.skip_reason or "No verification command inferred.")
                 for command in commands_run:
+                    if _cancel_requested(cancel_check):
+                        status = "cancelled"
+                        verification_status = "cancelled"
+                        risks.append("Manual repair cancelled by user before verification command.")
+                        evidence.write_trace(
+                            "cancel_requested",
+                            {"stage": "before_manual_repair_verification_command", "command": command},
+                        )
+                        emit_event(
+                            event_callback,
+                            "run_cancelled",
+                            "Manual repair cancelled before verification command.",
+                            run_id=run_id,
+                            command=command,
+                        )
+                        break
                     emit_event(event_callback, "verification_start", "Manual repair verification started.", command=command)
                     result = kernel.run_verification(
                         command,
@@ -765,12 +875,19 @@ class RuntimeApp:
         starting_turn: int,
         max_turns: int | None = None,
         event_callback: EventCallback | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
         turn_limit = max_turns or _max_model_turns(profile)
         for offset in range(turn_limit):
             turn = starting_turn + offset
+            if _cancel_requested(cancel_check):
+                message = "Run cancelled by user before context compilation."
+                risks.append(message)
+                evidence.write_trace("cancel_requested", {"stage": "before_context_pack", "turn": turn})
+                emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
+                return "cancelled", turns_completed, message
             context_pack = compile_context_pack(
                 workspace=self.workspace,
                 task=task,
@@ -794,6 +911,12 @@ class RuntimeApp:
                 budget_tokens=context_pack.budget_tokens,
             )
             try:
+                if _cancel_requested(cancel_check):
+                    message = "Run cancelled by user before model planning."
+                    risks.append(message)
+                    evidence.write_trace("cancel_requested", {"stage": "before_model_plan", "turn": turn})
+                    emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
+                    return "cancelled", turns_completed, message
                 emit_event(event_callback, "model_plan_start", "Building model plan.", turn=turn, profile=profile.name)
                 plan = self._build_plan(task, profile, context_pack)
             except ModelClientError as exc:
@@ -823,6 +946,13 @@ class RuntimeApp:
                 )
             )
 
+            if _cancel_requested(cancel_check):
+                message = "Run cancelled by user before tool execution."
+                risks.append(message)
+                evidence.write_trace("cancel_requested", {"stage": "before_tool_execution", "turn": turn})
+                emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
+                return "cancelled", turns_completed, message
+
             if plan.status == "done":
                 return status, turns_completed, recent_error
 
@@ -834,6 +964,15 @@ class RuntimeApp:
                 return "failed", turns_completed, exc.message
 
             for step in plan.steps:
+                if _cancel_requested(cancel_check):
+                    message = f"Run cancelled by user before tool execution: {step.tool}."
+                    risks.append(message)
+                    evidence.write_trace(
+                        "cancel_requested",
+                        {"stage": "before_tool", "turn": turn, "tool": step.tool},
+                    )
+                    emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn, tool=step.tool)
+                    return "cancelled", turns_completed, message
                 try:
                     emit_event(event_callback, "tool_start", f"Tool started: {step.tool}", turn=turn, tool=step.tool)
                     result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
@@ -897,6 +1036,15 @@ def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], ste
     if changed_files:
         return True
     return not steps
+
+
+def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
+    if cancel_check is None:
+        return False
+    try:
+        return bool(cancel_check())
+    except Exception:
+        return False
 
 
 def checkpoint_path_value(workspace: Path, run_id: str) -> Path:

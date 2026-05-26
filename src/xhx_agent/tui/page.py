@@ -23,6 +23,7 @@ SLASH_COMMAND_HINTS = [
     "/skills",
     "/mode",
     "/dashboard",
+    "/cancel",
     "/clear",
     "/exit",
 ]
@@ -65,7 +66,8 @@ def _header_table(state: ConsoleState, *, workspace: str, profile: str, auto_rep
         f"verification: {state.verification}",
         f"flags: {', '.join(flags) or 'none'}",
     )
-    table.add_row(f"workspace: {workspace}", "", "")
+    cancel = "yes" if state.cancel_requested else "no"
+    table.add_row(f"workspace: {workspace}", f"cancel: {cancel}", "")
     return table
 
 
@@ -81,6 +83,8 @@ def _conversation_panel(state: ConsoleState) -> Panel:
         rows.append(Text("No tool activity yet.", style="dim"))
     if state.summary_path:
         rows.append(Text(f"summary> {state.summary_path}", style="green"))
+    if state.cancel_requested:
+        rows.append(Text(f"cancel> {state.cancel_reason or 'requested'}", style="yellow"))
     return Panel(Group(*rows), title="Conversation", border_style="blue")
 
 

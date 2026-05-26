@@ -98,6 +98,8 @@ TUI 消费这些事件：
 - `repair_decision`：显示修复判断。
 - `repair_start`：显示修复轮次。
 - `restore_plan`：显示失败后的只读恢复计划状态。
+- `cancel_requested`：显示用户已请求取消。
+- `run_cancelled`：显示 Runtime 已在安全边界停止。
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
 
@@ -235,6 +237,17 @@ Skills are planned for v0.8.
 
 v0.5 中 `dag-execute` 可以显示为 planned。
 
+### /cancel
+
+请求 Runtime 在下一个安全边界取消当前任务。
+
+规则：
+
+- 如果当前没有运行中的任务，显示 `No running task to cancel.`。
+- 如果任务正在运行，写入 `cancel_requested` 状态。
+- Runtime 在模型规划、工具执行、验证命令开始前检查取消状态。
+- v0.5 当前实现不是异步强杀；已经启动的外部命令不会被立即终止。
+
 ### /clear
 
 清空当前屏幕显示，不删除 session、trace 或 evidence。
@@ -246,7 +259,7 @@ v0.5 中 `dag-execute` 可以显示为 planned。
 如果 run 正在执行：
 
 - 请求 Runtime cancel。
-- 等待当前工具安全停止。
+- 等待 Runtime 到达下一个安全边界。
 - 写入 cancelled 状态。
 
 ## 输入行为

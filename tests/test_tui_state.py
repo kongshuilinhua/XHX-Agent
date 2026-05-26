@@ -70,3 +70,16 @@ def test_console_state_reduces_runtime_events() -> None:
     assert state.verifications[0].exit_code == 0
     assert state.changed_files == ["src/calc.py"]
     assert state.summary_path == ".xhx/logbook/run-1.md"
+
+
+def test_console_state_reduces_cancel_events() -> None:
+    state = ConsoleState()
+
+    state.reduce(RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}))
+    state.reduce(RuntimeEvent(type="cancel_requested", message="Cancel requested by user.", payload={"source": "console"}))
+    state.reduce(RuntimeEvent(type="run_cancelled", message="Run cancelled before verification.", payload={"run_id": "run-1"}))
+
+    assert state.status == "cancelled"
+    assert state.cancel_requested is True
+    assert state.cancel_reason == "Run cancelled before verification."
+    assert state.verification == "cancelled"
