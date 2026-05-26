@@ -228,7 +228,18 @@ class TextualCommandConsoleApp(App[None]):
             self.messages.append("system> next permission prompt will be declined once")
             return True
         if command == "/help":
-            self.messages.append("system> available commands: /help /status /verify /allow /deny /clear /exit")
+            self.messages.append(
+                "system> available commands: /help /status /context /evidence /diff /verify /allow /deny /clear /exit"
+            )
+            return True
+        if command == "/context":
+            self.print_context_summary()
+            return True
+        if command == "/evidence":
+            self.print_evidence_summary()
+            return True
+        if command == "/diff":
+            self.print_diff_summary()
             return True
         if command == "/verify":
             self.run_manual_verification()
@@ -257,6 +268,46 @@ class TextualCommandConsoleApp(App[None]):
         )
         self.last_manual_verification = result
         self.messages.append(f"system> manual verification: {result.status}")
+
+    def print_context_summary(self) -> None:
+        languages = ", ".join(self.state.detected_languages) or "unknown"
+        self.messages.append(
+            "system> "
+            f"context: turn={self.state.context_turn or 'none'} "
+            f"selected={self.state.context_selected} "
+            f"omitted={self.state.context_omitted} "
+            f"budget={self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0} "
+            f"languages={languages} "
+            f"files={self.state.file_count}"
+        )
+
+    def print_evidence_summary(self) -> None:
+        if not self.state.policy_decisions:
+            self.messages.append("system> policy evidence: none")
+            return
+        items = [
+            f"{item.source or item.scope}: {item.decision} ({item.risk}) {item.reason}"
+            for item in self.state.policy_decisions[-3:]
+        ]
+        self.messages.append("system> policy evidence: " + " | ".join(items))
+
+    def print_diff_summary(self) -> None:
+        changed_files = list(self.state.changed_files)
+        if not changed_files and self.last_result:
+            changed_files = list(self.last_result.changed_files)
+        if not changed_files:
+            self.messages.append("system> diff: no changed files")
+            return
+        result = self.runtime.diff_changed_files(changed_files)
+        diff_excerpt = result.diff_text.strip()
+        if len(diff_excerpt) > 600:
+            diff_excerpt = "..." + diff_excerpt[-600:]
+        parts = [result.summary]
+        if diff_excerpt:
+            parts.append(diff_excerpt)
+        if result.risk_summary:
+            parts.append("notes: " + "; ".join(result.risk_summary))
+        self.messages.append("system> diff: " + "\n".join(parts))
 
 
 def run_textual_console(
