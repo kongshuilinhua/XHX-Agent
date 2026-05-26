@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+import signal
+import threading
+from collections.abc import Iterator
 
 import typer
 from rich.console import Console
@@ -29,6 +33,7 @@ SLASH_COMMANDS = {
     "/skills",
     "/mode",
     "/dashboard",
+    "/cancel",
     "/clear",
     "/exit",
 }
@@ -51,6 +56,7 @@ class CommandConsole:
         self.state = ConsoleState()
         self.mode = "linear-edit"
         self.state.mode = self.mode
+        self.cancel_requested = False
 
     def run(self) -> None:
         self.console.print(Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent"))
@@ -58,7 +64,12 @@ class CommandConsole:
         while True:
             try:
                 text = typer.prompt("xhx")
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
+                self.console.print("Exiting xhx-agent console.")
+                return
+            except KeyboardInterrupt:
+                if self.request_cancel("Keyboard interrupt requested cancellation."):
+                    continue
                 self.console.print("Exiting xhx-agent console.")
                 return
             if not self.handle_input(text):
@@ -102,6 +113,8 @@ class CommandConsole:
             self.set_mode(argument.strip())
         elif command == "/dashboard":
             self.print_dashboard()
+        elif command == "/cancel":
+            self.request_cancel()
         elif command == "/clear":
             self.console.clear()
             self.print_dashboard()
@@ -110,6 +123,7 @@ class CommandConsole:
         return True
 
     def run_task(self, task: str) -> None:
+        self.cancel_requested = False
         runtime_task = self.build_runtime_task(task)
         self.last_user_task = task
         self.last_runtime_task = runtime_task
@@ -117,18 +131,41 @@ class CommandConsole:
         self.console.print(Panel(task, title="Task"))
         if runtime_task != task:
             self.console.print(Panel(runtime_task, title="Follow-up Context"))
-        result = self.runtime.run_task(
-            runtime_task,
-            profile_name=self.profile_name,
-            assume_yes=self.assume_yes,
-            confirm_callback=self.confirm_terminal_command,
-            auto_repair=self.auto_repair,
-            event_callback=self.handle_event,
-        )
+        try:
+            with self.cancel_signal_handler():
+                result = self.runtime.run_task(
+                    runtime_task,
+                    profile_name=self.profile_name,
+                    assume_yes=self.assume_yes,
+                    confirm_callback=self.confirm_terminal_command,
+                    auto_repair=self.auto_repair,
+                    event_callback=self.handle_event,
+                    cancel_check=self.is_cancel_requested,
+                )
+        except KeyboardInterrupt:
+            self.request_cancel("Keyboard interrupt requested cancellation.", force=True)
+            self.console.print("Task interrupted before the runtime could finish cancellation cleanup.")
+            return
         self.last_result = result
         self.state.apply_result(result)
         self.print_run_result(result)
         self.print_dashboard()
+
+    @contextmanager
+    def cancel_signal_handler(self) -> Iterator[None]:
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        previous_handler = signal.getsignal(signal.SIGINT)
+
+        def handle_sigint(_signum, _frame) -> None:
+            self.request_cancel("Keyboard interrupt requested cancellation.", force=True)
+
+        signal.signal(signal.SIGINT, handle_sigint)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGINT, previous_handler)
 
     def build_runtime_task(self, task: str) -> str:
         if self.last_result is None:
@@ -163,6 +200,19 @@ class CommandConsole:
                 table.add_row(str(key), str(value))
             self.console.print(table)
 
+    def request_cancel(self, reason: str = "Cancel requested by user.", force: bool = False) -> bool:
+        if not force and self.state.status in {"idle", "success", "failed", "cancelled", "skipped_no_changes"}:
+            self.console.print("No running task to cancel.")
+            return False
+        self.cancel_requested = True
+        event = RuntimeEvent(type="cancel_requested", message=reason, payload={"source": "console"})
+        self.handle_event(event)
+        self.console.print("Cancel requested. The current task will stop at the next safe runtime boundary.")
+        return True
+
+    def is_cancel_requested(self) -> bool:
+        return self.cancel_requested
+
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
         table = Table(title="Permission Required")
         table.add_column("Field")
@@ -190,6 +240,7 @@ class CommandConsole:
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
             ("/dashboard", "Render the console dashboard."),
+            ("/cancel", "Request cancellation at the next safe runtime boundary."),
             ("/clear", "Clear terminal."),
             ("/exit", "Exit console."),
         ]
@@ -224,6 +275,7 @@ class CommandConsole:
         table.add_row("mode", self.mode)
         table.add_row("state", self.state.status)
         table.add_row("run_id", self.state.run_id or "none")
+        table.add_row("cancel_requested", str(self.cancel_requested).lower())
         table.add_row("auto_repair", str(self.auto_repair).lower())
         table.add_row("assume_yes", str(self.assume_yes).lower())
         table.add_row("events", str(len(self.events)))
@@ -333,6 +385,7 @@ class CommandConsole:
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
             event_callback=self.handle_event,
+            cancel_check=self.is_cancel_requested,
         )
         self.last_manual_verification = result
         self.print_manual_verification_result(result)
@@ -382,6 +435,7 @@ class CommandConsole:
             assume_yes=self.assume_yes,
             confirm_callback=self.confirm_terminal_command,
             event_callback=self.handle_event,
+            cancel_check=self.is_cancel_requested,
         )
         self.last_manual_repair = result
         self.print_manual_repair_result(result)

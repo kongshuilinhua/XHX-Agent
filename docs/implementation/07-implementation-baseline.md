@@ -316,7 +316,7 @@ v0.5 已完成：
 - 新增 `xhx tui` 入口。
 - `xhx chat` 复用同一个 Command Console。
 - 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
-- 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/clear`、`/exit`。
+- 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
 - Runtime 支持轻量事件回调。
@@ -328,6 +328,7 @@ v0.5 已完成：
 - `/repair` 可以在最近验证失败后手动执行一轮修复，复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
 - 普通输入支持最小 follow-up steering：已有上一轮结果时，会把上一轮 run id、状态、验证结果、changed files 和报告路径包装进新任务上下文。
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
+- `/cancel` 和 `Ctrl+C` 支持请求取消，Runtime 在模型规划、工具执行和验证命令前的安全边界停止，并写入取消事件；当前不是异步强杀正在运行的外部命令。
 
 v0.5 未完成 / 后续增强：
 
@@ -336,6 +337,7 @@ v0.5 未完成 / 后续增强：
 - 仪表盘是 Rich 重新渲染视图，还不是固定区域的动态刷新 UI。
 - `/repair` 仍限制为一轮手动修复，不是完整多轮交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。
+- 取消能力只覆盖阶段边界，还不能中止已经启动的长时间外部命令。
 
 v0.6：Repo Intelligence Graph。
 

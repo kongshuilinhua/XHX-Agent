@@ -45,6 +45,21 @@ def test_run_task_emits_runtime_events(tmp_path: Path) -> None:
     assert "run_end" in event_types
 
 
+def test_run_task_cancels_before_model_loop(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    events = []
+
+    result = RuntimeApp(tmp_path).run_task("analyze this repo", event_callback=events.append, cancel_check=lambda: True)
+
+    assert result.status == "cancelled"
+    assert result.verification == "cancelled"
+    assert result.changed_files == []
+    assert any(event.type == "run_cancelled" for event in events)
+    trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
+    trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
+    assert any(item["type"] == "cancel_requested" for item in trace_lines)
+
+
 def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     fixture = Path(__file__).parent / "fixtures" / "python_bug"
     workspace = tmp_path / "python_bug"

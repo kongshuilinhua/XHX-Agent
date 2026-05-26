@@ -29,6 +29,31 @@ def test_command_console_handles_status_and_repair_toggle(tmp_path: Path) -> Non
     assert "Console Status" in output
 
 
+def test_command_console_cancel_sets_state(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+    command_console.state.status = "running_tool"
+
+    assert command_console.handle_input("/cancel")
+
+    assert command_console.cancel_requested is True
+    assert command_console.state.status == "cancelling"
+    output = console.export_text()
+    assert "Cancel requested" in output
+
+
+def test_command_console_cancel_without_running_task_is_noop(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+
+    assert command_console.handle_input("/cancel")
+
+    assert command_console.cancel_requested is False
+    assert "No running task to cancel" in console.export_text()
+
+
 def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     console = _console()

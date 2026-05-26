@@ -64,6 +64,8 @@ class ConsoleState:
     summary_path: str | None = None
     events: list[RuntimeEvent] = field(default_factory=list)
     policy_decisions: list[PolicyActivity] = field(default_factory=list)
+    cancel_requested: bool = False
+    cancel_reason: str = ""
 
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
@@ -132,6 +134,15 @@ class ConsoleState:
             self.repair_max_attempts = int(payload.get("max_attempts", self.repair_max_attempts) or 0)
         elif event.type == "restore_plan":
             self.restore_plan_created = True
+        elif event.type == "cancel_requested":
+            self.status = "cancelling"
+            self.cancel_requested = True
+            self.cancel_reason = event.message
+        elif event.type == "run_cancelled":
+            self.status = "cancelled"
+            self.cancel_requested = True
+            self.cancel_reason = event.message
+            self.verification = "cancelled"
         elif event.type == "run_end":
             self.status = str(payload.get("status", "finished"))
             self.verification = str(payload.get("verification", self.verification))
