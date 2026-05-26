@@ -1,7 +1,7 @@
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
-from xhx_agent.runtime.app import ManualVerificationResult, RunResult
+from xhx_agent.runtime.app import DiffSummary, ManualVerificationResult, RunResult
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 
@@ -79,6 +79,7 @@ class FakeRuntime:
     def __init__(self) -> None:
         self.calls = []
         self.verify_calls = []
+        self.diff_calls = []
 
     def run_task(self, task, **kwargs):
         self.calls.append((task, kwargs))
@@ -118,6 +119,16 @@ class FakeRuntime:
             commands=["python -m pytest"],
             summary_path=".xhx/logbook/verify-1.md",
             risk_summary=[] if allowed else ["Verification requires confirmation."],
+        )
+
+    def diff_changed_files(self, changed_files):
+        self.diff_calls.append(list(changed_files))
+        return DiffSummary(
+            changed_files=list(changed_files),
+            summary=f"{len(changed_files)} changed file(s).",
+            diff_text="diff --git a/src/calc.py b/src/calc.py\n+return a + b\n",
+            truncated=False,
+            risk_summary=[],
         )
 
 
@@ -227,3 +238,56 @@ def test_textual_permission_confirmation_can_allow_once(tmp_path) -> None:
     assert allowed is True
     assert app.next_confirm_response is None
     assert "allowed" in app.messages[-1]
+
+
+def test_textual_context_command_summarizes_current_state(tmp_path) -> None:
+    state = ConsoleState()
+    state.context_turn = 2
+    state.context_selected = 5
+    state.context_omitted = 1
+    state.context_used_tokens_estimate = 400
+    state.context_budget_tokens = 6000
+    state.detected_languages = ["python"]
+    state.file_count = 9
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+
+    assert app.handle_text_input("/context")
+
+    assert "context: turn=2 selected=5 omitted=1 budget=400/6000 languages=python files=9" in app.messages[-1]
+
+
+def test_textual_evidence_command_summarizes_policy_decisions(tmp_path) -> None:
+    state = ConsoleState()
+    state.reduce(
+        RuntimeEvent(
+            type="policy_decision",
+            message="Command requires confirmation.",
+            payload={
+                "scope": "terminal",
+                "source": "python -m pytest",
+                "decision": "confirm",
+                "risk": "confirm",
+                "reason": "Needs confirmation.",
+                "requires_user": True,
+            },
+        )
+    )
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+
+    assert app.handle_text_input("/evidence")
+
+    assert "policy evidence" in app.messages[-1]
+    assert "python -m pytest" in app.messages[-1]
+
+
+def test_textual_diff_command_uses_runtime_read_only_summary(tmp_path) -> None:
+    runtime = FakeRuntime()
+    state = ConsoleState()
+    state.changed_files = ["src/calc.py"]
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime, state=state)
+
+    assert app.handle_text_input("/diff")
+
+    assert runtime.diff_calls == [["src/calc.py"]]
+    assert "1 changed file(s)." in app.messages[-1]
+    assert "+return a + b" in app.messages[-1]
