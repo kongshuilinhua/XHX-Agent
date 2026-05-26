@@ -388,6 +388,91 @@ def test_runtime_manual_repair_runs_one_attempt(tmp_path: Path, monkeypatch) -> 
     assert any(event.type == "verification_result" for event in events)
 
 
+def test_runtime_manual_repair_loop_can_run_second_attempt(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "demo.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+    values = [2, 3]
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+        next_value = values.pop(0)
+        return ModelPlan(
+            summary=f"set value to {next_value}",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={
+                        "patch": f"""*** Begin Patch
+*** Update File: demo.py
+@@
+-value = {next_value - 1}
++value = {next_value}
+*** End Patch
+"""
+                    },
+                )
+            ],
+        )
+
+    verification_results = [
+        TerminalResult(
+            command="python -m pytest",
+            status="failed",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=1,
+            summary="expected value 3",
+        ),
+        TerminalResult(
+            command="python -m pytest",
+            status="success",
+            policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+            exit_code=0,
+            summary="passed",
+        ),
+    ]
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: verification_results.pop(0))
+
+    result = app.repair_after_failed_verification(
+        task="fix demo",
+        changed_files=["demo.py"],
+        failed_verification_results=[
+            TerminalResult(
+                command="python -m pytest",
+                status="failed",
+                policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
+                exit_code=1,
+                summary="expected value 3",
+            )
+        ],
+        profile_name="real",
+        assume_yes=True,
+        max_attempts=2,
+    )
+
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert result.repair_attempts == 2
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 3\n"
+
+
 def test_runtime_manual_repair_requires_failed_verification(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     passed_result = TerminalResult(

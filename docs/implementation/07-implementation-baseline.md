@@ -328,7 +328,7 @@ v0.5 已完成：
 - `/live on|off` 可以切换 Rich Live 动态仪表盘。
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
 - `/verify` 可以基于当前 changed files 手动触发 Verification Router，验证仍经过 SafeExecutionKernel、权限确认、Raw Trace 和 Evidence Index。
-- `/repair` 可以在最近验证失败后手动执行一轮修复，复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
+- `/repair` 可以在最近验证失败后手动执行一轮修复，`/repair loop` 可以执行最多两轮手动修复；两者都复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
 - 普通输入支持最小 follow-up steering：已有上一轮结果时，会把上一轮 run id、状态、验证结果、changed files 和报告路径包装进新任务上下文。
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 - `/cancel` 和 `Ctrl+C` 支持请求取消，Runtime 在模型规划、工具执行和验证命令前的安全边界停止，并写入取消事件；当前不是异步强杀正在运行的外部命令。
@@ -337,7 +337,7 @@ v0.5 未完成 / 后续增强：
 
 - 还不是全屏 Textual TUI。
 - Rich Live 动态仪表盘已具备固定区域刷新基础，但还不是完整 Textual 组件系统。
-- `/repair` 仍限制为一轮手动修复，不是完整多轮交互式 repair 工作流。
+- `/repair loop` 已支持最多两轮手动修复，但仍不是完整运行中 steer 的交互式 repair 工作流。
 - follow-up steering 只在任务之间传递上下文，还不是运行中的实时 steer。
 - 取消能力只覆盖阶段边界，还不能中止已经启动的长时间外部命令。
 

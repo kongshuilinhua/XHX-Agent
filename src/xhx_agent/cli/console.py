@@ -283,7 +283,7 @@ class CommandConsole:
             ("/evidence", "List Evidence Index files."),
             ("/context", "List context debug reports."),
             ("/verify", "Run verification for current changed files."),
-            ("/repair [run|on|off]", "Run manual repair or toggle auto repair."),
+            ("/repair [run|loop|on|off]", "Run manual repair, repair loop, or toggle auto repair."),
             ("/diff", "Show changed files from last run."),
             ("/skills", "List local skill directory entries."),
             ("/mode [name]", "Show or set console mode label."),
@@ -457,13 +457,16 @@ class CommandConsole:
         if argument.lower() in {"", "run"}:
             self.run_manual_repair()
             return
+        if argument.lower() in {"loop", "auto"}:
+            self.run_manual_repair(max_attempts=2)
+            return
         if argument.lower() in {"on", "true", "1"}:
             self.auto_repair = True
         elif argument.lower() in {"off", "false", "0"}:
             self.auto_repair = False
         self.console.print(f"auto_repair: {str(self.auto_repair).lower()}")
 
-    def run_manual_repair(self) -> None:
+    def run_manual_repair(self, max_attempts: int = 1) -> None:
         failed_results = []
         changed_files: list[str] = []
         task = self.state.task or "manual repair"
@@ -486,6 +489,7 @@ class CommandConsole:
             confirm_callback=self.confirm_terminal_command,
             event_callback=self.handle_event,
             cancel_check=self.is_cancel_requested,
+            max_attempts=max_attempts,
         )
         self.last_manual_repair = result
         self.print_manual_repair_result(result)

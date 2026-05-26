@@ -211,8 +211,10 @@ v0.5 只显示 Evidence Index 摘要，不展开 Raw Trace 全文。
 规则：
 
 - 只有最近验证失败时可用。
-- v0.5 当前实现只执行一轮手动 repair，不进入多轮交互式修复。
+- `/repair` 默认只执行一轮手动 repair。
+- `/repair loop` 最多执行两轮手动 repair，每轮修复后都会重新经过 Verification Router。
 - repair 仍必须经过模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
+- 当前仍不是运行中实时 steer 的完整交互式 repair 工作流。
 
 ### /diff
 
