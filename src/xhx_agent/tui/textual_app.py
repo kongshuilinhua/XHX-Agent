@@ -7,6 +7,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Input, Static
 
+from xhx_agent.runtime.app import RunResult, RuntimeApp
+from xhx_agent.runtime.events import RuntimeEvent
+from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
 
@@ -114,13 +117,16 @@ class TextualCommandConsoleApp(App[None]):
         auto_repair: bool = False,
         assume_yes: bool = False,
         state: ConsoleState | None = None,
+        runtime: RuntimeApp | None = None,
     ) -> None:
         super().__init__()
         self.workspace = (workspace or Path.cwd()).resolve()
+        self.runtime = runtime or RuntimeApp(self.workspace)
         self.profile = profile
         self.auto_repair = auto_repair
         self.assume_yes = assume_yes
         self.state = state or ConsoleState()
+        self.last_result: RunResult | None = None
         self.messages: list[str] = []
         self.exit_requested = False
         self.widgets_ready = False
@@ -175,11 +181,33 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if stripped.startswith("/"):
             return self.handle_slash_command(stripped)
-        self.messages.append(
-            "system> Task execution is not wired into fullscreen mode yet. "
-            "Use the default Rich console for read/search/patch/verify runs."
-        )
+        self.run_task(stripped)
         return True
+
+    def run_task(self, task: str) -> None:
+        self.messages.append(f"user> {task}")
+        result = self.runtime.run_task(
+            task,
+            profile_name=self.profile,
+            assume_yes=self.assume_yes,
+            confirm_callback=self.confirm_terminal_command,
+            auto_repair=self.auto_repair,
+            event_callback=self.handle_runtime_event,
+        )
+        self.last_result = result
+        self.state.apply_result(result)
+        self.messages.append(f"system> run finished: {result.status}, verification: {result.verification}")
+
+    def handle_runtime_event(self, event: RuntimeEvent) -> None:
+        self.state.reduce(event)
+        self.refresh_snapshot()
+
+    def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
+        self.messages.append(
+            "system> permission required in fullscreen mode; "
+            f"declined by default: {command} ({decision.risk.value})"
+        )
+        return False
 
     def handle_slash_command(self, command_line: str) -> bool:
         command, _, _argument = command_line.partition(" ")
