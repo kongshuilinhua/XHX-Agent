@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import shutil
+import subprocess
 
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
@@ -787,3 +788,33 @@ def test_preview_plan_does_not_execute_tools(tmp_path: Path) -> None:
     assert result.step_count == 1
     assert "value = 1" in (tmp_path / "demo.py").read_text(encoding="utf-8")
     assert (tmp_path / result.trace_path).exists()
+
+
+def test_runtime_diff_changed_files_returns_read_only_git_diff(tmp_path: Path) -> None:
+    (tmp_path / "demo.txt").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "demo.txt"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    (tmp_path / "demo.txt").write_text("new\n", encoding="utf-8")
+
+    result = RuntimeApp(tmp_path).diff_changed_files(["demo.txt"])
+
+    assert result.changed_files == ["demo.txt"]
+    assert result.summary == "1 changed file(s)."
+    assert result.truncated is False
+    assert "diff --git" in result.diff_text
+    assert "-old" in result.diff_text
+    assert "+new" in result.diff_text
+
+
+def test_runtime_diff_changed_files_truncates_large_diff(tmp_path: Path) -> None:
+    (tmp_path / "demo.txt").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "demo.txt"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    (tmp_path / "demo.txt").write_text("new line\n" * 20, encoding="utf-8")
+
+    result = RuntimeApp(tmp_path).diff_changed_files(["demo.txt"], max_chars=80)
+
+    assert result.changed_files == ["demo.txt"]
+    assert len(result.diff_text) == 80
+    assert result.truncated is True
+    assert any("truncated" in risk for risk in result.risk_summary)

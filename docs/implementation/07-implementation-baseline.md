@@ -329,6 +329,7 @@ v0.5 已完成：
 - `/plan` 无参数时展示当前 run 计划摘要；带参数时仍执行 dry-run 预览。
 - `/verify` 可以基于当前 changed files 手动触发 Verification Router，验证仍经过 SafeExecutionKernel、权限确认、Raw Trace 和 Evidence Index。
 - `/repair` 可以在最近验证失败后手动执行一轮修复，`/repair loop` 可以执行最多两轮手动修复；两者都复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
+- `/diff` 通过 Runtime 的只读 API 展示 changed files 和 `git diff -- <changed-files>` 摘要，TUI 不直接调用 git 或工具，长 diff 会截断。
 - 普通输入支持最小 follow-up steering：已有上一轮结果时，会把上一轮 run id、状态、验证结果、changed files 和报告路径包装进新任务上下文。
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 - `/cancel` 和 `Ctrl+C` 支持请求取消，Runtime 在模型规划、工具执行和验证命令前的安全边界停止，并写入取消事件；当前不是异步强杀正在运行的外部命令。
