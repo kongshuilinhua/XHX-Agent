@@ -47,6 +47,8 @@ class TextualSnapshot:
             conversation_lines.append(f"summary> {state.summary_path}")
         if state.cancel_requested:
             conversation_lines.append(f"cancel> {state.cancel_reason or 'requested'}")
+        if getattr(state, "textual_messages", None):
+            conversation_lines.extend(str(item) for item in getattr(state, "textual_messages"))
         if not conversation_lines:
             conversation_lines.append("No conversation yet.")
         runtime_state = "\n".join(
@@ -119,6 +121,9 @@ class TextualCommandConsoleApp(App[None]):
         self.auto_repair = auto_repair
         self.assume_yes = assume_yes
         self.state = state or ConsoleState()
+        self.messages: list[str] = []
+        self.exit_requested = False
+        self.widgets_ready = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -132,9 +137,11 @@ class TextualCommandConsoleApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.widgets_ready = True
         self.refresh_snapshot()
 
     def refresh_snapshot(self) -> None:
+        self.state.textual_messages = list(self.messages)  # type: ignore[attr-defined]
         snapshot = TextualSnapshot.from_state(
             self.state,
             workspace=str(self.workspace),
@@ -143,6 +150,8 @@ class TextualCommandConsoleApp(App[None]):
             assume_yes=self.assume_yes,
         )
         self.title = snapshot.header
+        if not self.widgets_ready:
+            return
         self.query_one("#conversation", Static).update(snapshot.conversation)
         self.query_one("#runtime", Static).update(snapshot.runtime_state)
         self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
@@ -150,7 +159,50 @@ class TextualCommandConsoleApp(App[None]):
 
     def action_clear(self) -> None:
         self.state = ConsoleState()
+        self.messages.clear()
         self.refresh_snapshot()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.input.value = ""
+        should_continue = self.handle_text_input(event.value)
+        self.refresh_snapshot()
+        if not should_continue:
+            self.exit()
+
+    def handle_text_input(self, text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return True
+        if stripped.startswith("/"):
+            return self.handle_slash_command(stripped)
+        self.messages.append(
+            "system> Task execution is not wired into fullscreen mode yet. "
+            "Use the default Rich console for read/search/patch/verify runs."
+        )
+        return True
+
+    def handle_slash_command(self, command_line: str) -> bool:
+        command, _, _argument = command_line.partition(" ")
+        if command == "/exit":
+            self.exit_requested = True
+            return False
+        if command == "/clear":
+            self.action_clear()
+            return True
+        if command == "/help":
+            self.messages.append("system> available commands: /help /status /clear /exit")
+            return True
+        if command == "/status":
+            self.messages.append(
+                "system> "
+                f"status: {self.state.status}; "
+                f"verification: {self.state.verification}; "
+                f"profile: {self.profile}; "
+                f"changed_files: {len(self.state.changed_files)}"
+            )
+            return True
+        self.messages.append(f"system> Unknown command: {command}")
+        return True
 
 
 def run_textual_console(

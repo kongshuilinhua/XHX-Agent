@@ -103,19 +103,19 @@ TUI 消费这些事件：
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
 
-v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。`xhx tui --fullscreen` 提供实验性 Textual 窗口骨架，当前只负责全屏布局和 `ConsoleState` 快照展示，完整任务执行、slash 命令路由和权限确认仍以 Rich Command Console 为稳定路径。
+v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。`xhx tui --fullscreen` 提供实验性 Textual 窗口骨架，当前负责全屏布局、`ConsoleState` 快照展示、输入提交和 `/help`、`/status`、`/clear`、`/exit` 本地命令；完整任务执行、全部 slash 命令路由和权限确认仍以 Rich Command Console 为稳定路径。
 
 当前边界：
 
 - `model_delta` 只表示模型原始文本增量，不代表工具已经执行。
 - 模型输出仍必须解析成 JSON plan 后才进入工具执行。
-- Rich 控制台会直接追加增量文本；Textual 全屏骨架已存在，但还没有接入完整流式执行和运行中 steer。
+- Rich 控制台会直接追加增量文本；Textual 全屏路径已支持本地输入反馈，但还没有接入完整流式执行和运行中 steer。
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 
 `tui.live` 负责 Rich Live 生命周期。它只接收 `ConsoleState` 和显示选项，调用 `tui.page` 生成 renderable，并在 Runtime event 到来时刷新固定区域。它不读取模型、工具、Evidence Runtime 或 session 文件。
 
-`tui.textual_app` 负责实验性全屏 shell。它只接收 `ConsoleState`，生成 header、conversation、runtime、changed files 和 command hints，不直接调用模型、工具或 Evidence Runtime。后续接入任务执行时也必须通过 Runtime 公开 API 和事件流。
+`tui.textual_app` 负责实验性全屏 shell。它只接收 `ConsoleState`，生成 header、conversation、runtime、changed files 和 command hints，并处理少量只读本地命令；不直接调用模型、工具或 Evidence Runtime。后续接入任务执行时也必须通过 Runtime 公开 API 和事件流。
 
 ## 权限确认
 
@@ -305,6 +305,8 @@ v0.5 中 `dag-execute` 可以显示为 planned。
 - 如果没有 active run，创建新任务。
 - 如果已有上一轮结果，作为 follow-up，并携带上一轮 run id、状态、验证结果、changed files 和报告路径。
 - v0.5 当前实现只支持任务之间的 follow-up 上下文包装，还不支持运行中的实时 steer。
+- `xhx tui --fullscreen` 当前普通文本输入只显示提示，不执行任务；任务执行仍使用默认 Rich Command Console。
+- `xhx tui --fullscreen` 当前只处理 `/help`、`/status`、`/clear`、`/exit`，其余命令显示未知命令或后续接入提示。
 
 快捷键：
 
