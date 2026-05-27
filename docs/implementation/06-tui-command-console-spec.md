@@ -109,7 +109,7 @@ v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只
 
 - `model_delta` 只表示模型原始文本增量，不代表工具已经执行。
 - 模型输出仍必须解析成 JSON plan 后才进入工具执行。
-- Rich 控制台会直接追加增量文本；Textual 全屏路径已支持普通任务执行、Runtime 事件刷新、一次性 `/allow` / `/deny` 权限确认、`/model`、`/plan`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/context`、`/evidence` 和 `/diff`，但还没有接入运行中 steer。
+- Rich 控制台会直接追加增量文本；Textual 全屏路径已支持普通任务执行、Runtime 事件刷新、一次性 `/allow` / `/deny` 权限确认、`/model`、`/plan`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/context`、`/evidence`、`/diff` 和最小运行中 steer。最小 steer 的行为是：运行中输入普通文本时先记录为 pending steer，请求 Runtime 在下一安全边界取消当前 run，当前 run 结束后再把该文本作为 follow-up 执行。
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 
@@ -310,7 +310,9 @@ v0.5 中 `dag-execute` 可以显示为 planned。
 
 - 如果没有 active run，创建新任务。
 - 如果已有上一轮结果，作为 follow-up，并携带上一轮 run id、状态、验证结果、changed files 和报告路径。
-- v0.5 当前实现只支持任务之间的 follow-up 上下文包装，还不支持运行中的实时 steer。
+- 如果当前 run 正在执行，普通文本不会直接启动并发任务，而是排队为 steer，并请求当前 run 在下一安全边界取消。
+- 当前 run 结束后，Textual 会把 pending steer 作为 follow-up 任务执行。
+- v0.5 当前实现的 steer 是安全边界排队机制，不会强杀已经启动的外部命令。
 - `xhx tui --fullscreen` 当前普通文本输入会调用 Runtime 执行任务，并将 Runtime 事件刷新到窗口状态。
 - `xhx tui --fullscreen` 当前处理 `/help`、`/model`、`/status`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/allow`、`/deny`、`/clear`、`/exit`。
 - `xhx tui --fullscreen` 遇到 confirm 级权限时默认拒绝；可用 `/allow` 或 `/deny` 设置下一次 confirm 决策。

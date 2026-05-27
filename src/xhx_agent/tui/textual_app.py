@@ -134,6 +134,7 @@ class TextualCommandConsoleApp(App[None]):
         self.messages: list[str] = []
         self.exit_requested = False
         self.cancel_requested = False
+        self.pending_steer: str | None = None
         self.widgets_ready = False
 
     def compose(self) -> ComposeResult:
@@ -186,10 +187,14 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if stripped.startswith("/"):
             return self.handle_slash_command(stripped)
+        if self.is_running():
+            self.queue_steer(stripped)
+            return True
         self.run_task(stripped)
         return True
 
     def run_task(self, task: str) -> None:
+        self.cancel_requested = False
         self.messages.append(f"user> {task}")
         runtime_task = self.build_runtime_task(task)
         if runtime_task != task:
@@ -206,6 +211,23 @@ class TextualCommandConsoleApp(App[None]):
         self.last_result = result
         self.state.apply_result(result)
         self.messages.append(f"system> run finished: {result.status}, verification: {result.verification}")
+        self.run_pending_steer()
+
+    def run_pending_steer(self) -> None:
+        if self.pending_steer is None:
+            return
+        steer = self.pending_steer
+        self.pending_steer = None
+        self.messages.append("running queued steer as follow-up")
+        self.run_task(steer)
+
+    def queue_steer(self, text: str) -> None:
+        self.pending_steer = text
+        self.messages.append(f"system> steer queued: {text}")
+        self.request_cancel("Steer requested by user.")
+
+    def is_running(self) -> bool:
+        return self.state.status not in {"idle", "success", "failed", "cancelled", "skipped_no_changes"}
 
     def build_runtime_task(self, task: str) -> str:
         if self.last_result is None:
