@@ -522,3 +522,38 @@ def test_textual_run_task_uses_follow_up_context(tmp_path) -> None:
     task, _kwargs = runtime.calls[0]
     assert "Follow-up task in the same console session." in task
     assert "User request:\ncontinue" in task
+
+
+def test_textual_running_input_queues_steer_and_requests_cancel(tmp_path) -> None:
+    runtime = FakeRuntime()
+    state = ConsoleState()
+    state.status = "running_tool"
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime, state=state)
+
+    assert app.handle_text_input("change direction")
+
+    assert runtime.calls == []
+    assert app.pending_steer == "change direction"
+    assert app.is_cancel_requested() is True
+    assert app.state.status == "cancelling"
+    assert "steer queued" in app.messages[-2]
+    assert "Cancel requested" in app.messages[-1]
+
+
+def test_textual_run_task_executes_queued_steer_as_follow_up(tmp_path) -> None:
+    runtime = FakeRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+    app.pending_steer = "follow the new direction"
+
+    app.run_task("first task")
+
+    assert len(runtime.calls) == 2
+    first_task, first_kwargs = runtime.calls[0]
+    second_task, second_kwargs = runtime.calls[1]
+    assert first_task == "first task"
+    assert "Follow-up task in the same console session." in second_task
+    assert "User request:\nfollow the new direction" in second_task
+    assert first_kwargs["cancel_check"]() is False
+    assert second_kwargs["cancel_check"]() is False
+    assert app.pending_steer is None
+    assert "running queued steer as follow-up" in app.messages
