@@ -7,6 +7,7 @@ from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.repo_intel.context_builder import build_symbol_context
 from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
+from xhx_agent.repo_intel.index import read_repo_intel_index, write_repo_intel_index
 
 
 def test_repo_map_classifies_files_and_verification_hints(tmp_path: Path) -> None:
@@ -220,3 +221,19 @@ def test_impact_uses_js_import_graph_when_direct_name_mapping_misses(tmp_path: P
     assert impact.impacted_tests == ["test/public-api.test.js"]
     assert "npm test" in impact.verification_hints
     assert "Import graph mapped changed source files to direct tests." in impact.notes
+
+
+def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n", encoding="utf-8")
+
+    path = write_repo_intel_index(tmp_path)
+    index = read_repo_intel_index(tmp_path)
+
+    assert path == tmp_path / ".xhx" / "repo" / "index.json"
+    assert index.schema_version == 1
+    assert any(item.path == "src/calc.py" for item in index.repo_map.files)
+    assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
+    assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)

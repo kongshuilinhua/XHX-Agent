@@ -194,6 +194,7 @@ xhx-agent/
   sessions/
   traces/
   evidence/
+  repo/
   logbook/
   checkpoints/
   skills/
@@ -206,6 +207,7 @@ xhx-agent/
 - `sessions/`：会话状态。
 - `traces/`：Raw Trace JSONL。
 - `evidence/`：Evidence Index JSONL。
+- `repo/`：Repo Intelligence Index，例如 `.xhx/repo/index.json`。
 - `logbook/`：Markdown 审计报告。
 - `checkpoints/`：修改前状态摘要。
 - `skills/`：本地 Skill。

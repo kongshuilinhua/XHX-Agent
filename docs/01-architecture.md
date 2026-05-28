@@ -138,9 +138,11 @@ classify
   sessions/
   traces/
   evidence/
+  repo/
   logbook/
+  checkpoints/
   skills/
 XHX.md
 ```
 
-`XHX.md` 是项目级知识摘要。`.xhx/traces/` 保存原始事件。`.xhx/evidence/` 保存证据索引。`.xhx/logbook/` 保存人类可读报告。
+`XHX.md` 是项目级知识摘要。`.xhx/traces/` 保存原始事件。`.xhx/evidence/` 保存证据索引。`.xhx/repo/` 保存结构化仓库索引。`.xhx/logbook/` 保存人类可读报告。

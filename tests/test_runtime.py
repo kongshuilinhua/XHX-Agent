@@ -4,6 +4,7 @@ import shutil
 import subprocess
 
 from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.repo_intel.index import read_repo_intel_index
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.tools.registry import ToolRegistry, ToolExecutionResult
@@ -15,12 +16,22 @@ from xhx_agent.safety.risk import RiskLevel
 
 
 def test_init_project_writes_expected_files(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n", encoding="utf-8")
     result = RuntimeApp(tmp_path).init_project()
     assert result.config_created
     assert result.profiles_created
     assert result.xhx_md_created
     assert (tmp_path / ".xhx" / "config.json").exists()
     assert (tmp_path / "XHX.md").exists()
+    assert result.repo_index_path == ".xhx/repo/index.json"
+    assert (tmp_path / result.repo_index_path).exists()
+    index = read_repo_intel_index(tmp_path)
+    assert index.repo_map.files
+    assert any(symbol.name == "add" and symbol.path == "src/calc.py" for symbol in index.symbol_index.symbols)
+    assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
 
 
 def test_run_task_writes_report(tmp_path: Path) -> None:

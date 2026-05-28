@@ -19,6 +19,7 @@ from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
 from xhx_agent.repo_intel.scanner import scan_project
+from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
 from xhx_agent.runtime.events import EventCallback, emit_event
@@ -36,6 +37,7 @@ class InitResult(BaseModel):
     config_created: bool
     profiles_created: bool
     xhx_md_created: bool
+    repo_index_path: str
 
 
 class RunResult(BaseModel):
@@ -112,10 +114,12 @@ class RuntimeApp:
         profiles_created = write_default_profiles(self.workspace)
         scan = scan_project(self.workspace)
         xhx_md_created = write_xhx_md(self.workspace, scan)
+        repo_index = write_repo_intel_index(self.workspace)
         return InitResult(
             config_created=config_created,
             profiles_created=profiles_created,
             xhx_md_created=xhx_md_created,
+            repo_index_path=repo_index.relative_to(self.workspace).as_posix(),
         )
 
     def run_task(
