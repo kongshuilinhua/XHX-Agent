@@ -144,10 +144,18 @@ def _resolve_relative_import(specifier: str, importer: str, known_files: set[str
     base = Path(importer).parent
     raw = posixpath.normpath((base / specifier).as_posix())
     candidates = [raw]
-    for suffix in (".js", ".jsx", ".ts", ".tsx"):
+    for suffix in _js_ts_suffix_order(Path(importer).suffix.lower()):
         candidates.append(raw + suffix)
         candidates.append(raw + "/index" + suffix)
     return _first_known(candidates, known_files)
+
+
+def _js_ts_suffix_order(importer_suffix: str) -> tuple[str, ...]:
+    if importer_suffix in {".ts", ".tsx"}:
+        return (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+    if importer_suffix in {".mjs", ".cjs"}:
+        return (importer_suffix, ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
+    return (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 
 
 def _first_known(candidates: list[str], known_files: set[str]) -> str:
