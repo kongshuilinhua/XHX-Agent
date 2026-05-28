@@ -150,7 +150,7 @@ v0.1 按三个固定子阶段推进：
 - symbol search。
 - symbol context builder。
 - Context Pack 任务关键词驱动的 symbol context 注入。
-- Python source -> direct test 的基础 impact mapping。
+- Python / JavaScript / TypeScript source -> direct test 的基础 impact mapping。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。
 
@@ -159,7 +159,7 @@ v0.1 按三个固定子阶段推进：
 - Tree-sitter。
 - SQLite 索引。
 - 完整调用图和引用图。
-- 大项目主动 symbol context 选择。
+- test runner 参数推断、import graph 和更强的大项目 symbol context 选择。
 
 必须实现：
 

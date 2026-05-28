@@ -387,7 +387,9 @@ v0.6 已完成：
 - `search_symbols` 支持 exact、prefix、contains 顺序的轻量 symbol search。
 - `repo_intel.context_builder` 可以围绕符号生成带行号的代码片段。
 - `repo_intel.impact` 可以把 Python 源文件变更映射到直接测试文件，例如 `src/calc.py` -> `tests/test_calc.py`。
+- `repo_intel.impact` 已支持常见 JavaScript / TypeScript direct test 命名，例如 `src/index.js` -> `test/index.test.js`、`src/view.ts` -> `tests/view.spec.ts`。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
+- Verification Router 在 Node 项目中会识别 direct JS/TS test 映射，但仍使用 `npm test` / `npm run typecheck` / `npm run build` 这类 package scripts 作为便携验证命令。
 - `XHX.md` 生成时会包含 Repo Map 和 Symbols 摘要，供 Context Pack 后续读取。
 - Context Pack 已开始按任务文本进行 symbol search，并把少量带行号的 symbol context 放入预算化上下文。
 
@@ -396,7 +398,7 @@ v0.6 未完成 / 后续增强：
 - 尚未接入 Tree-sitter，当前 Python 使用标准库 AST，JS/TS 使用轻量正则。
 - 尚未实现 SQLite 持久化索引。
 - 尚未实现完整跨语言引用关系和调用图。
-- impact analysis 目前只覆盖基础 Python source -> direct test 映射。
+- impact analysis 目前只覆盖基础 source -> direct test 文件命名映射，不解析 import graph 或 test runner 参数。
 - Context Pack 的 symbol context 选择仍是轻量关键词匹配，尚未使用调用图、引用图或语义检索。
 
 v0.7：Adaptive Planner + DAG。

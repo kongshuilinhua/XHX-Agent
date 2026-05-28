@@ -152,3 +152,30 @@ def test_impact_maps_python_source_to_direct_test(tmp_path: Path) -> None:
 
     assert impact.impacted_tests == ["tests/test_calc.py"]
     assert impact.verification_hints[0] == "python -m pytest tests/test_calc.py"
+
+
+def test_impact_maps_js_source_to_direct_test(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "src" / "index.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "test" / "index.test.js").write_text("import '../src/index.js';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/index.test.js"}}', encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/index.js"])
+
+    assert impact.impacted_tests == ["test/index.test.js"]
+    assert "npm test" in impact.verification_hints
+    assert any("Direct JS/TS tests were mapped" in note for note in impact.notes)
+
+
+def test_impact_maps_ts_source_to_spec_test(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "view.ts").write_text("export const render = () => '';\n", encoding="utf-8")
+    (tmp_path / "tests" / "view.spec.ts").write_text("import '../src/view';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest","typecheck":"tsc --noEmit"}}', encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/view.ts"])
+
+    assert impact.impacted_tests == ["tests/view.spec.ts"]
+    assert impact.verification_hints == ["npm test", "npm run typecheck"]
