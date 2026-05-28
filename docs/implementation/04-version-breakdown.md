@@ -179,11 +179,11 @@ v0.1 只能拆成三个固定子阶段：
 - 基础 `SymbolIndex`：Python AST 符号提取，JavaScript / TypeScript 轻量符号提取。
 - `symbol search`：exact、prefix、contains 排序。
 - `context builder`：围绕符号生成带行号代码片段。
-- 轻量 `ReferenceIndex`：用已有 symbol name 在 source/test 文件中定位文本级引用行，并排除定义行。
+- 轻量 `ReferenceIndex`：用已有 symbol name 在 source/test 文件中定位文本级引用行，排除定义行，并记录索引预算与截断状态。
 - `impact summary`：基础 Python / JavaScript / TypeScript 源文件到直接测试文件映射。
 - 轻量 `import graph`：Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的一跳关系。
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
-- `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index、import graph 和 reference index。
+- `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index、import graph 和带截断元数据的 reference index。
 - index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用或文件指纹过期时再即时构建。
 - index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。

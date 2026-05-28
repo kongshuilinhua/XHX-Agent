@@ -116,6 +116,30 @@ def test_reference_index_finds_symbol_usages_without_definition_lines(tmp_path: 
     assert any(reference.path == "tests/test_calc.py" and reference.line == 4 for reference in results)
 
 
+def test_reference_index_records_truncation_when_reference_budget_is_reached(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "uses.py").write_text("\n".join(["add(1, 2)" for _ in range(10)]) + "\n", encoding="utf-8")
+
+    references = build_reference_index(tmp_path, max_references=3, max_references_per_symbol=10)
+
+    assert references.truncated is True
+    assert len(references.references) == 3
+    assert references.max_references == 3
+
+
+def test_reference_index_skips_oversized_files(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "huge.py").write_text("\n".join(["add(1, 2)" for _ in range(5)]) + "\n", encoding="utf-8")
+
+    references = build_reference_index(tmp_path, max_lines_per_file=2)
+
+    assert references.truncated is True
+    assert references.skipped_files == ["src/huge.py"]
+    assert not references.references
+
+
 def test_xhx_md_includes_repo_map_and_symbol_summary(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()

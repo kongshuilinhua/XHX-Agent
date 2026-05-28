@@ -150,10 +150,10 @@ v0.1 按三个固定子阶段推进：
 - symbol search。
 - symbol context builder。
 - Context Pack 任务关键词驱动的 symbol context 注入。
-- 轻量文本引用索引，用已有 symbol name 在 source/test 文件中定位引用行。
+- 轻量文本引用索引，用已有 symbol name 在 source/test 文件中定位引用行，并记录引用数、单符号引用数和单文件扫描行数预算。
 - Python / JavaScript / TypeScript source -> direct test 的基础 impact mapping。
 - 轻量 import graph 辅助 impact mapping，并支持有限深度的反向递归依赖测试映射。
-- `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index、import graph 和 reference index。
+- `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index、import graph 和带截断元数据的 reference index。
 - Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，缺失、损坏或文件指纹过期时再即时构建。
 - Context Pack 可以从 changed files 和 recent error 中的文件路径出发，选择 import graph 邻接文件里的少量符号上下文。
 - Context Pack 可以按任务关键词选择少量 `reference_context`。
