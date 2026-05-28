@@ -7,7 +7,7 @@ from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.repo_intel.context_builder import build_symbol_context
 from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
-from xhx_agent.repo_intel.index import read_repo_intel_index, write_repo_intel_index
+from xhx_agent.repo_intel.index import load_repo_intel_index, read_repo_intel_index, write_repo_intel_index
 
 
 def test_repo_map_classifies_files_and_verification_hints(tmp_path: Path) -> None:
@@ -276,6 +276,35 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
 
     assert path == tmp_path / ".xhx" / "repo" / "index.json"
     assert index.schema_version == 1
+    assert index.content_fingerprint
     assert any(item.path == "src/calc.py" for item in index.repo_map.files)
     assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
     assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
+
+
+def test_load_repo_intel_index_rebuilds_when_file_content_changes(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "calc.py"
+    source.write_text("def old_name(a, b):\n    return a + b\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    stored = read_repo_intel_index(tmp_path)
+
+    source.write_text("def new_name(a, b):\n    return a + b\n# changed\n", encoding="utf-8")
+    loaded = load_repo_intel_index(tmp_path)
+
+    assert loaded.content_fingerprint != stored.content_fingerprint
+    assert any(symbol.name == "new_name" for symbol in loaded.symbol_index.symbols)
+    assert not any(symbol.name == "old_name" for symbol in loaded.symbol_index.symbols)
+
+
+def test_load_repo_intel_index_rebuilds_when_file_is_deleted(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "calc.py"
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+
+    source.unlink()
+    loaded = load_repo_intel_index(tmp_path)
+
+    assert not any(item.path == "src/calc.py" for item in loaded.repo_map.files)
+    assert not any(symbol.path == "src/calc.py" for symbol in loaded.symbol_index.symbols)
