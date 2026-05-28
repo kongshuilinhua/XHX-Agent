@@ -183,6 +183,7 @@ v0.1 只能拆成三个固定子阶段：
 - `impact summary`：基础 Python / JavaScript / TypeScript 源文件到直接测试文件映射。
 - 轻量 `import graph`：Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的一跳关系。
 - JS/TS extensionless 相对 import 解析：按 importer 后缀优先匹配 `.js`、`.jsx`、`.mjs`、`.cjs`、`.ts`、`.tsx` 和 index 文件。
+- JS/TS alias import 解析：有限支持根目录 `tsconfig.json` 的 `baseUrl` 和单通配符 `paths`。
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
 - `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index、import graph 和带截断元数据的 reference index。
 - index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用或文件指纹过期时再即时构建。
@@ -200,7 +201,7 @@ v0.1 只能拆成三个固定子阶段：
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 完整调用图 / 语义级引用图。
-- 更完整的 test runner 参数、路径 alias/baseUrl 和跨语言影响面分析。
+- 更完整的 test runner 参数、`tsconfig extends` / project references / 多通配符 paths 和跨语言影响面分析。
 - 更强的 Context Pack 查询策略，例如调用图、语义级引用图或语义检索；当前 import/reference context 只做有限邻接和文本匹配。
 
 功能任务：
