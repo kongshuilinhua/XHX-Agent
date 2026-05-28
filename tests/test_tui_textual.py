@@ -1,13 +1,15 @@
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
-from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, PlanPreview, RunResult
+from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, PlanPreview, RunResult, RuntimeApp
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 import asyncio
+import shutil
 import threading
+from pathlib import Path
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:
@@ -380,6 +382,69 @@ def test_textual_submitted_verify_can_wait_for_permission(tmp_path) -> None:
     import asyncio
 
     asyncio.run(run_app())
+
+
+def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp_path, monkeypatch) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "python_bug"
+    workspace = tmp_path / "python_bug"
+    shutil.copytree(fixture, workspace)
+    RuntimeApp(workspace).init_project()
+    confirm_decision = PolicyDecision(
+        decision="confirm",
+        risk=RiskLevel.CONFIRM,
+        reason="Confirm test command.",
+        requires_user=True,
+    )
+    allow_decision = PolicyDecision(
+        decision="allow",
+        risk=RiskLevel.CONFIRM,
+        reason="Command allowed by policy.",
+        requires_user=False,
+    )
+
+    def fake_run_terminal(_workspace, command, assume_yes=False, _timeout_seconds=120, confirm_callback=None):
+        if not assume_yes and confirm_callback is not None and not confirm_callback(command, confirm_decision):
+            return TerminalResult(
+                command=command,
+                status="confirm",
+                policy=confirm_decision,
+                summary="User declined command confirmation.",
+            )
+        return TerminalResult(
+            command=command,
+            status="success",
+            policy=allow_decision,
+            exit_code=0,
+            summary="passed",
+        )
+
+    monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", fake_run_terminal)
+    app = TextualCommandConsoleApp(workspace=workspace, profile="mock", permission_timeout_seconds=10)
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            assert app.handle_text_input("fix failing test", use_worker=True)
+            for _ in range(200):
+                if app.pending_confirmation is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert app.pending_confirmation is not None
+            assert "pytest" in app.pending_confirmation.command
+            assert app.handle_text_input("/allow")
+            for _ in range(200):
+                if app.last_result is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert app.last_result is not None
+            assert app.last_result.status == "success"
+            assert app.last_result.verification == "passed"
+            assert app.last_result.changed_files == ["src/calc.py"]
+            assert "verification: passed" in str(pilot.app.query_one("#runtime").content)
+
+    asyncio.run(run_app())
+    assert "return a + b" in (workspace / "src" / "calc.py").read_text(encoding="utf-8")
+    assert app.last_result is not None
+    assert (workspace / app.last_result.summary_path).exists()
 
 
 def test_textual_permission_confirmation_can_decline_once(tmp_path) -> None:

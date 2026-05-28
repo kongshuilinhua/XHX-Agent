@@ -309,7 +309,7 @@ v0.5：TUI / Command Console。
 - 权限确认 UI。
 - `/` 命令系统。
 
-v0.5 当前状态：部分实现。
+v0.5 当前状态：基本完成，待最终验收确认。
 
 v0.5 已完成：
 
@@ -340,13 +340,35 @@ v0.5 已完成：
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 - `/cancel` 和 `Ctrl+C` 支持请求取消，Runtime 在模型规划、工具执行和验证命令前的安全边界停止，并写入取消事件；当前不是异步强杀正在运行的外部命令。
 
-v0.5 未完成 / 后续增强：
+v0.5 验收清单：
+
+- `xhx tui` / `xhx chat` 可以启动 Rich 命令控制台。
+- `xhx tui --fullscreen` 可以启动 Textual 全屏窗口。
+- Rich 控制台支持运行任务、事件流、`/dashboard`、`/live`、`/plan`、`/context`、`/evidence`、`/verify`、`/repair`、`/diff`、`/cancel`。
+- Textual 全屏路径支持后台 Runtime worker，输入框不会被同步 Runtime 阻塞。
+- Textual 全屏路径支持 pending confirm，后台 Runtime 等待时可以用 `/allow` 或 `/deny` 响应当前命令。
+- Textual 全屏路径可以在 Python fixture 中通过真实 Runtime 完成一次读改测任务，并在验证等待时用 `/allow` 放行。
+- Textual 全屏路径支持 details 面板，常用查看命令不会只刷入 conversation。
+- Textual 全屏路径支持运行中输入排队为 steer，并请求 Runtime 在下一安全边界取消当前 run。
+- TUI 不直接调用模型、工具、Evidence Runtime 或 git；执行和只读 diff 都通过 Runtime 公开 API。
+- `uv run pytest tests/test_tui_textual.py -q`、`uv run pytest tests/test_command_console.py -q`、`uv run xhx tui --help` 通过，其中 `tests/test_tui_textual.py` 必须覆盖真实 Runtime + Python fixture + pending confirm 的全屏闭环。
+- 全量 `uv run pytest` 通过。
+
+v0.5 保留边界 / 后续增强：
 
 - Textual 全屏路径目前仍是实验性 shell，已支持后台普通任务执行、后台手动验证和 repair、固定 details 面板、任务间 follow-up 上下文包装、最小运行中 steer、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live` 和 pending confirm 交互响应。
 - Rich Live 动态仪表盘已具备固定区域刷新基础，但仍是 Rich 路径，不是完整 Textual 组件系统。
 - `/repair loop` 已支持最多两轮手动修复，但仍不是完整运行中 steer 的交互式 repair 工作流。
 - 运行中 steer 仍是安全边界后的排队 follow-up，不是 token 流级别的实时改写。
 - 取消能力只覆盖阶段边界，还不能中止已经启动的长时间外部命令。
+- 没有做完整 diff viewer、滚动历史管理、命令历史补全和完整 Textual 组件化布局；这些属于后续产品体验增强，不阻塞进入 v0.6。
+
+v0.6 进入条件：
+
+- v0.5 验收清单通过。
+- README 当前实现状态已同步为 v0.5 基本完成，待最终验收。
+- 没有新增未记录的小版本名。
+- 若任一 v0.5 验收项失败，不得进入 v0.6，必须继续修 v0.5。
 
 v0.6：Repo Intelligence Graph。
 
