@@ -124,7 +124,7 @@ def test_runtime_requires_confirmation_without_yes(tmp_path: Path) -> None:
 
     assert result.status == "success"
     assert result.verification == "requires_confirmation"
-    assert result.commands == ["uv run pytest"]
+    assert result.commands == ["python -m pytest tests/test_calc.py"]
     assert result.verification_results[0].status == "confirm"
     assert result.checkpoint_path is not None
     assert any("requires confirmation" in risk for risk in result.risk_summary)
@@ -190,7 +190,7 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
     RuntimeApp(workspace).init_project()
 
     failed_result = TerminalResult(
-        command="uv run pytest",
+        command="python -m pytest",
         status="failed",
         policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="Command allowed by policy."),
         stdout="",
