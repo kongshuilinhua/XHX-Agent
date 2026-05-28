@@ -39,3 +39,26 @@ def test_node_verification_inference(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
     plan = infer_verification(tmp_path)
     assert [command.command for command in plan.commands] == ["npm test"]
+
+
+def test_node_source_change_uses_repo_intelligence_reason(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "src" / "index.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "test" / "index.test.js").write_text("import '../src/index.js';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/index.test.js","build":"node -c src/index.js"}}', encoding="utf-8")
+
+    plan = infer_verification(tmp_path, changed_files=["src/index.js"])
+
+    assert [command.command for command in plan.commands] == ["npm test"]
+    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to direct JS/TS tests; package.json defines test script."
+
+
+def test_node_build_fallback_without_test_script(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"build":"node -c src/index.js"}}', encoding="utf-8")
+
+    plan = infer_verification(tmp_path, changed_files=["src/index.js"])
+
+    assert [command.command for command in plan.commands] == ["npm run build"]

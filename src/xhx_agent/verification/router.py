@@ -21,9 +21,9 @@ class VerificationPlan(BaseModel):
 def infer_verification(workspace: Path, changed_files: list[str] | None = None) -> VerificationPlan:
     commands: list[VerificationCommand] = []
     package_json = workspace / "package.json"
+    impact = analyze_impact(workspace, changed_files or [])
     if _is_python_project(workspace, changed_files):
         test_files = _python_test_files(changed_files)
-        impact = analyze_impact(workspace, changed_files or [])
         base_command = "python -m pytest"
         if test_files:
             commands.append(
@@ -44,7 +44,12 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
     if package_json.exists():
         scripts = package_json.read_text(encoding="utf-8", errors="ignore")
         if '"test"' in scripts:
-            commands.append(VerificationCommand(command="npm test", reason="package.json defines test script."))
+            reason = (
+                "Repo intelligence mapped changed source files to direct JS/TS tests; package.json defines test script."
+                if _has_js_ts_impacted_tests(impact.impacted_tests)
+                else "package.json defines test script."
+            )
+            commands.append(VerificationCommand(command="npm test", reason=reason))
         elif '"typecheck"' in scripts:
             commands.append(VerificationCommand(command="npm run typecheck", reason="package.json defines typecheck script."))
         elif '"build"' in scripts:
@@ -75,3 +80,7 @@ def _python_test_files(changed_files: list[str] | None) -> list[str]:
             or Path(path).name.endswith("_test.py")
         )
     )
+
+
+def _has_js_ts_impacted_tests(paths: list[str]) -> bool:
+    return any(Path(path).suffix.lower() in {".js", ".jsx", ".ts", ".tsx"} for path in paths)

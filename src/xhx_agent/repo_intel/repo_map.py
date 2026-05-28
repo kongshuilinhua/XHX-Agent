@@ -74,7 +74,7 @@ def _kind_for(path: Path, workspace: Path) -> str:
 
 def _verification_hints(scan: ProjectScan) -> list[str]:
     hints: list[str] = []
-    if scan.python.get("tests_dir") or scan.python.get("pytest_ini"):
+    if "python" in scan.detected_languages and (scan.python.get("tests_dir") or scan.python.get("pytest_ini")):
         hints.append("python -m pytest")
     scripts = scan.node.get("scripts", {})
     if isinstance(scripts, dict):
