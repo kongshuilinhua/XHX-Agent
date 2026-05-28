@@ -391,6 +391,7 @@ v0.6 已完成：
 - `repo_intel.impact` 已支持常见 JavaScript / TypeScript direct test 命名，例如 `src/index.js` -> `test/index.test.js`、`src/view.ts` -> `tests/view.spec.ts`。
 - `repo_intel.imports` 提供轻量 import graph，能识别 Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的相对依赖。
 - JS/TS extensionless 相对 import 会按 importer 后缀优先匹配 `.js`、`.jsx`、`.mjs`、`.cjs`、`.ts`、`.tsx` 和 index 文件，避免 TS importer 优先误连到同名 JS 文件。
+- JS/TS alias import 会有限读取根目录 `tsconfig.json` 的 `compilerOptions.baseUrl` 和单通配符 `paths`，可把 `@lib/*` 一类别名映射到仓库内文件。
 - impact analysis 在 direct test 命名匹配失败时，会用 import graph 的反向递归依赖找直接或间接依赖变更源文件的测试文件。
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
 - `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、带截断元数据的 reference index 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
@@ -413,7 +414,7 @@ v0.6 未完成 / 后续增强：
 - 尚未实现 SQLite 持久化索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 尚未实现真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 尚未实现完整跨语言语义引用关系和调用图；当前 reference index 只是文本级 symbol name 匹配。
-- impact analysis 目前只覆盖基础 source -> direct test 文件命名映射和有限深度 import graph，不解析完整调用图、跨语言关系、路径 alias/baseUrl 或复杂 test runner 参数。
+- impact analysis 目前只覆盖基础 source -> direct test 文件命名映射、有限深度 import graph、根目录 tsconfig baseUrl/paths，不解析完整调用图、跨语言关系、tsconfig extends / project references / 多通配符 paths 或复杂 test runner 参数。
 - Context Pack 的 context 选择仍是轻量关键词匹配、文本引用和 import graph 邻接补充，尚未使用完整调用图、语义级引用图或语义检索。
 
 v0.7：Adaptive Planner + DAG。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import posixpath
 import re
 from pathlib import Path
@@ -28,13 +29,14 @@ def build_import_graph(workspace: Path, repo_map: RepoMap | None = None) -> Impo
     root = workspace.resolve()
     repo_map = repo_map or build_repo_map(root)
     known_files = {item.path for item in repo_map.files}
+    tsconfig = _load_tsconfig_paths(root)
     edges: list[ImportEdge] = []
     for item in repo_map.files:
         path = root / item.path
         if item.language == "python":
             edges.extend(_python_import_edges(root, path, known_files))
         elif item.language in {"javascript", "typescript"}:
-            edges.extend(_js_ts_import_edges(root, path, known_files))
+            edges.extend(_js_ts_import_edges(root, path, known_files, tsconfig))
     return ImportGraph(root=str(root), edges=sorted(edges, key=lambda edge: (edge.importer, edge.target, edge.kind)))
 
 
@@ -97,7 +99,7 @@ _JS_IMPORT_PATTERNS = [
 ]
 
 
-def _js_ts_import_edges(root: Path, path: Path, known_files: set[str]) -> list[ImportEdge]:
+def _js_ts_import_edges(root: Path, path: Path, known_files: set[str], tsconfig: _TsConfigPaths) -> list[ImportEdge]:
     importer = path.relative_to(root).as_posix()
     try:
         text = path.read_text(encoding="utf-8")
@@ -107,7 +109,12 @@ def _js_ts_import_edges(root: Path, path: Path, known_files: set[str]) -> list[I
     for pattern in _JS_IMPORT_PATTERNS:
         for match in pattern.finditer(text):
             specifier = match.group(1)
-            target = _resolve_relative_import(specifier, importer, known_files)
+            target = _resolve_relative_import(specifier, importer, known_files) or _resolve_tsconfig_import(
+                specifier,
+                importer,
+                known_files,
+                tsconfig,
+            )
             if target:
                 edges.append(ImportEdge(importer=importer, target=target, kind="js_import"))
     return edges
@@ -156,6 +163,82 @@ def _js_ts_suffix_order(importer_suffix: str) -> tuple[str, ...]:
     if importer_suffix in {".mjs", ".cjs"}:
         return (importer_suffix, ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
     return (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+
+
+class _TsConfigPaths(BaseModel):
+    base_url: str = "."
+    paths: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def _load_tsconfig_paths(root: Path) -> _TsConfigPaths:
+    path = root / "tsconfig.json"
+    if not path.exists():
+        return _TsConfigPaths()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _TsConfigPaths()
+    compiler_options = data.get("compilerOptions")
+    if not isinstance(compiler_options, dict):
+        return _TsConfigPaths()
+    base_url = compiler_options.get("baseUrl", ".")
+    paths = compiler_options.get("paths", {})
+    if not isinstance(base_url, str):
+        base_url = "."
+    if not isinstance(paths, dict):
+        paths = {}
+    normalized_paths: dict[str, list[str]] = {}
+    for alias, targets in paths.items():
+        if not isinstance(alias, str) or not isinstance(targets, list):
+            continue
+        normalized_targets = [target for target in targets if isinstance(target, str)]
+        if normalized_targets:
+            normalized_paths[alias] = normalized_targets
+    return _TsConfigPaths(base_url=base_url, paths=normalized_paths)
+
+
+def _resolve_tsconfig_import(
+    specifier: str,
+    importer: str,
+    known_files: set[str],
+    tsconfig: _TsConfigPaths,
+) -> str:
+    if specifier.startswith("."):
+        return ""
+    candidates: list[str] = []
+    for alias, targets in tsconfig.paths.items():
+        match = _match_ts_path_alias(alias, specifier)
+        if match is None:
+            continue
+        for target in targets:
+            expanded = _expand_ts_path_target(target, match)
+            candidates.extend(_js_ts_candidate_paths(posixpath.join(tsconfig.base_url, expanded), importer))
+    candidates.extend(_js_ts_candidate_paths(posixpath.join(tsconfig.base_url, specifier), importer))
+    return _first_known(candidates, known_files)
+
+
+def _match_ts_path_alias(alias: str, specifier: str) -> str | None:
+    if "*" not in alias:
+        return "" if alias == specifier else None
+    prefix, suffix = alias.split("*", 1)
+    if not specifier.startswith(prefix) or not specifier.endswith(suffix):
+        return None
+    return specifier[len(prefix) : len(specifier) - len(suffix) if suffix else len(specifier)]
+
+
+def _expand_ts_path_target(target: str, wildcard: str) -> str:
+    if "*" in target:
+        return target.replace("*", wildcard, 1)
+    return target
+
+
+def _js_ts_candidate_paths(raw: str, importer: str) -> list[str]:
+    normalized = posixpath.normpath(raw.replace("\\", "/")).lstrip("./")
+    candidates = [normalized]
+    for suffix in _js_ts_suffix_order(Path(importer).suffix.lower()):
+        candidates.append(normalized + suffix)
+        candidates.append(normalized + "/index" + suffix)
+    return candidates
 
 
 def _first_known(candidates: list[str], known_files: set[str]) -> str:

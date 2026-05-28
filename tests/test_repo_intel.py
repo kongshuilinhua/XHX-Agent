@@ -330,6 +330,44 @@ def test_js_import_graph_resolves_mjs_extensionless_imports(tmp_path: Path) -> N
     assert any(edge.importer == "test/public-api.test.mjs" and edge.target == "src/math_ops.mjs" for edge in graph.edges)
 
 
+def test_js_ts_import_graph_resolves_tsconfig_paths_alias(tmp_path: Path) -> None:
+    (tmp_path / "src" / "lib").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "tests" / "math_ops.spec.ts").write_text("import { add } from '@lib/math_ops';\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8")
+
+    graph = build_import_graph(tmp_path)
+
+    assert any(edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges)
+
+
+def test_js_ts_import_graph_resolves_tsconfig_base_url_import(tmp_path: Path) -> None:
+    (tmp_path / "src" / "lib").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "tests" / "math_ops.spec.ts").write_text("import { add } from 'lib/math_ops';\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":"src"}}', encoding="utf-8")
+
+    graph = build_import_graph(tmp_path)
+
+    assert any(edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges)
+
+
+def test_impact_uses_tsconfig_alias_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
+    (tmp_path / "src" / "lib").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "tests" / "public-api.spec.ts").write_text("import { add } from '@lib/math_ops';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/lib/math_ops.ts"])
+
+    assert impact.impacted_tests == ["tests/public-api.spec.ts"]
+    assert "Import graph mapped changed source files to dependent tests." in impact.notes
+
+
 def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
