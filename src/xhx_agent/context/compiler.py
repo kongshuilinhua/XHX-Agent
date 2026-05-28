@@ -6,7 +6,7 @@ from typing import Any
 from xhx_agent.context.pack import ContextDebugRecord, ContextDebugReport, ContextItem, ContextPack
 from xhx_agent.evidence.store import EvidenceEntry
 from xhx_agent.repo_intel.context_builder import build_context_for_symbols
-from xhx_agent.repo_intel.index import load_repo_intel_index
+from xhx_agent.repo_intel.index import RepoIntelIndex, load_repo_intel_index
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.symbols import Symbol, search_symbols
 
@@ -20,6 +20,8 @@ MAX_CHANGED_FILE_CHARS = 4_000
 MAX_SYMBOL_CONTEXTS = 5
 MAX_SYMBOL_CONTEXT_CHARS = 2_500
 MAX_SYMBOL_QUERY_TERMS = 6
+MAX_IMPORT_CONTEXT_FILES = 4
+MAX_IMPORT_CONTEXT_SYMBOLS = 6
 SYMBOL_QUERY_STOPWORDS = {
     "and",
     "bug",
@@ -63,7 +65,12 @@ def compile_context_pack(
             )
         )
 
-    for item in _symbol_context_items(workspace, task, recent_error):
+    repo_index = _load_repo_index(workspace)
+
+    for item in _symbol_context_items(workspace, task, recent_error, repo_index):
+        candidates.append(item)
+
+    for item in _import_context_items(workspace, changed_files or [], recent_error, repo_index):
         candidates.append(item)
 
     changed_selection = _select_changed_files(changed_files or [])
@@ -183,13 +190,17 @@ def _project_summary(scan: ProjectScan) -> dict[str, Any]:
     }
 
 
-def _symbol_context_items(workspace: Path, task: str, recent_error: str | None) -> list[ContextItem]:
+def _symbol_context_items(
+    workspace: Path,
+    task: str,
+    recent_error: str | None,
+    repo_index: RepoIntelIndex | None = None,
+) -> list[ContextItem]:
     queries = _symbol_query_terms(" ".join(part for part in [task, recent_error or ""] if part))
     if not queries:
         return []
-    try:
-        index = _load_symbol_index(workspace)
-    except OSError:
+    index = repo_index.symbol_index if repo_index else _load_symbol_index(workspace)
+    if index is None:
         return []
     selected: list[Symbol] = []
     seen: set[tuple[str, str, int]] = set()
@@ -217,8 +228,103 @@ def _symbol_context_items(workspace: Path, task: str, recent_error: str | None) 
     ]
 
 
+def _import_context_items(
+    workspace: Path,
+    changed_files: list[str],
+    recent_error: str | None,
+    repo_index: RepoIntelIndex | None,
+) -> list[ContextItem]:
+    if repo_index is None:
+        return []
+    known_files = {item.path for item in repo_index.repo_map.files}
+    changed_anchors = _context_anchor_files(changed_files, None, known_files)
+    error_anchors = [
+        path for path in _context_anchor_files([], recent_error, known_files) if path not in changed_anchors
+    ]
+    anchor_files = [*changed_anchors, *error_anchors]
+    if not anchor_files:
+        return []
+    related_files = _related_import_files(repo_index, anchor_files)
+    if changed_anchors:
+        related_files = [*error_anchors, *related_files]
+    else:
+        related_files = [*anchor_files, *related_files]
+    related_files = _unique_limited(related_files, MAX_IMPORT_CONTEXT_FILES)
+    if not related_files:
+        return []
+    selected_symbols: list[Symbol] = []
+    seen_symbols: set[tuple[str, str, int]] = set()
+    for path in related_files:
+        for symbol in repo_index.symbol_index.symbols:
+            if symbol.path != path:
+                continue
+            key = (symbol.path, symbol.name, symbol.line)
+            if key in seen_symbols:
+                continue
+            seen_symbols.add(key)
+            selected_symbols.append(symbol)
+            if len(selected_symbols) >= MAX_IMPORT_CONTEXT_SYMBOLS:
+                break
+        if len(selected_symbols) >= MAX_IMPORT_CONTEXT_SYMBOLS:
+            break
+    contexts = build_context_for_symbols(workspace, selected_symbols)
+    return [
+        ContextItem(
+            kind="import_context",
+            source=f"{context.symbol.path}:{context.symbol.line}:{context.symbol.name}",
+            content=_limit_text(context.excerpt, MAX_SYMBOL_CONTEXT_CHARS),
+            priority=87,
+            reason="Selected from Repo Intelligence import graph around changed files or recent errors.",
+        )
+        for context in contexts
+    ]
+
+
+def _load_repo_index(workspace: Path) -> RepoIntelIndex | None:
+    try:
+        return load_repo_intel_index(workspace)
+    except OSError:
+        return None
+
+
 def _load_symbol_index(workspace: Path):
-    return load_repo_intel_index(workspace).symbol_index
+    repo_index = _load_repo_index(workspace)
+    return repo_index.symbol_index if repo_index else None
+
+
+def _context_anchor_files(changed_files: list[str], recent_error: str | None, known_files: set[str]) -> list[str]:
+    anchors: list[str] = []
+    for path in changed_files:
+        normalized = path.replace("\\", "/").lstrip("./")
+        if normalized in known_files and normalized not in anchors:
+            anchors.append(normalized)
+    for path in _file_path_candidates(recent_error or ""):
+        if path in known_files and path not in anchors:
+            anchors.append(path)
+    return anchors
+
+
+def _related_import_files(repo_index: RepoIntelIndex, anchor_files: list[str]) -> list[str]:
+    related: list[str] = []
+    for anchor in anchor_files:
+        for edge in repo_index.import_graph.edges:
+            if edge.target == anchor and edge.importer not in related and edge.importer not in anchor_files:
+                related.append(edge.importer)
+            if edge.importer == anchor and edge.target not in related and edge.target not in anchor_files:
+                related.append(edge.target)
+            if len(related) >= MAX_IMPORT_CONTEXT_FILES:
+                return related
+    return related
+
+
+def _unique_limited(items: list[str], limit: int) -> list[str]:
+    unique: list[str] = []
+    for item in items:
+        if item not in unique:
+            unique.append(item)
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 def _symbol_query_terms(text: str) -> list[str]:
@@ -246,6 +352,29 @@ def _identifier_candidates(text: str) -> list[str]:
     if current:
         candidates.append("".join(current))
     return candidates
+
+
+def _file_path_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    current = []
+    allowed = set("./\\-_")
+    for char in text:
+        if char.isascii() and (char.isalnum() or char in allowed):
+            current.append(char)
+        elif current:
+            _append_path_candidate(candidates, "".join(current))
+            current.clear()
+    if current:
+        _append_path_candidate(candidates, "".join(current))
+    return candidates
+
+
+def _append_path_candidate(candidates: list[str], raw: str) -> None:
+    normalized = raw.strip(".,:;()[]{}'\"").replace("\\", "/").lstrip("./")
+    if "/" not in normalized or "." not in Path(normalized).name:
+        return
+    if normalized not in candidates:
+        candidates.append(normalized)
 
 
 def _infer_mode(changed_files: list[str] | None, recent_error: str | None) -> str:

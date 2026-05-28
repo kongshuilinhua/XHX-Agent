@@ -77,6 +77,69 @@ def test_context_pack_includes_symbol_context_for_task_query(tmp_path: Path) -> 
     assert any(record.kind == "symbol_context" and record.selected for record in pack.debug.records)
 
 
+def test_context_pack_includes_import_context_for_changed_file(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text("from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from public_api import add_public\n\ndef test_public_add():\n    assert add_public(1, 2) == 3\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="continue fixing behavior",
+        scan=scan,
+        changed_files=["src/calc.py"],
+        budget_tokens=2_000,
+    )
+
+    import_items = [item for item in pack.items if item.kind == "import_context"]
+    assert any(item.source == "src/public_api.py:3:add_public" for item in import_items)
+    assert any("def add_public" in item.content for item in import_items)
+    assert pack.debug is not None
+    assert any(record.kind == "import_context" and record.selected for record in pack.debug.records)
+
+
+def test_context_pack_uses_recent_error_path_for_import_context(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="repair failing tests",
+        scan=scan,
+        recent_error="tests/test_calc.py failed after editing src/calc.py",
+        budget_tokens=2_000,
+    )
+
+    assert any(item.kind == "import_context" and item.source == "tests/test_calc.py:3:test_add" for item in pack.items)
+
+
+def test_context_pack_keeps_recent_error_context_when_changed_files_exist(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="repair failing tests",
+        scan=scan,
+        changed_files=["./src/calc.py"],
+        recent_error="FAILED tests/test_calc.py::test_add",
+        budget_tokens=2_000,
+    )
+
+    assert any(item.kind == "import_context" and item.source == "tests/test_calc.py:3:test_add" for item in pack.items)
+
+
 def test_context_pack_prefers_persisted_repo_index_for_symbol_context(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "src").mkdir()
     source = tmp_path / "src" / "calc.py"

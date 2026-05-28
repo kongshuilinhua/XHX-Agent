@@ -187,6 +187,7 @@ v0.1 只能拆成三个固定子阶段：
 - index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
 - Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
+- Context Pack 从 changed files 和 recent error 文件路径出发，选择 import graph 邻接文件中的有限 symbol context，作为 repair / follow-up 的轻量上下文补充。
 - Verification Router 使用 impact summary 选择 targeted pytest。
 
 未完成：
@@ -196,7 +197,7 @@ v0.1 只能拆成三个固定子阶段：
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 完整调用图 / 引用图。
 - test runner 参数和跨语言影响面分析。
-- 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索。
+- 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索；当前 import context 只做有限邻接选择。
 
 功能任务：
 
