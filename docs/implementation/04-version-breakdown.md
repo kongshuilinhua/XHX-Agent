@@ -184,6 +184,7 @@ v0.1 只能拆成三个固定子阶段：
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
 - `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index 和 import graph。
 - index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用时再即时构建。
+- index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
 - Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
 - Verification Router 使用 impact summary 选择 targeted pytest。
