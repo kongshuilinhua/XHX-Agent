@@ -5,6 +5,7 @@ from xhx_agent.repo_intel.symbols import build_symbol_index, search_symbols
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.repo_intel.context_builder import build_symbol_context
+from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
 
 
@@ -179,3 +180,43 @@ def test_impact_maps_ts_source_to_spec_test(tmp_path: Path) -> None:
 
     assert impact.impacted_tests == ["tests/view.spec.ts"]
     assert impact.verification_hints == ["npm test", "npm run typecheck"]
+
+
+def test_import_graph_tracks_python_test_imports(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "math_ops.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from math_ops import add\n", encoding="utf-8")
+
+    repo_map = build_repo_map(tmp_path)
+    graph = build_import_graph(tmp_path, repo_map)
+
+    assert any(edge.importer == "tests/test_public_api.py" and edge.target == "src/math_ops.py" for edge in graph.edges)
+    assert impacted_tests_from_imports(graph, ["src/math_ops.py"], repo_map) == ["tests/test_public_api.py"]
+
+
+def test_impact_uses_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "math_ops.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from math_ops import add\n", encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/math_ops.py"])
+
+    assert impact.impacted_tests == ["tests/test_public_api.py"]
+    assert impact.verification_hints[0] == "python -m pytest tests/test_public_api.py"
+    assert "Import graph mapped changed source files to direct tests." in impact.notes
+
+
+def test_impact_uses_js_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "src" / "math_ops.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "test" / "public-api.test.js").write_text("import { add } from '../src/math_ops.js';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/public-api.test.js"}}', encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/math_ops.js"])
+
+    assert impact.impacted_tests == ["test/public-api.test.js"]
+    assert "npm test" in impact.verification_hints
+    assert "Import graph mapped changed source files to direct tests." in impact.notes
