@@ -158,6 +158,7 @@ v0.1 按三个固定子阶段推进：
 - 成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，再推断验证命令。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。
+- Verification Router 可在识别到 `vitest`、`jest` 或 `node --test` 时，为 JS/TS impacted tests 生成 targeted `npm test -- <test-file>`；未知 test script 仍回退到 `npm test`。
 
 仍未完成：
 
@@ -165,7 +166,7 @@ v0.1 按三个固定子阶段推进：
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 完整调用图和引用图。
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
-- test runner 参数推断、跨语言影响面分析和更强的大项目 context 选择；当前 import context 只是直接邻接符号补充，不是调用图、引用图或语义检索。
+- 更完整的 test runner 参数推断、跨语言影响面分析和更强的大项目 context 选择；当前 import context 只是直接邻接符号补充，不是调用图、引用图或语义检索。
 
 必须实现：
 
