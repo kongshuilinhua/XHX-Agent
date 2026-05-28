@@ -7,6 +7,7 @@ from xhx_agent.context.pack import ContextDebugRecord, ContextDebugReport, Conte
 from xhx_agent.evidence.store import EvidenceEntry
 from xhx_agent.repo_intel.context_builder import build_context_for_symbols
 from xhx_agent.repo_intel.index import RepoIntelIndex, load_repo_intel_index
+from xhx_agent.repo_intel.references import Reference, search_references
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.symbols import Symbol, search_symbols
 
@@ -22,6 +23,8 @@ MAX_SYMBOL_CONTEXT_CHARS = 2_500
 MAX_SYMBOL_QUERY_TERMS = 6
 MAX_IMPORT_CONTEXT_FILES = 4
 MAX_IMPORT_CONTEXT_SYMBOLS = 6
+MAX_REFERENCE_CONTEXTS = 6
+MAX_REFERENCE_CONTEXT_CHARS = 1_200
 SYMBOL_QUERY_STOPWORDS = {
     "and",
     "bug",
@@ -68,6 +71,9 @@ def compile_context_pack(
     repo_index = _load_repo_index(workspace)
 
     for item in _symbol_context_items(workspace, task, recent_error, repo_index):
+        candidates.append(item)
+
+    for item in _reference_context_items(workspace, task, recent_error, repo_index):
         candidates.append(item)
 
     for item in _import_context_items(workspace, changed_files or [], recent_error, repo_index):
@@ -280,6 +286,42 @@ def _import_context_items(
     ]
 
 
+def _reference_context_items(
+    workspace: Path,
+    task: str,
+    recent_error: str | None,
+    repo_index: RepoIntelIndex | None,
+) -> list[ContextItem]:
+    if repo_index is None:
+        return []
+    queries = _symbol_query_terms(" ".join(part for part in [task, recent_error or ""] if part))
+    if not queries:
+        return []
+    selected: list[Reference] = []
+    seen: set[tuple[str, str, int]] = set()
+    for query in queries:
+        for reference in search_references(repo_index.reference_index, query, limit=MAX_REFERENCE_CONTEXTS):
+            key = (reference.name, reference.path, reference.line)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(reference)
+            if len(selected) >= MAX_REFERENCE_CONTEXTS:
+                break
+        if len(selected) >= MAX_REFERENCE_CONTEXTS:
+            break
+    return [
+        ContextItem(
+            kind="reference_context",
+            source=f"{reference.path}:{reference.line}:{reference.name}",
+            content=_limit_text(_reference_excerpt(workspace, reference), MAX_REFERENCE_CONTEXT_CHARS),
+            priority=86,
+            reason="Selected by Repo Intelligence lightweight text reference search from the current task.",
+        )
+        for reference in selected
+    ]
+
+
 def _load_repo_index(workspace: Path) -> RepoIntelIndex | None:
     try:
         return load_repo_intel_index(workspace)
@@ -325,6 +367,19 @@ def _unique_limited(items: list[str], limit: int) -> list[str]:
         if len(unique) >= limit:
             break
     return unique
+
+
+def _reference_excerpt(workspace: Path, reference: Reference, context_lines: int = 1) -> str:
+    path = (workspace / reference.path).resolve()
+    if not _is_inside(workspace, path) or not path.is_file():
+        return reference.excerpt
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return reference.excerpt
+    start = max(1, reference.line - context_lines)
+    end = min(len(lines), reference.line + context_lines)
+    return "\n".join(f"{line_number}: {lines[line_number - 1]}" for line_number in range(start, end + 1))
 
 
 def _symbol_query_terms(text: str) -> list[str]:

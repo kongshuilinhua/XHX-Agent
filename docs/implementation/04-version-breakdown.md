@@ -179,15 +179,17 @@ v0.1 只能拆成三个固定子阶段：
 - 基础 `SymbolIndex`：Python AST 符号提取，JavaScript / TypeScript 轻量符号提取。
 - `symbol search`：exact、prefix、contains 排序。
 - `context builder`：围绕符号生成带行号代码片段。
+- 轻量 `ReferenceIndex`：用已有 symbol name 在 source/test 文件中定位文本级引用行，并排除定义行。
 - `impact summary`：基础 Python / JavaScript / TypeScript 源文件到直接测试文件映射。
 - 轻量 `import graph`：Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的一跳关系。
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
-- `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index 和 import graph。
+- `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index、import graph 和 reference index。
 - index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用或文件指纹过期时再即时构建。
 - index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
 - Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
 - Context Pack 从 changed files 和 recent error 文件路径出发，选择 import graph 邻接文件中的有限 symbol context，作为 repair / follow-up 的轻量上下文补充。
+- Context Pack 按任务文本选择少量 `reference_context`，用于补充调用点 / 使用点附近代码。
 - Verification Router 使用 impact summary 选择 targeted pytest。
 - Verification Router 对 `vitest`、`jest` 和 `node --test` 这类常见 JS/TS runner，可把 impacted test 文件转换为 targeted `npm test -- <test-file>`；未知 runner 仍保持 `npm test`。
 
@@ -196,9 +198,9 @@ v0.1 只能拆成三个固定子阶段：
 - Tree-sitter。
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
-- 完整调用图 / 引用图。
+- 完整调用图 / 语义级引用图。
 - 更完整的 test runner 参数和跨语言影响面分析。
-- 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索；当前 import context 只做有限邻接选择。
+- 更强的 Context Pack 查询策略，例如调用图、语义级引用图或语义检索；当前 import/reference context 只做有限邻接和文本匹配。
 
 功能任务：
 

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from xhx_agent.repo_intel.repo_map import build_repo_map
@@ -8,6 +9,7 @@ from xhx_agent.repo_intel.context_builder import build_symbol_context
 from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
 from xhx_agent.repo_intel.index import load_repo_intel_index, read_repo_intel_index, write_repo_intel_index
+from xhx_agent.repo_intel.references import build_reference_index, search_references
 
 
 def test_repo_map_classifies_files_and_verification_hints(tmp_path: Path) -> None:
@@ -98,6 +100,20 @@ def test_search_symbols_prioritizes_exact_prefix_then_contains(tmp_path: Path) -
     results = search_symbols(index, "render")
 
     assert [symbol.name for symbol in results] == ["render", "render_page", "prerender"]
+
+
+def test_reference_index_finds_symbol_usages_without_definition_lines(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+
+    references = build_reference_index(tmp_path)
+    results = search_references(references, "add")
+
+    assert ("src/calc.py", 1) not in {(reference.path, reference.line) for reference in results}
+    assert any(reference.path == "tests/test_calc.py" and reference.line == 1 for reference in results)
+    assert any(reference.path == "tests/test_calc.py" and reference.line == 4 for reference in results)
 
 
 def test_xhx_md_includes_repo_map_and_symbol_summary(tmp_path: Path) -> None:
@@ -280,6 +296,7 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     assert any(item.path == "src/calc.py" for item in index.repo_map.files)
     assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
     assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
+    assert any(reference.name == "add" and reference.path == "tests/test_calc.py" for reference in index.reference_index.references)
 
 
 def test_load_repo_intel_index_rebuilds_when_file_content_changes(tmp_path: Path) -> None:
@@ -308,3 +325,19 @@ def test_load_repo_intel_index_rebuilds_when_file_is_deleted(tmp_path: Path) -> 
 
     assert not any(item.path == "src/calc.py" for item in loaded.repo_map.files)
     assert not any(symbol.path == "src/calc.py" for symbol in loaded.symbol_index.symbols)
+
+
+def test_load_repo_intel_index_rebuilds_legacy_index_without_references(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    path = write_repo_intel_index(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("reference_index")
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = load_repo_intel_index(tmp_path)
+
+    assert loaded.reference_index.root
+    assert any(reference.name == "add" for reference in loaded.reference_index.references)
