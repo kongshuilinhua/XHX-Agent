@@ -305,6 +305,31 @@ def test_impact_uses_recursive_js_import_graph_when_direct_name_mapping_misses(t
     assert "Import graph mapped changed source files to dependent tests." in impact.notes
 
 
+def test_js_ts_import_graph_prefers_importer_language_for_extensionless_imports(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "shared.js").write_text("export const value = 'js';\n", encoding="utf-8")
+    (tmp_path / "src" / "shared.ts").write_text("export const value = 'ts';\n", encoding="utf-8")
+    (tmp_path / "src" / "entry.js").write_text("import { value } from './shared';\n", encoding="utf-8")
+    (tmp_path / "src" / "entry.ts").write_text("import { value } from './shared';\n", encoding="utf-8")
+
+    graph = build_import_graph(tmp_path)
+
+    assert any(edge.importer == "src/entry.js" and edge.target == "src/shared.js" for edge in graph.edges)
+    assert any(edge.importer == "src/entry.ts" and edge.target == "src/shared.ts" for edge in graph.edges)
+    assert not any(edge.importer == "src/entry.ts" and edge.target == "src/shared.js" for edge in graph.edges)
+
+
+def test_js_import_graph_resolves_mjs_extensionless_imports(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "src" / "math_ops.mjs").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "test" / "public-api.test.mjs").write_text("import { add } from '../src/math_ops';\n", encoding="utf-8")
+
+    graph = build_import_graph(tmp_path)
+
+    assert any(edge.importer == "test/public-api.test.mjs" and edge.target == "src/math_ops.mjs" for edge in graph.edges)
+
+
 def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
