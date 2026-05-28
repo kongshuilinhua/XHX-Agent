@@ -149,6 +149,7 @@ v0.1 按三个固定子阶段推进：
 - JavaScript / TypeScript 轻量符号提取。
 - symbol search。
 - symbol context builder。
+- Context Pack 任务关键词驱动的 symbol context 注入。
 - Python source -> direct test 的基础 impact mapping。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。

@@ -41,6 +41,57 @@ def test_context_pack_includes_project_map_and_tool_summaries(tmp_path: Path) ->
     assert any(record.selected for record in pack.debug.records)
 
 
+def test_context_pack_includes_symbol_context_for_task_query(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text(
+        "\n".join(
+            [
+                "def helper():",
+                "    return 1",
+                "",
+                "def add_numbers(a, b):",
+                "    value = a + b",
+                "    return value",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix add_numbers bug",
+        scan=scan,
+        budget_tokens=2_000,
+    )
+
+    symbol_items = [item for item in pack.items if item.kind == "symbol_context"]
+    assert len(symbol_items) == 1
+    assert symbol_items[0].source == "src/calc.py:4:add_numbers"
+    assert "4: def add_numbers(a, b):" in symbol_items[0].content
+    assert "5:     value = a + b" in symbol_items[0].content
+    assert pack.debug is not None
+    assert any(record.kind == "symbol_context" and record.selected for record in pack.debug.records)
+
+
+def test_context_pack_omits_symbol_context_when_over_budget(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n", encoding="utf-8")
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix add_numbers bug",
+        scan=scan,
+        budget_tokens=30,
+    )
+
+    assert "symbol_context:src/calc.py:1:add_numbers" in pack.omitted
+    assert pack.debug is not None
+    assert any(record.kind == "symbol_context" and not record.selected for record in pack.debug.records)
+
+
 def test_context_pack_omits_low_priority_items_when_over_budget(tmp_path: Path) -> None:
     (tmp_path / "XHX.md").write_text("x" * 4_000, encoding="utf-8")
     scan = scan_project(tmp_path)
