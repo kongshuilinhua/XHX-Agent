@@ -386,13 +386,13 @@ v0.6 已完成：
 - `repo_intel.symbols` 可以提取 Python 函数 / 类，以及 JavaScript / TypeScript 的基础函数、箭头函数和类符号。
 - `search_symbols` 支持 exact、prefix、contains 顺序的轻量 symbol search。
 - `repo_intel.context_builder` 可以围绕符号生成带行号的代码片段。
-- `repo_intel.references` 可以基于已有 symbol name 建立轻量文本引用索引，定位 source/test 文件中的使用行，并排除定义行。
+- `repo_intel.references` 可以基于已有 symbol name 建立轻量文本引用索引，定位 source/test 文件中的使用行，排除定义行，并用全局引用数、单符号引用数和单文件扫描行数限制索引体积。
 - `repo_intel.impact` 可以把 Python 源文件变更映射到直接测试文件，例如 `src/calc.py` -> `tests/test_calc.py`。
 - `repo_intel.impact` 已支持常见 JavaScript / TypeScript direct test 命名，例如 `src/index.js` -> `test/index.test.js`、`src/view.ts` -> `tests/view.spec.ts`。
 - `repo_intel.imports` 提供轻量 import graph，能识别 Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的相对依赖。
 - impact analysis 在 direct test 命名匹配失败时，会用 import graph 的反向递归依赖找直接或间接依赖变更源文件的测试文件。
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
-- `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、reference index 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
+- `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、带截断元数据的 reference index 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
 - `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失、损坏或文件指纹过期时再即时构建。
 - `load_repo_intel_index` 会在旧索引缺少 reference index 时重建，避免升级后继续使用不完整索引。
 - Runtime 在成功 `apply_patch` 后会刷新 `.xhx/repo/index.json`，并在刷新后重新推断验证命令。
@@ -404,6 +404,7 @@ v0.6 已完成：
 - Context Pack 已开始按任务文本进行 symbol search，并优先从 `.xhx/repo/index.json` 读取 symbol index，把少量带行号的 symbol context 放入预算化上下文。
 - Context Pack 会基于 `.xhx/repo/index.json` 的 import graph，从 changed files 和 recent error 中的文件路径出发，加入有上限的 `import_context` 邻接符号片段。
 - Context Pack 会基于 `.xhx/repo/index.json` 的 reference index，按任务关键词加入有上限的 `reference_context` 文本引用片段。
+- reference index 可能因预算限制被截断或跳过超长文件；这是当前轻量索引的显式限制，不代表仓库中没有更多引用。
 
 v0.6 未完成 / 后续增强：
 
