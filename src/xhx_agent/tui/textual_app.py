@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,6 +15,9 @@ from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
+
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,8 @@ class TextualSnapshot:
         profile: str,
         auto_repair: bool,
         assume_yes: bool,
+        pending_steer: str | None = None,
+        next_confirm_response: bool | None = None,
     ) -> TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
@@ -55,11 +62,30 @@ class TextualSnapshot:
             conversation_lines.extend(str(item) for item in getattr(state, "textual_messages"))
         if not conversation_lines:
             conversation_lines.append("No conversation yet.")
+        permission_state = "next confirm: default-deny"
+        if next_confirm_response is True:
+            permission_state = "next confirm: allow once"
+        elif next_confirm_response is False:
+            permission_state = "next confirm: deny once"
+        pending_policy = next(
+            (item for item in reversed(state.policy_decisions) if item.requires_user or item.decision == "confirm"),
+            None,
+        )
+        if pending_policy is not None:
+            permission_state += f"\nwaiting: {pending_policy.source or pending_policy.scope} ({pending_policy.risk})"
+        active_tool = next((item for item in reversed(state.tools) if item.status == "running"), None)
+        active_verification = next((item for item in reversed(state.verifications) if item.status == "running"), None)
         runtime_state = "\n".join(
             [
                 f"workspace: {workspace}",
                 f"mode: {state.mode}",
+                f"pending steer: {pending_steer or 'none'}",
+                f"cancel: {'requested' if state.cancel_requested else 'none'}",
+                permission_state,
+                f"active tool: {active_tool.tool if active_tool else 'none'}",
+                f"active verification: {active_verification.command if active_verification else 'none'}",
                 f"verification: {state.verification}",
+                f"repair: {state.repair_attempts}/{state.repair_max_attempts or 0}",
                 f"context: {state.context_used_tokens_estimate}/{state.context_budget_tokens or 0}",
                 f"events: {len(state.events)}",
                 f"flags: {', '.join(flags) or 'none'}",
@@ -136,6 +162,7 @@ class TextualCommandConsoleApp(App[None]):
         self.cancel_requested = False
         self.pending_steer: str | None = None
         self.widgets_ready = False
+        self.ui_thread_id: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -149,6 +176,7 @@ class TextualCommandConsoleApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.ui_thread_id = threading.get_ident()
         self.widgets_ready = True
         self.refresh_snapshot()
 
@@ -160,6 +188,8 @@ class TextualCommandConsoleApp(App[None]):
             profile=self.profile,
             auto_repair=self.auto_repair,
             assume_yes=self.assume_yes,
+            pending_steer=self.pending_steer,
+            next_confirm_response=self.next_confirm_response,
         )
         self.title = snapshot.header
         if not self.widgets_ready:
@@ -176,12 +206,12 @@ class TextualCommandConsoleApp(App[None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.input.value = ""
-        should_continue = self.handle_text_input(event.value)
+        should_continue = self.handle_text_input(event.value, use_worker=True)
         self.refresh_snapshot()
         if not should_continue:
             self.exit()
 
-    def handle_text_input(self, text: str) -> bool:
+    def handle_text_input(self, text: str, *, use_worker: bool = False) -> bool:
         stripped = text.strip()
         if not stripped:
             return True
@@ -190,15 +220,33 @@ class TextualCommandConsoleApp(App[None]):
         if self.is_running():
             self.queue_steer(stripped)
             return True
-        self.run_task(stripped)
+        if use_worker and self.widgets_ready:
+            self.start_task_worker(stripped)
+        else:
+            self.run_task(stripped)
         return True
 
-    def run_task(self, task: str) -> None:
+    def start_task_worker(self, task: str) -> None:
         self.cancel_requested = False
-        self.messages.append(f"user> {task}")
+        self.state.status = "running"
+        self.state.task = task
+        self.append_message(f"user> {task}")
+        self.refresh_snapshot()
+        self.run_worker(
+            lambda: self.run_task(task, announce_user=False, reset_cancel=False),
+            name="runtime-task",
+            group="runtime",
+            thread=True,
+        )
+
+    def run_task(self, task: str, *, announce_user: bool = True, reset_cancel: bool = True) -> None:
+        if reset_cancel:
+            self.cancel_requested = False
+        if announce_user:
+            self.append_message(f"user> {task}")
         runtime_task = self.build_runtime_task(task)
         if runtime_task != task:
-            self.messages.append("system> follow-up context attached")
+            self.append_message("system> follow-up context attached")
         result = self.runtime.run_task(
             runtime_task,
             profile_name=self.profile,
@@ -209,8 +257,8 @@ class TextualCommandConsoleApp(App[None]):
             cancel_check=self.is_cancel_requested,
         )
         self.last_result = result
-        self.state.apply_result(result)
-        self.messages.append(f"system> run finished: {result.status}, verification: {result.verification}")
+        self.apply_run_result(result)
+        self.append_message(f"system> run finished: {result.status}, verification: {result.verification}")
         self.run_pending_steer()
 
     def run_pending_steer(self) -> None:
@@ -218,12 +266,12 @@ class TextualCommandConsoleApp(App[None]):
             return
         steer = self.pending_steer
         self.pending_steer = None
-        self.messages.append("running queued steer as follow-up")
+        self.append_message("running queued steer as follow-up")
         self.run_task(steer)
 
     def queue_steer(self, text: str) -> None:
         self.pending_steer = text
-        self.messages.append(f"system> steer queued: {text}")
+        self.append_message(f"system> steer queued: {text}")
         self.request_cancel("Steer requested by user.")
 
     def is_running(self) -> bool:
@@ -251,14 +299,13 @@ class TextualCommandConsoleApp(App[None]):
         )
 
     def handle_runtime_event(self, event: RuntimeEvent) -> None:
-        self.state.reduce(event)
-        self.refresh_snapshot()
+        self.call_ui(self.apply_runtime_event, event)
 
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
         allowed = bool(self.next_confirm_response)
         self.next_confirm_response = None
         verb = "allowed" if allowed else "declined"
-        self.messages.append(f"system> permission {verb}: {command} ({decision.risk.value})")
+        self.append_message(f"system> permission {verb}: {command} ({decision.risk.value})")
         return allowed
 
     def handle_slash_command(self, command_line: str) -> bool:
@@ -272,14 +319,14 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/allow":
             self.next_confirm_response = True
-            self.messages.append("system> next permission prompt will be allowed once")
+            self.append_message("system> next permission prompt will be allowed once")
             return True
         if command == "/deny":
             self.next_confirm_response = False
-            self.messages.append("system> next permission prompt will be declined once")
+            self.append_message("system> next permission prompt will be declined once")
             return True
         if command == "/help":
-            self.messages.append(
+            self.append_message(
                 "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /live /allow /deny /clear /exit"
             )
             return True
@@ -315,13 +362,13 @@ class TextualCommandConsoleApp(App[None]):
             self.print_dashboard_summary()
             return True
         if command == "/live":
-            self.messages.append("system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels")
+            self.append_message("system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels")
             return True
         if command == "/cancel":
             self.request_cancel()
             return True
         if command == "/status":
-            self.messages.append(
+            self.append_message(
                 "system> "
                 f"status: {self.state.status}; "
                 f"verification: {self.state.verification}; "
@@ -329,7 +376,7 @@ class TextualCommandConsoleApp(App[None]):
                 f"changed_files: {len(self.state.changed_files)}"
             )
             return True
-        self.messages.append(f"system> Unknown command: {command}")
+        self.append_message(f"system> Unknown command: {command}")
         return True
 
     def run_manual_verification(self) -> None:
@@ -344,7 +391,7 @@ class TextualCommandConsoleApp(App[None]):
             cancel_check=self.is_cancel_requested,
         )
         self.last_manual_verification = result
-        self.messages.append(f"system> manual verification: {result.status}")
+        self.append_message(f"system> manual verification: {result.status}")
 
     def run_manual_repair(self, max_attempts: int = 1) -> None:
         failed_results = []
@@ -358,7 +405,7 @@ class TextualCommandConsoleApp(App[None]):
             changed_files = list(self.last_result.changed_files)
             task = self.last_result.run_id
         else:
-            self.messages.append("system> manual repair requires a failed verification result")
+            self.append_message("system> manual repair requires a failed verification result")
             return
         result = self.runtime.repair_after_failed_verification(
             task=task,
@@ -376,14 +423,14 @@ class TextualCommandConsoleApp(App[None]):
         self.state.verification = result.verification
         self.state.summary_path = result.summary_path
         self.state.repair_attempts = result.repair_attempts
-        self.messages.append(f"system> manual repair: {result.status}, verification: {result.verification}")
+        self.append_message(f"system> manual repair: {result.status}, verification: {result.verification}")
 
     def print_plan_preview(self, task: str | None = None) -> None:
         if not task:
             if not self.state.plan_summary:
-                self.messages.append("system> plan: no active plan")
+                self.append_message("system> plan: no active plan")
                 return
-            self.messages.append(
+            self.append_message(
                 "system> "
                 f"plan: {self.state.plan_summary}; "
                 f"status={self.state.plan_status or 'unknown'}; "
@@ -400,35 +447,35 @@ class TextualCommandConsoleApp(App[None]):
         ]
         if result.risk_summary:
             parts.append("risks=" + "; ".join(result.risk_summary))
-        self.messages.append(" | ".join(parts))
+        self.append_message(" | ".join(parts))
 
     def set_mode(self, argument: str) -> None:
         if argument:
             self.state.mode = argument
-        self.messages.append(f"system> mode: {self.state.mode}")
+        self.append_message(f"system> mode: {self.state.mode}")
 
     def print_model(self, profile_name: str | None = None) -> None:
         if profile_name:
             self.profile = profile_name
-            self.messages.append(f"system> active profile: {self.profile}")
+            self.append_message(f"system> active profile: {self.profile}")
             return
         profiles = load_profiles(self.workspace).profiles
         items = []
         for profile in profiles:
             marker = "*" if profile.name == self.profile else ""
             items.append(f"{profile.name}{marker} [{profile.provider}/{profile.model or ''}]")
-        self.messages.append("system> profiles: " + (" | ".join(items) if items else "none"))
+        self.append_message("system> profiles: " + (" | ".join(items) if items else "none"))
 
     def print_skills(self) -> None:
         skill_root = self.workspace / ".xhx" / "skills"
         if not skill_root.exists():
-            self.messages.append("system> skills: none")
+            self.append_message("system> skills: none")
             return
         skills = [path.relative_to(self.workspace).as_posix() for path in sorted(skill_root.iterdir())]
-        self.messages.append("system> skills: " + (" | ".join(skills) if skills else "none"))
+        self.append_message("system> skills: " + (" | ".join(skills) if skills else "none"))
 
     def print_dashboard_summary(self) -> None:
-        self.messages.append(
+        self.append_message(
             "system> "
             f"dashboard: status={self.state.status}; "
             f"run={self.state.run_id or 'none'}; "
@@ -440,11 +487,11 @@ class TextualCommandConsoleApp(App[None]):
 
     def request_cancel(self, reason: str = "Cancel requested by user.") -> bool:
         if self.state.status in {"idle", "success", "failed", "cancelled", "skipped_no_changes"}:
-            self.messages.append("system> No running task to cancel")
+            self.append_message("system> No running task to cancel")
             return False
         self.cancel_requested = True
         self.handle_runtime_event(RuntimeEvent(type="cancel_requested", message=reason, payload={"source": "textual"}))
-        self.messages.append("system> Cancel requested. The current task will stop at the next safe runtime boundary.")
+        self.append_message("system> Cancel requested. The current task will stop at the next safe runtime boundary.")
         return True
 
     def is_cancel_requested(self) -> bool:
@@ -452,7 +499,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def print_context_summary(self) -> None:
         languages = ", ".join(self.state.detected_languages) or "unknown"
-        self.messages.append(
+        self.append_message(
             "system> "
             f"context: turn={self.state.context_turn or 'none'} "
             f"selected={self.state.context_selected} "
@@ -464,18 +511,18 @@ class TextualCommandConsoleApp(App[None]):
 
     def print_evidence_summary(self) -> None:
         if not self.state.policy_decisions:
-            self.messages.append("system> policy evidence: none")
+            self.append_message("system> policy evidence: none")
             return
         items = [
             f"{item.source or item.scope}: {item.decision} ({item.risk}) {item.reason}"
             for item in self.state.policy_decisions[-3:]
         ]
-        self.messages.append("system> policy evidence: " + " | ".join(items))
+        self.append_message("system> policy evidence: " + " | ".join(items))
 
     def print_diff_summary(self) -> None:
         changed_files = self.current_changed_files()
         if not changed_files:
-            self.messages.append("system> diff: no changed files")
+            self.append_message("system> diff: no changed files")
             return
         result = self.runtime.diff_changed_files(changed_files)
         diff_excerpt = result.diff_text.strip()
@@ -486,7 +533,33 @@ class TextualCommandConsoleApp(App[None]):
             parts.append(diff_excerpt)
         if result.risk_summary:
             parts.append("notes: " + "; ".join(result.risk_summary))
-        self.messages.append("system> diff: " + "\n".join(parts))
+        self.append_message("system> diff: " + "\n".join(parts))
+
+    def apply_runtime_event(self, event: RuntimeEvent) -> None:
+        self.state.reduce(event)
+        self.refresh_snapshot()
+
+    def apply_run_result(self, result: RunResult) -> None:
+        self.call_ui(self._apply_run_result, result)
+
+    def _apply_run_result(self, result: RunResult) -> None:
+        self.state.apply_result(result)
+        self.refresh_snapshot()
+
+    def append_message(self, message: str) -> None:
+        self.call_ui(self._append_message, message)
+
+    def _append_message(self, message: str) -> None:
+        self.messages.append(message)
+        self.refresh_snapshot()
+
+    def call_ui(self, callback: Callable[..., T], *args: object) -> T | None:
+        if self.ui_thread_id is not None and threading.get_ident() != self.ui_thread_id:
+            try:
+                return self.call_from_thread(callback, *args)
+            except RuntimeError:
+                pass
+        return callback(*args)
 
     def current_changed_files(self) -> list[str]:
         if self.state.changed_files:
