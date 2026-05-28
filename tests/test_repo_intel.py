@@ -196,6 +196,19 @@ def test_import_graph_tracks_python_test_imports(tmp_path: Path) -> None:
     assert impacted_tests_from_imports(graph, ["src/math_ops.py"], repo_map) == ["tests/test_public_api.py"]
 
 
+def test_import_graph_maps_recursive_python_test_dependents(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "math_ops.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text("from math_ops import add\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from public_api import add\n", encoding="utf-8")
+
+    repo_map = build_repo_map(tmp_path)
+    graph = build_import_graph(tmp_path, repo_map)
+
+    assert impacted_tests_from_imports(graph, ["src/math_ops.py"], repo_map) == ["tests/test_public_api.py"]
+
+
 def test_impact_uses_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
@@ -206,7 +219,21 @@ def test_impact_uses_import_graph_when_direct_name_mapping_misses(tmp_path: Path
 
     assert impact.impacted_tests == ["tests/test_public_api.py"]
     assert impact.verification_hints[0] == "python -m pytest tests/test_public_api.py"
-    assert "Import graph mapped changed source files to direct tests." in impact.notes
+    assert "Import graph mapped changed source files to dependent tests." in impact.notes
+
+
+def test_impact_uses_recursive_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "math_ops.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text("from math_ops import add\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from public_api import add\n", encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/math_ops.py"])
+
+    assert impact.impacted_tests == ["tests/test_public_api.py"]
+    assert impact.verification_hints[0] == "python -m pytest tests/test_public_api.py"
+    assert "Import graph mapped changed source files to dependent tests." in impact.notes
 
 
 def test_impact_uses_js_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
@@ -220,7 +247,22 @@ def test_impact_uses_js_import_graph_when_direct_name_mapping_misses(tmp_path: P
 
     assert impact.impacted_tests == ["test/public-api.test.js"]
     assert "npm test" in impact.verification_hints
-    assert "Import graph mapped changed source files to direct tests." in impact.notes
+    assert "Import graph mapped changed source files to dependent tests." in impact.notes
+
+
+def test_impact_uses_recursive_js_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "test").mkdir()
+    (tmp_path / "src" / "math_ops.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.js").write_text("import { add } from './math_ops.js';\nexport { add };\n", encoding="utf-8")
+    (tmp_path / "test" / "public-api.test.js").write_text("import { add } from '../src/public_api.js';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/public-api.test.js"}}', encoding="utf-8")
+
+    impact = analyze_impact(tmp_path, ["src/math_ops.js"])
+
+    assert impact.impacted_tests == ["test/public-api.test.js"]
+    assert "npm test" in impact.verification_hints
+    assert "Import graph mapped changed source files to dependent tests." in impact.notes
 
 
 def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
