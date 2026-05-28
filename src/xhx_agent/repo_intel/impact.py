@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.repo_map import RepoMap, build_repo_map
 
 
@@ -19,6 +20,11 @@ def analyze_impact(workspace: Path, changed_files: list[str], repo_map: RepoMap 
     normalized = [path.replace("\\", "/") for path in changed_files if path]
     impacted_tests = sorted(set(_direct_test_for(path, repo_map) for path in normalized) - {""})
     notes: list[str] = []
+    if not impacted_tests and any(_is_source(path) for path in normalized):
+        graph = build_import_graph(workspace, repo_map)
+        impacted_tests = impacted_tests_from_imports(graph, normalized, repo_map)
+        if impacted_tests:
+            notes.append("Import graph mapped changed source files to direct tests.")
     if not impacted_tests and any(_is_source(path) for path in normalized):
         notes.append("No direct test file mapping found for changed source files.")
     hints = list(repo_map.verification_hints)

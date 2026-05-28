@@ -388,6 +388,8 @@ v0.6 已完成：
 - `repo_intel.context_builder` 可以围绕符号生成带行号的代码片段。
 - `repo_intel.impact` 可以把 Python 源文件变更映射到直接测试文件，例如 `src/calc.py` -> `tests/test_calc.py`。
 - `repo_intel.impact` 已支持常见 JavaScript / TypeScript direct test 命名，例如 `src/index.js` -> `test/index.test.js`、`src/view.ts` -> `tests/view.spec.ts`。
+- `repo_intel.imports` 提供轻量 import graph，能识别 Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的相对依赖。
+- impact analysis 在 direct test 命名匹配失败时，会用 import graph 找直接引用变更源文件的测试文件。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
 - Verification Router 在 Node 项目中会识别 direct JS/TS test 映射，但仍使用 `npm test` / `npm run typecheck` / `npm run build` 这类 package scripts 作为便携验证命令。
 - `XHX.md` 生成时会包含 Repo Map 和 Symbols 摘要，供 Context Pack 后续读取。
@@ -398,7 +400,7 @@ v0.6 未完成 / 后续增强：
 - 尚未接入 Tree-sitter，当前 Python 使用标准库 AST，JS/TS 使用轻量正则。
 - 尚未实现 SQLite 持久化索引。
 - 尚未实现完整跨语言引用关系和调用图。
-- impact analysis 目前只覆盖基础 source -> direct test 文件命名映射，不解析 import graph 或 test runner 参数。
+- impact analysis 目前只覆盖基础 source -> direct test 文件命名映射和一跳 import graph，不解析递归依赖图或 test runner 参数。
 - Context Pack 的 symbol context 选择仍是轻量关键词匹配，尚未使用调用图、引用图或语义检索。
 
 v0.7：Adaptive Planner + DAG。
