@@ -12,6 +12,7 @@ class RepoFile(BaseModel):
     language: str
     kind: str
     size_bytes: int
+    mtime_ns: int
 
 
 class RepoMap(BaseModel):
@@ -24,16 +25,20 @@ class RepoMap(BaseModel):
 def build_repo_map(workspace: Path) -> RepoMap:
     root = workspace.resolve()
     scan = scan_project(root)
-    files = [
-        RepoFile(
-            path=path.relative_to(root).as_posix(),
-            language=_language_for(path),
-            kind=_kind_for(path, root),
-            size_bytes=path.stat().st_size,
+    files: list[RepoFile] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or _is_ignored(path, root):
+            continue
+        stat = path.stat()
+        files.append(
+            RepoFile(
+                path=path.relative_to(root).as_posix(),
+                language=_language_for(path),
+                kind=_kind_for(path, root),
+                size_bytes=stat.st_size,
+                mtime_ns=stat.st_mtime_ns,
+            )
         )
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and not _is_ignored(path, root)
-    ]
     return RepoMap(
         root=str(root),
         scan=scan,

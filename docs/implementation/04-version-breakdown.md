@@ -183,7 +183,7 @@ v0.1 只能拆成三个固定子阶段：
 - 轻量 `import graph`：Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的一跳关系。
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
 - `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index 和 import graph。
-- index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用时再即时构建。
+- index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用或文件指纹过期时再即时构建。
 - index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
 - Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
@@ -193,6 +193,7 @@ v0.1 只能拆成三个固定子阶段：
 
 - Tree-sitter。
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
+- 真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 完整调用图 / 引用图。
 - test runner 参数和跨语言影响面分析。
 - 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索。

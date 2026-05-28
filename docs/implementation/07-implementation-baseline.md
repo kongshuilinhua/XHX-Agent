@@ -391,8 +391,8 @@ v0.6 已完成：
 - `repo_intel.imports` 提供轻量 import graph，能识别 Python `import/from`、JavaScript / TypeScript `import` 和 `require()` 的相对依赖。
 - impact analysis 在 direct test 命名匹配失败时，会用 import graph 的反向递归依赖找直接或间接依赖变更源文件的测试文件。
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
-- `.xhx/repo/index.json` 当前包含 repo map、symbol index 和 import graph，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
-- `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失或损坏时再即时构建。
+- `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
+- `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失、损坏或文件指纹过期时再即时构建。
 - Runtime 在成功 `apply_patch` 后会刷新 `.xhx/repo/index.json`，并在刷新后重新推断验证命令。
 - repo index refresh 会写入 Raw Trace，并通过 Runtime event 暴露；刷新失败只记录风险，不自动回滚已成功的 patch。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
@@ -405,6 +405,7 @@ v0.6 未完成 / 后续增强：
 
 - 尚未接入 Tree-sitter，当前 Python 使用标准库 AST，JS/TS 使用轻量正则。
 - 尚未实现 SQLite 持久化索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
+- 尚未实现真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 尚未实现完整跨语言引用关系和调用图。
 - impact analysis 目前只覆盖基础 source -> direct test 文件命名映射和有限深度 import graph，不解析完整调用图、跨语言关系或 test runner 参数。
 - Context Pack 的 symbol context 选择仍是轻量关键词匹配，尚未使用调用图、引用图或语义检索。
