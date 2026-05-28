@@ -25,6 +25,8 @@ SLASH_COMMAND_HINTS = [
     "/dashboard",
     "/live",
     "/cancel",
+    "/allow",
+    "/deny",
     "/clear",
     "/exit",
 ]

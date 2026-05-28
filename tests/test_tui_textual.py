@@ -6,6 +6,7 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
+import threading
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:
@@ -48,6 +49,40 @@ def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None
     assert "context: 120/6000" in snapshot.runtime_state
     assert "src/calc.py" in snapshot.changed_files
     assert "/help /model /status" in snapshot.commands
+
+
+def test_textual_snapshot_shows_pending_steer_cancel_and_permission_state() -> None:
+    state = ConsoleState()
+    state.reduce(
+        RuntimeEvent(
+            type="policy_decision",
+            message="Command requires confirmation.",
+            payload={
+                "scope": "terminal",
+                "source": "python -m pytest",
+                "decision": "confirm",
+                "risk": "confirm",
+                "reason": "Needs confirmation.",
+                "requires_user": True,
+            },
+        )
+    )
+    state.reduce(RuntimeEvent(type="cancel_requested", message="Steer requested by user.", payload={"source": "textual"}))
+
+    snapshot = TextualSnapshot.from_state(
+        state,
+        workspace="D:/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=False,
+        pending_steer="change direction",
+        next_confirm_response=True,
+    )
+
+    assert "pending steer: change direction" in snapshot.runtime_state
+    assert "cancel: requested" in snapshot.runtime_state
+    assert "next confirm: allow once" in snapshot.runtime_state
+    assert "waiting: python -m pytest (confirm)" in snapshot.runtime_state
 
 
 def test_textual_command_console_app_can_render_initial_shell(tmp_path) -> None:
@@ -172,6 +207,18 @@ class FakeRuntime:
         )
 
 
+class BlockingRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def run_task(self, task, **kwargs):
+        self.started.set()
+        assert self.release.wait(timeout=2)
+        return super().run_task(task, **kwargs)
+
+
 def test_textual_command_console_runs_task_through_runtime(tmp_path) -> None:
     runtime = FakeRuntime()
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
@@ -225,8 +272,31 @@ def test_textual_command_console_submitted_task_updates_window(tmp_path) -> None
         async with app.run_test() as pilot:
             await pilot.click("#input")
             await pilot.press("f", "i", "x", "enter")
+            await pilot.pause()
             assert "summary> .xhx/logbook/run-1.md" in str(pilot.app.query_one("#conversation").content)
             assert "verification: skipped_no_changes" in str(pilot.app.query_one("#runtime").content)
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
+def test_textual_submitted_task_uses_background_worker(tmp_path) -> None:
+    runtime = BlockingRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("f", "i", "x", "enter")
+            assert runtime.started.wait(timeout=2)
+            assert app.state.status == "running"
+            assert app.state.task == "fix"
+            assert any(worker.name == "runtime-task" for worker in app.workers)
+            runtime.release.set()
+            await pilot.pause()
+            assert app.last_result is not None
+            assert app.last_result.status == "success"
 
     import asyncio
 
