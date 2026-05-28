@@ -392,10 +392,12 @@ v0.6 已完成：
 - impact analysis 在 direct test 命名匹配失败时，会用 import graph 找直接引用变更源文件的测试文件。
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
 - `.xhx/repo/index.json` 当前包含 repo map、symbol index 和 import graph，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
+- `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失或损坏时再即时构建。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
+- Verification Router 的 impact analysis 会优先复用落盘 repo map 和 import graph，避免每次都重新扫描。
 - Verification Router 在 Node 项目中会识别 direct JS/TS test 映射，但仍使用 `npm test` / `npm run typecheck` / `npm run build` 这类 package scripts 作为便携验证命令。
 - `XHX.md` 生成时会包含 Repo Map 和 Symbols 摘要，供 Context Pack 后续读取。
-- Context Pack 已开始按任务文本进行 symbol search，并把少量带行号的 symbol context 放入预算化上下文。
+- Context Pack 已开始按任务文本进行 symbol search，并优先从 `.xhx/repo/index.json` 读取 symbol index，把少量带行号的 symbol context 放入预算化上下文。
 
 v0.6 未完成 / 后续增强：
 

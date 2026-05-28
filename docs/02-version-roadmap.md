@@ -153,6 +153,7 @@ v0.1 按三个固定子阶段推进：
 - Python / JavaScript / TypeScript source -> direct test 的基础 impact mapping。
 - 轻量 import graph 辅助 impact mapping。
 - `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index 和 import graph。
+- Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，缺失或损坏时再即时构建。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。
 

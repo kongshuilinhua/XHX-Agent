@@ -5,9 +5,10 @@ from typing import Any
 
 from xhx_agent.context.pack import ContextDebugRecord, ContextDebugReport, ContextItem, ContextPack
 from xhx_agent.evidence.store import EvidenceEntry
-from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.context_builder import build_context_for_symbols
-from xhx_agent.repo_intel.symbols import Symbol, build_symbol_index, search_symbols
+from xhx_agent.repo_intel.index import load_repo_intel_index
+from xhx_agent.repo_intel.scanner import ProjectScan
+from xhx_agent.repo_intel.symbols import Symbol, search_symbols
 
 
 DEFAULT_CONTEXT_BUDGET_TOKENS = 6_000
@@ -187,7 +188,7 @@ def _symbol_context_items(workspace: Path, task: str, recent_error: str | None) 
     if not queries:
         return []
     try:
-        index = build_symbol_index(workspace)
+        index = _load_symbol_index(workspace)
     except OSError:
         return []
     selected: list[Symbol] = []
@@ -214,6 +215,10 @@ def _symbol_context_items(workspace: Path, task: str, recent_error: str | None) 
         )
         for context in contexts
     ]
+
+
+def _load_symbol_index(workspace: Path):
+    return load_repo_intel_index(workspace).symbol_index
 
 
 def _symbol_query_terms(text: str) -> list[str]:

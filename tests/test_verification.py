@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.verification.router import infer_verification
 
 
@@ -33,6 +34,23 @@ def test_python_source_change_uses_repo_intelligence_direct_test_mapping(tmp_pat
 
     assert [command.command for command in plan.commands] == ["python -m pytest tests/test_calc.py"]
     assert plan.commands[0].reason == "Repo intelligence mapped changed source files to direct tests."
+
+
+def test_python_source_change_uses_persisted_import_graph_for_test_mapping(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from calc import add\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+
+    def fail_graph_rebuild(*args, **kwargs):
+        raise AssertionError("Verification Router should use the persisted import graph before rebuilding it.")
+
+    monkeypatch.setattr("xhx_agent.repo_intel.impact.build_import_graph", fail_graph_rebuild)
+
+    plan = infer_verification(tmp_path, changed_files=["src/calc.py"])
+
+    assert [command.command for command in plan.commands] == ["python -m pytest tests/test_public_api.py"]
 
 
 def test_node_verification_inference(tmp_path: Path) -> None:
