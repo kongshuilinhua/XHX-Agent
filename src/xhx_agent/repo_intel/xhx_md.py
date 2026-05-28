@@ -3,15 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from xhx_agent.repo_intel.scanner import ProjectScan
+from xhx_agent.repo_intel.repo_map import RepoMap, build_repo_map
+from xhx_agent.repo_intel.symbols import SymbolIndex, build_symbol_index
 
 
 def render_xhx_md(scan: ProjectScan) -> str:
+    repo_map = build_repo_map(Path(scan.root))
+    symbol_index = build_symbol_index(Path(scan.root), repo_map)
     languages = ", ".join(scan.detected_languages) or "unknown"
     node_scripts = scan.node.get("scripts", {})
     script_lines = "\n".join(f"- npm run {name}" for name in sorted(node_scripts)) or "- none detected"
     verification: list[str] = []
     if scan.python.get("tests_dir") or scan.python.get("pytest_ini"):
-        verification.append("- uv run pytest" if scan.python.get("pyproject") else "- python -m pytest")
+        verification.append("- python -m pytest")
     if isinstance(node_scripts, dict):
         if "test" in node_scripts:
             verification.append("- npm test")
@@ -37,6 +41,14 @@ def render_xhx_md(scan: ProjectScan) -> str:
 
 {script_lines}
 
+## Repo Map
+
+{_repo_map_lines(repo_map)}
+
+## Symbols
+
+{_symbol_lines(symbol_index)}
+
 ## Verification
 
 {verification_lines}
@@ -53,3 +65,35 @@ def write_xhx_md(workspace: Path, scan: ProjectScan) -> bool:
         return False
     path.write_text(render_xhx_md(scan), encoding="utf-8")
     return True
+
+
+def _repo_map_lines(repo_map: RepoMap) -> str:
+    by_kind: dict[str, int] = {}
+    by_language: dict[str, int] = {}
+    for item in repo_map.files:
+        by_kind[item.kind] = by_kind.get(item.kind, 0) + 1
+        by_language[item.language] = by_language.get(item.language, 0) + 1
+    kind_lines = ", ".join(f"{name}={count}" for name, count in sorted(by_kind.items())) or "none"
+    language_lines = ", ".join(f"{name}={count}" for name, count in sorted(by_language.items())) or "none"
+    key_files = [item.path for item in repo_map.files if item.kind in {"config", "test"}][:12]
+    file_lines = "\n".join(f"- {path}" for path in key_files) or "- none detected"
+    return "\n".join(
+        [
+            f"- by kind: {kind_lines}",
+            f"- by language: {language_lines}",
+            "- key files:",
+            file_lines,
+        ]
+    )
+
+
+def _symbol_lines(index: SymbolIndex, limit: int = 20) -> str:
+    if not index.symbols:
+        return "- none detected"
+    lines = [
+        f"- {symbol.name} ({symbol.kind}, {symbol.language}) at {symbol.path}:{symbol.line}"
+        for symbol in index.symbols[:limit]
+    ]
+    if len(index.symbols) > limit:
+        lines.append(f"- ... {len(index.symbols) - limit} more")
+    return "\n".join(lines)

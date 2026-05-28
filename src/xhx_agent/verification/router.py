@@ -4,6 +4,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from xhx_agent.repo_intel.impact import analyze_impact
+
 
 class VerificationCommand(BaseModel):
     command: str
@@ -21,12 +23,20 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
     package_json = workspace / "package.json"
     if _is_python_project(workspace, changed_files):
         test_files = _python_test_files(changed_files)
-        base_command = "uv run pytest" if (workspace / "pyproject.toml").exists() else "python -m pytest"
+        impact = analyze_impact(workspace, changed_files or [])
+        base_command = "python -m pytest"
         if test_files:
             commands.append(
                 VerificationCommand(
                     command=f"{base_command} {' '.join(test_files)}",
                     reason="Python test file changed; run targeted pytest.",
+                )
+            )
+        elif impact.impacted_tests:
+            commands.append(
+                VerificationCommand(
+                    command=f"{base_command} {' '.join(impact.impacted_tests)}",
+                    reason="Repo intelligence mapped changed source files to direct tests.",
                 )
             )
         else:

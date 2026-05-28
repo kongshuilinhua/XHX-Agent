@@ -171,6 +171,26 @@ v0.1 只能拆成三个固定子阶段：
 
 ## v0.6 Repo Intelligence Graph
 
+当前状态：部分实现。
+
+已完成：
+
+- 基础 `RepoMap`：文件路径、语言、类型、大小、验证提示。
+- 基础 `SymbolIndex`：Python AST 符号提取，JavaScript / TypeScript 轻量符号提取。
+- `symbol search`：exact、prefix、contains 排序。
+- `context builder`：围绕符号生成带行号代码片段。
+- `impact summary`：基础 Python 源文件到直接测试文件映射。
+- `XHX.md` 输出 Repo Map 和 Symbols 摘要。
+- Verification Router 使用 impact summary 选择 targeted pytest。
+
+未完成：
+
+- Tree-sitter。
+- SQLite 索引。
+- 完整调用图 / 引用图。
+- 跨语言影响面分析。
+- Context Pack 主动按任务 query 注入 symbol context。
+
 功能任务：
 
 - repo map。

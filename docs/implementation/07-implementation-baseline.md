@@ -145,7 +145,7 @@ v0.1-A 真实模型接入
 
 验收标准：
 
-- Python fixture 修改后运行 `uv run pytest` 或 `python -m pytest`。
+- Python fixture 修改后默认运行 `python -m pytest`，必要时才由用户指定 `uv run pytest`。
 - Node fixture 修改后运行 `npm test`、`npm run typecheck` 或 `npm run build`。
 - 用户不传 `--yes` 时 confirm 级命令不自动执行。
 - 只读任务不触发验证。
@@ -309,7 +309,7 @@ v0.5：TUI / Command Console。
 - 权限确认 UI。
 - `/` 命令系统。
 
-v0.5 当前状态：基本完成，待最终验收确认。
+v0.5 当前状态：基本完成。
 
 v0.5 已完成：
 
@@ -366,7 +366,7 @@ v0.5 保留边界 / 后续增强：
 v0.6 进入条件：
 
 - v0.5 验收清单通过。
-- README 当前实现状态已同步为 v0.5 基本完成，待最终验收。
+- README 当前实现状态已同步为 v0.5 基本完成。
 - 没有新增未记录的小版本名。
 - 若任一 v0.5 验收项失败，不得进入 v0.6，必须继续修 v0.5。
 
@@ -377,6 +377,26 @@ v0.6：Repo Intelligence Graph。
 - symbol search。
 - context builder。
 - impact analysis。
+
+v0.6 当前状态：部分实现。
+
+v0.6 已完成：
+
+- `repo_intel.repo_map` 可以生成基础 RepoMap，记录文件路径、语言、类型、大小和验证提示。
+- `repo_intel.symbols` 可以提取 Python 函数 / 类，以及 JavaScript / TypeScript 的基础函数、箭头函数和类符号。
+- `search_symbols` 支持 exact、prefix、contains 顺序的轻量 symbol search。
+- `repo_intel.context_builder` 可以围绕符号生成带行号的代码片段。
+- `repo_intel.impact` 可以把 Python 源文件变更映射到直接测试文件，例如 `src/calc.py` -> `tests/test_calc.py`。
+- Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
+- `XHX.md` 生成时会包含 Repo Map 和 Symbols 摘要，供 Context Pack 后续读取。
+
+v0.6 未完成 / 后续增强：
+
+- 尚未接入 Tree-sitter，当前 Python 使用标准库 AST，JS/TS 使用轻量正则。
+- 尚未实现 SQLite 持久化索引。
+- 尚未实现完整跨语言引用关系和调用图。
+- impact analysis 目前只覆盖基础 Python source -> direct test 映射。
+- Context Pack 尚未按用户查询主动选择 symbol context，只是通过 `XHX.md` 吃到摘要。
 
 v0.7：Adaptive Planner + DAG。
 

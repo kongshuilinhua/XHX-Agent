@@ -142,6 +142,24 @@ v0.1 按三个固定子阶段推进：
 
 目标：增强仓库理解能力，但不强行一次性实现完整 IDE 栈。
 
+当前实现：
+
+- 基础 repo map。
+- Python AST 符号提取。
+- JavaScript / TypeScript 轻量符号提取。
+- symbol search。
+- symbol context builder。
+- Python source -> direct test 的基础 impact mapping。
+- `XHX.md` Repo Map / Symbols 摘要。
+- Verification Router targeted pytest 接入。
+
+仍未完成：
+
+- Tree-sitter。
+- SQLite 索引。
+- 完整调用图和引用图。
+- 大项目主动 symbol context 选择。
+
 必须实现：
 
 - repo map。
