@@ -103,19 +103,19 @@ TUI 消费这些事件：
 - `run_end`：显示最终摘要。
 - `error`：显示错误。
 
-v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。`xhx tui --fullscreen` 提供实验性 Textual 窗口，当前负责全屏布局、`ConsoleState` 快照展示、输入提交、后台 Runtime 任务执行、事件刷新、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live` 和 `/help`、`/status`、`/allow`、`/deny`、`/clear`、`/exit` 本地命令；当后台 Runtime 等待 confirm 时，用户可以直接输入 `/allow` 或 `/deny` 响应；全屏 `/live` 只提示 Rich-only 边界。
+v0.5 当前实现使用 `ConsoleState` 作为事件归约层。Rich 控制台只读取该状态渲染 `/status`、`/dashboard`、`/plan`、`/context`、`/evidence`、`/verify` 和 `/diff`，不直接读取模型或工具内部对象。OpenAI-compatible profile 在 `stream=true` 时会把 SSE 文本增量转成 `model_delta`，控制台直接打印增量并在 dashboard 中保留最近模型输出摘要。`xhx tui --fullscreen` 提供实验性 Textual 窗口，当前负责全屏布局、`ConsoleState` 快照展示、固定 details 面板、输入提交、后台 Runtime 任务执行、事件刷新、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live` 和 `/help`、`/status`、`/allow`、`/deny`、`/clear`、`/exit` 本地命令；当后台 Runtime 等待 confirm 时，用户可以直接输入 `/allow` 或 `/deny` 响应；全屏 `/live` 只提示 Rich-only 边界。
 
 当前边界：
 
 - `model_delta` 只表示模型原始文本增量，不代表工具已经执行。
 - 模型输出仍必须解析成 JSON plan 后才进入工具执行。
-- Rich 控制台会直接追加增量文本；Textual 全屏路径已支持普通任务后台执行、Runtime 事件刷新、pending confirm 的 `/allow` / `/deny` 交互响应、`/model`、`/plan`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/context`、`/evidence`、`/diff` 和最小运行中 steer。最小 steer 的行为是：运行中输入普通文本时先记录为 pending steer，请求 Runtime 在下一安全边界取消当前 run，当前 run 结束后再把该文本作为 follow-up 执行。
+- Rich 控制台会直接追加增量文本；Textual 全屏路径已支持普通任务后台执行、Runtime 事件刷新、pending confirm 的 `/allow` / `/deny` 交互响应、固定 details 面板、`/model`、`/plan`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/context`、`/evidence`、`/diff` 和最小运行中 steer。最小 steer 的行为是：运行中输入普通文本时先记录为 pending steer，请求 Runtime 在下一安全边界取消当前 run，当前 run 结束后再把该文本作为 follow-up 执行。
 
 `tui.page` 负责把 `ConsoleState` 渲染成 Rich 终端页面，包含状态栏、conversation、runtime state、context、changed files、events 和命令提示。它不处理输入、不调用 Runtime，也不读写 Evidence Runtime。
 
 `tui.live` 负责 Rich Live 生命周期。它只接收 `ConsoleState` 和显示选项，调用 `tui.page` 生成 renderable，并在 Runtime event 到来时刷新固定区域。它不读取模型、工具、Evidence Runtime 或 session 文件。
 
-`tui.textual_app` 负责实验性全屏 shell。它接收 `ConsoleState`，生成 header、conversation、runtime、changed files 和 command hints，处理本地命令，并通过 Runtime 公开 API 执行普通任务、dry-run 计划预览、手动验证、手动 repair 和只读 diff。普通任务、手动验证和手动 repair 在 Textual worker 线程中执行，Runtime event 通过 UI 线程归约到 `ConsoleState`，避免输入框被同步 Runtime 阻塞。它不直接调用模型、工具或 Evidence Runtime。权限确认通过 `/allow` 或 `/deny` 响应当前 pending confirm；如果当前没有 pending confirm，则这两个命令会设置下一次 confirm 决策。无全屏 UI 可交互等待时默认拒绝。`/cancel` 只设置取消标记，Runtime 在下一处安全边界检查。
+`tui.textual_app` 负责实验性全屏 shell。它接收 `ConsoleState`，生成 header、conversation、runtime、changed files、details 和 command hints，处理本地命令，并通过 Runtime 公开 API 执行普通任务、dry-run 计划预览、手动验证、手动 repair 和只读 diff。普通任务、手动验证和手动 repair 在 Textual worker 线程中执行，Runtime event 通过 UI 线程归约到 `ConsoleState`，避免输入框被同步 Runtime 阻塞。`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/dashboard`、`/model` 和 `/skills` 会更新固定 details 面板，conversation 只保留历史摘要。它不直接调用模型、工具或 Evidence Runtime。权限确认通过 `/allow` 或 `/deny` 响应当前 pending confirm；如果当前没有 pending confirm，则这两个命令会设置下一次 confirm 决策。无全屏 UI 可交互等待时默认拒绝。`/cancel` 只设置取消标记，Runtime 在下一处安全边界检查。
 
 ## 权限确认
 
