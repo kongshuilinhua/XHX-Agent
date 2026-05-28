@@ -181,6 +181,7 @@ v0.1 只能拆成三个固定子阶段：
 - `context builder`：围绕符号生成带行号代码片段。
 - `impact summary`：基础 Python 源文件到直接测试文件映射。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
+- Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
 - Verification Router 使用 impact summary 选择 targeted pytest。
 
 未完成：
@@ -189,7 +190,7 @@ v0.1 只能拆成三个固定子阶段：
 - SQLite 索引。
 - 完整调用图 / 引用图。
 - 跨语言影响面分析。
-- Context Pack 主动按任务 query 注入 symbol context。
+- 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索。
 
 功能任务：
 

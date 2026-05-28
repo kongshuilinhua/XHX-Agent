@@ -389,6 +389,7 @@ v0.6 已完成：
 - `repo_intel.impact` 可以把 Python 源文件变更映射到直接测试文件，例如 `src/calc.py` -> `tests/test_calc.py`。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
 - `XHX.md` 生成时会包含 Repo Map 和 Symbols 摘要，供 Context Pack 后续读取。
+- Context Pack 已开始按任务文本进行 symbol search，并把少量带行号的 symbol context 放入预算化上下文。
 
 v0.6 未完成 / 后续增强：
 
@@ -396,7 +397,7 @@ v0.6 未完成 / 后续增强：
 - 尚未实现 SQLite 持久化索引。
 - 尚未实现完整跨语言引用关系和调用图。
 - impact analysis 目前只覆盖基础 Python source -> direct test 映射。
-- Context Pack 尚未按用户查询主动选择 symbol context，只是通过 `XHX.md` 吃到摘要。
+- Context Pack 的 symbol context 选择仍是轻量关键词匹配，尚未使用调用图、引用图或语义检索。
 
 v0.7：Adaptive Planner + DAG。
 

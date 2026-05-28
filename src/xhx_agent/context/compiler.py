@@ -6,6 +6,8 @@ from typing import Any
 from xhx_agent.context.pack import ContextDebugRecord, ContextDebugReport, ContextItem, ContextPack
 from xhx_agent.evidence.store import EvidenceEntry
 from xhx_agent.repo_intel.scanner import ProjectScan
+from xhx_agent.repo_intel.context_builder import build_context_for_symbols
+from xhx_agent.repo_intel.symbols import Symbol, build_symbol_index, search_symbols
 
 
 DEFAULT_CONTEXT_BUDGET_TOKENS = 6_000
@@ -14,6 +16,24 @@ MAX_CHANGED_FILES = 8
 MAX_TOOL_SUMMARIES = 12
 MAX_PROJECT_MAP_CHARS = 4_000
 MAX_CHANGED_FILE_CHARS = 4_000
+MAX_SYMBOL_CONTEXTS = 5
+MAX_SYMBOL_CONTEXT_CHARS = 2_500
+MAX_SYMBOL_QUERY_TERMS = 6
+SYMBOL_QUERY_STOPWORDS = {
+    "and",
+    "bug",
+    "code",
+    "error",
+    "fail",
+    "fix",
+    "for",
+    "from",
+    "issue",
+    "test",
+    "the",
+    "this",
+    "with",
+}
 
 
 def compile_context_pack(
@@ -41,6 +61,9 @@ def compile_context_pack(
                 reason="Project rules and repository map are stable context.",
             )
         )
+
+    for item in _symbol_context_items(workspace, task, recent_error):
+        candidates.append(item)
 
     changed_selection = _select_changed_files(changed_files or [])
     for file_path in changed_selection.selected:
@@ -159,6 +182,67 @@ def _project_summary(scan: ProjectScan) -> dict[str, Any]:
     }
 
 
+def _symbol_context_items(workspace: Path, task: str, recent_error: str | None) -> list[ContextItem]:
+    queries = _symbol_query_terms(" ".join(part for part in [task, recent_error or ""] if part))
+    if not queries:
+        return []
+    try:
+        index = build_symbol_index(workspace)
+    except OSError:
+        return []
+    selected: list[Symbol] = []
+    seen: set[tuple[str, str, int]] = set()
+    for query in queries:
+        for symbol in search_symbols(index, query, limit=MAX_SYMBOL_CONTEXTS):
+            key = (symbol.path, symbol.name, symbol.line)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(symbol)
+            if len(selected) >= MAX_SYMBOL_CONTEXTS:
+                break
+        if len(selected) >= MAX_SYMBOL_CONTEXTS:
+            break
+    contexts = build_context_for_symbols(workspace, selected)
+    return [
+        ContextItem(
+            kind="symbol_context",
+            source=f"{context.symbol.path}:{context.symbol.line}:{context.symbol.name}",
+            content=_limit_text(context.excerpt, MAX_SYMBOL_CONTEXT_CHARS),
+            priority=88,
+            reason="Selected by Repo Intelligence symbol search from the current task.",
+        )
+        for context in contexts
+    ]
+
+
+def _symbol_query_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    for raw in _identifier_candidates(text):
+        lowered = raw.lower()
+        if lowered in SYMBOL_QUERY_STOPWORDS or len(raw) < 3:
+            continue
+        if lowered not in terms:
+            terms.append(lowered)
+        if len(terms) >= MAX_SYMBOL_QUERY_TERMS:
+            break
+    return terms
+
+
+def _identifier_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    current = []
+    for char in text:
+        if char.isascii() and (char.isalnum() or char == "_"):
+            current.append(char)
+        elif current:
+            candidates.append("".join(current))
+            current.clear()
+    if current:
+        candidates.append("".join(current))
+    return candidates
+
+
 def _infer_mode(changed_files: list[str] | None, recent_error: str | None) -> str:
     if recent_error:
         return "repair-loop"
@@ -219,6 +303,10 @@ def _debug_record(item: ContextItem, *, selected: bool, reason: str) -> ContextD
 
 def _read_text_limited(path: Path, max_chars: int) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
+    return _limit_text(text, max_chars)
+
+
+def _limit_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n...<truncated>"
