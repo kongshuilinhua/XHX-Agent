@@ -21,6 +21,9 @@ class ImportGraph(BaseModel):
     edges: list[ImportEdge] = Field(default_factory=list)
 
 
+DEFAULT_IMPACT_DEPTH = 4
+
+
 def build_import_graph(workspace: Path, repo_map: RepoMap | None = None) -> ImportGraph:
     root = workspace.resolve()
     repo_map = repo_map or build_repo_map(root)
@@ -35,14 +38,35 @@ def build_import_graph(workspace: Path, repo_map: RepoMap | None = None) -> Impo
     return ImportGraph(root=str(root), edges=sorted(edges, key=lambda edge: (edge.importer, edge.target, edge.kind)))
 
 
-def impacted_tests_from_imports(graph: ImportGraph, changed_files: list[str], repo_map: RepoMap) -> list[str]:
+def impacted_tests_from_imports(
+    graph: ImportGraph,
+    changed_files: list[str],
+    repo_map: RepoMap,
+    *,
+    max_depth: int = DEFAULT_IMPACT_DEPTH,
+) -> list[str]:
     changed = {path.replace("\\", "/") for path in changed_files}
     test_files = {item.path for item in repo_map.files if item.kind == "test"}
-    return sorted(
-        edge.importer
-        for edge in graph.edges
-        if edge.target in changed and edge.importer in test_files
-    )
+    reverse_imports: dict[str, set[str]] = {}
+    for edge in graph.edges:
+        reverse_imports.setdefault(edge.target, set()).add(edge.importer)
+    impacted_tests: set[str] = set()
+    visited = set(changed)
+    frontier = set(changed)
+    depth = 0
+    while frontier and depth < max_depth:
+        next_frontier: set[str] = set()
+        for target in frontier:
+            for importer in reverse_imports.get(target, set()):
+                if importer in visited:
+                    continue
+                visited.add(importer)
+                if importer in test_files:
+                    impacted_tests.add(importer)
+                next_frontier.add(importer)
+        frontier = next_frontier
+        depth += 1
+    return sorted(impacted_tests)
 
 
 def _python_import_edges(root: Path, path: Path, known_files: set[str]) -> list[ImportEdge]:

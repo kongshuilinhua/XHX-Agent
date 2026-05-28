@@ -36,7 +36,7 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
             commands.append(
                 VerificationCommand(
                     command=f"{base_command} {' '.join(impact.impacted_tests)}",
-                    reason="Repo intelligence mapped changed source files to direct tests.",
+                    reason="Repo intelligence mapped changed source files to dependent tests.",
                 )
             )
         else:
@@ -45,7 +45,7 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
         scripts = package_json.read_text(encoding="utf-8", errors="ignore")
         if '"test"' in scripts:
             reason = (
-                "Repo intelligence mapped changed source files to direct JS/TS tests; package.json defines test script."
+                "Repo intelligence mapped changed source files to dependent JS/TS tests; package.json defines test script."
                 if _has_js_ts_impacted_tests(impact.impacted_tests)
                 else "package.json defines test script."
             )

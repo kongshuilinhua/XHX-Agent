@@ -33,7 +33,7 @@ def test_python_source_change_uses_repo_intelligence_direct_test_mapping(tmp_pat
     plan = infer_verification(tmp_path, changed_files=["src/calc.py"])
 
     assert [command.command for command in plan.commands] == ["python -m pytest tests/test_calc.py"]
-    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to direct tests."
+    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to dependent tests."
 
 
 def test_python_source_change_uses_persisted_import_graph_for_test_mapping(tmp_path: Path, monkeypatch) -> None:
@@ -53,6 +53,19 @@ def test_python_source_change_uses_persisted_import_graph_for_test_mapping(tmp_p
     assert [command.command for command in plan.commands] == ["python -m pytest tests/test_public_api.py"]
 
 
+def test_python_source_change_uses_recursive_import_graph_for_targeted_pytest(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text("from calc import add\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_public_api.py").write_text("from public_api import add\n", encoding="utf-8")
+
+    plan = infer_verification(tmp_path, changed_files=["src/calc.py"])
+
+    assert [command.command for command in plan.commands] == ["python -m pytest tests/test_public_api.py"]
+    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to dependent tests."
+
+
 def test_node_verification_inference(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
     plan = infer_verification(tmp_path)
@@ -69,7 +82,7 @@ def test_node_source_change_uses_repo_intelligence_reason(tmp_path: Path) -> Non
     plan = infer_verification(tmp_path, changed_files=["src/index.js"])
 
     assert [command.command for command in plan.commands] == ["npm test"]
-    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to direct JS/TS tests; package.json defines test script."
+    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to dependent JS/TS tests; package.json defines test script."
 
 
 def test_node_build_fallback_without_test_script(tmp_path: Path) -> None:
