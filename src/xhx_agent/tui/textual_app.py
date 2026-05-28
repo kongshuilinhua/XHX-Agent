@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -18,6 +18,18 @@ from xhx_agent.tui.state import ConsoleState
 
 
 T = TypeVar("T")
+
+
+@dataclass
+class PendingConfirmation:
+    command: str
+    decision: PolicyDecision
+    event: threading.Event = field(default_factory=threading.Event)
+    response: bool | None = None
+
+    @property
+    def summary(self) -> str:
+        return f"{self.command} ({self.decision.risk.value})"
 
 
 @dataclass(frozen=True)
@@ -39,6 +51,7 @@ class TextualSnapshot:
         assume_yes: bool,
         pending_steer: str | None = None,
         next_confirm_response: bool | None = None,
+        pending_confirmation: str | None = None,
     ) -> TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
@@ -71,7 +84,9 @@ class TextualSnapshot:
             (item for item in reversed(state.policy_decisions) if item.requires_user or item.decision == "confirm"),
             None,
         )
-        if pending_policy is not None:
+        if pending_confirmation:
+            permission_state += f"\nwaiting: {pending_confirmation}"
+        elif pending_policy is not None:
             permission_state += f"\nwaiting: {pending_policy.source or pending_policy.scope} ({pending_policy.risk})"
         active_tool = next((item for item in reversed(state.tools) if item.status == "running"), None)
         active_verification = next((item for item in reversed(state.verifications) if item.status == "running"), None)
@@ -145,6 +160,7 @@ class TextualCommandConsoleApp(App[None]):
         assume_yes: bool = False,
         state: ConsoleState | None = None,
         runtime: RuntimeApp | None = None,
+        permission_timeout_seconds: float = 300.0,
     ) -> None:
         super().__init__()
         self.workspace = (workspace or Path.cwd()).resolve()
@@ -161,6 +177,8 @@ class TextualCommandConsoleApp(App[None]):
         self.exit_requested = False
         self.cancel_requested = False
         self.pending_steer: str | None = None
+        self.pending_confirmation: PendingConfirmation | None = None
+        self.permission_timeout_seconds = permission_timeout_seconds
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
 
@@ -190,6 +208,7 @@ class TextualCommandConsoleApp(App[None]):
             assume_yes=self.assume_yes,
             pending_steer=self.pending_steer,
             next_confirm_response=self.next_confirm_response,
+            pending_confirmation=self.pending_confirmation.summary if self.pending_confirmation else None,
         )
         self.title = snapshot.header
         if not self.widgets_ready:
@@ -216,7 +235,7 @@ class TextualCommandConsoleApp(App[None]):
         if not stripped:
             return True
         if stripped.startswith("/"):
-            return self.handle_slash_command(stripped)
+            return self.handle_slash_command(stripped, use_worker=use_worker)
         if self.is_running():
             self.queue_steer(stripped)
             return True
@@ -302,13 +321,24 @@ class TextualCommandConsoleApp(App[None]):
         self.call_ui(self.apply_runtime_event, event)
 
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
-        allowed = bool(self.next_confirm_response)
-        self.next_confirm_response = None
-        verb = "allowed" if allowed else "declined"
-        self.append_message(f"system> permission {verb}: {command} ({decision.risk.value})")
-        return allowed
+        if self.next_confirm_response is not None:
+            allowed = bool(self.next_confirm_response)
+            self.next_confirm_response = None
+            self.append_permission_result(command, decision, allowed)
+            return allowed
+        if self.can_wait_for_interactive_confirmation():
+            confirmation = PendingConfirmation(command=command, decision=decision)
+            self.call_ui(self.open_pending_confirmation, confirmation)
+            if not confirmation.event.wait(self.permission_timeout_seconds):
+                self.call_ui(self.timeout_pending_confirmation, confirmation)
+            allowed = bool(confirmation.response)
+            self.call_ui(self.close_pending_confirmation, confirmation)
+            self.append_permission_result(command, decision, allowed)
+            return allowed
+        self.append_permission_result(command, decision, False)
+        return False
 
-    def handle_slash_command(self, command_line: str) -> bool:
+    def handle_slash_command(self, command_line: str, *, use_worker: bool = False) -> bool:
         command, _, argument = command_line.partition(" ")
         argument = argument.strip()
         if command == "/exit":
@@ -318,12 +348,14 @@ class TextualCommandConsoleApp(App[None]):
             self.action_clear()
             return True
         if command == "/allow":
-            self.next_confirm_response = True
-            self.append_message("system> next permission prompt will be allowed once")
+            if not self.resolve_pending_confirmation(True):
+                self.next_confirm_response = True
+                self.append_message("system> next permission prompt will be allowed once")
             return True
         if command == "/deny":
-            self.next_confirm_response = False
-            self.append_message("system> next permission prompt will be declined once")
+            if not self.resolve_pending_confirmation(False):
+                self.next_confirm_response = False
+                self.append_message("system> next permission prompt will be declined once")
             return True
         if command == "/help":
             self.append_message(
@@ -349,11 +381,17 @@ class TextualCommandConsoleApp(App[None]):
             self.print_diff_summary()
             return True
         if command == "/verify":
-            self.run_manual_verification()
+            if use_worker and self.widgets_ready:
+                self.start_manual_verification_worker()
+            else:
+                self.run_manual_verification()
             return True
         if command == "/repair":
             max_attempts = 2 if argument.lower() in {"loop", "auto"} else 1
-            self.run_manual_repair(max_attempts=max_attempts)
+            if use_worker and self.widgets_ready:
+                self.start_manual_repair_worker(max_attempts=max_attempts)
+            else:
+                self.run_manual_repair(max_attempts=max_attempts)
             return True
         if command == "/skills":
             self.print_skills()
@@ -393,6 +431,17 @@ class TextualCommandConsoleApp(App[None]):
         self.last_manual_verification = result
         self.append_message(f"system> manual verification: {result.status}")
 
+    def start_manual_verification_worker(self) -> None:
+        self.cancel_requested = False
+        self.state.status = "verifying"
+        self.append_message("system> manual verification started")
+        self.run_worker(
+            self.run_manual_verification,
+            name="manual-verification",
+            group="runtime",
+            thread=True,
+        )
+
     def run_manual_repair(self, max_attempts: int = 1) -> None:
         failed_results = []
         changed_files: list[str] = []
@@ -424,6 +473,17 @@ class TextualCommandConsoleApp(App[None]):
         self.state.summary_path = result.summary_path
         self.state.repair_attempts = result.repair_attempts
         self.append_message(f"system> manual repair: {result.status}, verification: {result.verification}")
+
+    def start_manual_repair_worker(self, max_attempts: int = 1) -> None:
+        self.cancel_requested = False
+        self.state.status = "repairing"
+        self.append_message("system> manual repair started")
+        self.run_worker(
+            lambda: self.run_manual_repair(max_attempts=max_attempts),
+            name="manual-repair",
+            group="runtime",
+            thread=True,
+        )
 
     def print_plan_preview(self, task: str | None = None) -> None:
         if not task:
@@ -538,6 +598,41 @@ class TextualCommandConsoleApp(App[None]):
     def apply_runtime_event(self, event: RuntimeEvent) -> None:
         self.state.reduce(event)
         self.refresh_snapshot()
+
+    def can_wait_for_interactive_confirmation(self) -> bool:
+        return self.widgets_ready and self.ui_thread_id is not None and threading.get_ident() != self.ui_thread_id
+
+    def open_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
+        self.pending_confirmation = confirmation
+        self._append_message(
+            f"system> permission required: {confirmation.summary}; use /allow or /deny"
+        )
+
+    def resolve_pending_confirmation(self, response: bool) -> bool:
+        confirmation = self.pending_confirmation
+        if confirmation is None or confirmation.event.is_set():
+            return False
+        confirmation.response = response
+        confirmation.event.set()
+        decision = "allowed" if response else "declined"
+        self.append_message(f"system> pending permission {decision}")
+        return True
+
+    def timeout_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
+        if self.pending_confirmation is not confirmation or confirmation.event.is_set():
+            return
+        confirmation.response = False
+        confirmation.event.set()
+        self._append_message(f"system> permission timed out and was declined: {confirmation.command}")
+
+    def close_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
+        if self.pending_confirmation is confirmation:
+            self.pending_confirmation = None
+            self.refresh_snapshot()
+
+    def append_permission_result(self, command: str, decision: PolicyDecision, allowed: bool) -> None:
+        verb = "allowed" if allowed else "declined"
+        self.append_message(f"system> permission {verb}: {command} ({decision.risk.value})")
 
     def apply_run_result(self, result: RunResult) -> None:
         self.call_ui(self._apply_run_result, result)
