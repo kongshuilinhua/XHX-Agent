@@ -154,6 +154,7 @@ v0.1 按三个固定子阶段推进：
 - 轻量 import graph 辅助 impact mapping，并支持有限深度的反向递归依赖测试映射。
 - `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index 和 import graph。
 - Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，缺失、损坏或文件指纹过期时再即时构建。
+- Context Pack 可以从 changed files 和 recent error 中的文件路径出发，选择 import graph 邻接文件里的少量符号上下文。
 - 成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，再推断验证命令。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。
@@ -164,7 +165,7 @@ v0.1 按三个固定子阶段推进：
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 完整调用图和引用图。
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
-- test runner 参数推断、跨语言影响面分析和更强的大项目 symbol context 选择。
+- test runner 参数推断、跨语言影响面分析和更强的大项目 context 选择；当前 import context 只是直接邻接符号补充，不是调用图、引用图或语义检索。
 
 必须实现：
 
