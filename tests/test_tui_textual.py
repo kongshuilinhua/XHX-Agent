@@ -6,6 +6,7 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
+import asyncio
 import threading
 
 
@@ -77,6 +78,7 @@ def test_textual_snapshot_shows_pending_steer_cancel_and_permission_state() -> N
         assume_yes=False,
         pending_steer="change direction",
         next_confirm_response=True,
+        pending_confirmation="python -m pytest (confirm)",
     )
 
     assert "pending steer: change direction" in snapshot.runtime_state
@@ -219,6 +221,34 @@ class BlockingRuntime(FakeRuntime):
         return super().run_task(task, **kwargs)
 
 
+class BlockingVerifyRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.confirm_seen = threading.Event()
+        self.verify_finished = threading.Event()
+
+    def verify_changed_files(self, changed_files, **kwargs):
+        self.verify_calls.append((changed_files, kwargs))
+        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Manual verification started.", payload={"run_id": "verify-1", "task": "manual verification", "profile": "manual"}))
+        kwargs["event_callback"](RuntimeEvent(type="verification_start", message="Verification started.", payload={"command": "python -m pytest"}))
+        self.confirm_seen.set()
+        allowed = kwargs["confirm_callback"](
+            "python -m pytest",
+            PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True),
+        )
+        status = "success" if allowed else "confirm"
+        kwargs["event_callback"](RuntimeEvent(type="verification_result", message="Verification finished.", payload={"command": "python -m pytest", "status": status, "exit_code": 0 if allowed else None}))
+        self.verify_finished.set()
+        return ManualVerificationResult(
+            run_id="verify-1",
+            status="passed" if allowed else "requires_confirmation",
+            changed_files=list(changed_files),
+            commands=["python -m pytest"],
+            summary_path=".xhx/logbook/verify-1.md",
+            risk_summary=[] if allowed else ["Verification requires confirmation."],
+        )
+
+
 def test_textual_command_console_runs_task_through_runtime(tmp_path) -> None:
     runtime = FakeRuntime()
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
@@ -322,6 +352,34 @@ def test_textual_command_console_verify_uses_current_changed_files(tmp_path) -> 
     assert app.next_confirm_response is None
 
 
+def test_textual_submitted_verify_can_wait_for_permission(tmp_path) -> None:
+    runtime = BlockingVerifyRuntime()
+    state = ConsoleState()
+    state.changed_files = ["src/calc.py"]
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime, state=state, permission_timeout_seconds=2)
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("/", "v", "e", "r", "i", "f", "y", "enter")
+            assert runtime.confirm_seen.wait(timeout=2)
+            await pilot.pause()
+            assert app.pending_confirmation is not None
+            assert any(worker.name == "manual-verification" for worker in app.workers)
+            assert app.handle_text_input("/allow")
+            for _ in range(50):
+                if runtime.verify_finished.is_set():
+                    break
+                await asyncio.sleep(0.02)
+            assert runtime.verify_finished.is_set()
+            assert app.last_manual_verification is not None
+            assert app.last_manual_verification.status == "passed"
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
 def test_textual_permission_confirmation_can_decline_once(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
     app.next_confirm_response = False
@@ -348,6 +406,80 @@ def test_textual_permission_confirmation_can_allow_once(tmp_path) -> None:
     assert allowed is True
     assert app.next_confirm_response is None
     assert "allowed" in app.messages[-1]
+
+
+def test_textual_permission_confirmation_defaults_to_decline_without_fullscreen(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    allowed = app.confirm_terminal_command(
+        "python -m pytest",
+        PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True),
+    )
+
+    assert allowed is False
+    assert "declined" in app.messages[-1]
+
+
+def test_textual_fullscreen_permission_can_wait_for_allow(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", permission_timeout_seconds=2)
+    decision = PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True)
+    result: dict[str, bool] = {}
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            worker = threading.Thread(
+                target=lambda: result.update(
+                    allowed=app.confirm_terminal_command("python -m pytest", decision)
+                )
+            )
+            worker.start()
+            await pilot.pause()
+            assert app.pending_confirmation is not None
+            assert "permission required" in app.messages[-1]
+            assert "waiting: python -m pytest (confirm)" in str(pilot.app.query_one("#runtime").content)
+            assert app.handle_text_input("/allow")
+            for _ in range(50):
+                if result:
+                    break
+                await asyncio.sleep(0.02)
+            assert result == {"allowed": True}
+            worker.join(timeout=2)
+            assert app.pending_confirmation is None
+            assert "permission allowed" in app.messages[-1]
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
+def test_textual_fullscreen_permission_can_wait_for_deny(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", permission_timeout_seconds=2)
+    decision = PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True)
+    result: dict[str, bool] = {}
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            worker = threading.Thread(
+                target=lambda: result.update(
+                    allowed=app.confirm_terminal_command("python -m pytest", decision)
+                )
+            )
+            worker.start()
+            await pilot.pause()
+            assert app.pending_confirmation is not None
+            assert app.handle_text_input("/deny")
+            for _ in range(50):
+                if result:
+                    break
+                await asyncio.sleep(0.02)
+            assert result == {"allowed": False}
+            worker.join(timeout=2)
+            assert app.pending_confirmation is None
+            assert "permission declined" in app.messages[-1]
+
+    import asyncio
+
+    asyncio.run(run_app())
 
 
 def test_textual_context_command_summarizes_current_state(tmp_path) -> None:

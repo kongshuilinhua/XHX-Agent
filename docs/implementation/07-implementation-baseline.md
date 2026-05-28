@@ -316,7 +316,7 @@ v0.5 已完成：
 - 新增 `xhx tui` 入口。
 - `xhx chat` 复用同一个 Command Console。
 - 基于 Rich 的终端命令控制台可运行任务并保存最近一次结果。
-- 新增 `xhx tui --fullscreen` 实验性 Textual 窗口，可以渲染 `ConsoleState` 的 header、conversation、runtime、changed files 和 command hints，支持后台 Runtime 任务执行、事件刷新、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、一次性 `/allow` / `/deny` 权限确认，并支持 `/help`、`/status`、`/clear`、`/exit` 本地命令。
+- 新增 `xhx tui --fullscreen` 实验性 Textual 窗口，可以渲染 `ConsoleState` 的 header、conversation、runtime、changed files 和 command hints，支持后台 Runtime 任务执行、事件刷新、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、pending confirm 的 `/allow` / `/deny` 交互响应，并支持 `/help`、`/status`、`/clear`、`/exit` 本地命令。
 - 支持 `/help`、`/model`、`/status`、`/plan`、`/evidence`、`/context`、`/verify`、`/repair`、`/diff`、`/skills`、`/mode`、`/dashboard`、`/live`、`/cancel`、`/clear`、`/exit`。
 - 权限确认在控制台中以表格展示 command、risk 和 reason。
 - `/plan` 可 dry-run 预览计划，不执行工具。
@@ -332,15 +332,16 @@ v0.5 已完成：
 - `/repair` 可以在最近验证失败后手动执行一轮修复，`/repair loop` 可以执行最多两轮手动修复；两者都复用模型计划、`apply_patch`、SafeExecutionKernel 和 Verification Router。
 - `/diff` 通过 Runtime 的只读 API 展示 changed files 和 `git diff -- <changed-files>` 摘要，TUI 不直接调用 git 或工具，长 diff 会截断。
 - 普通输入支持最小 follow-up steering：已有上一轮结果时，会把上一轮 run id、状态、验证结果、changed files 和报告路径包装进新任务上下文。
-- Textual 全屏路径的普通任务已经改为后台 worker 执行，Runtime event 通过 UI 线程归约到 `ConsoleState`，输入框不会被同步 Runtime 阻塞。
+- Textual 全屏路径的普通任务、手动 `/verify` 和手动 `/repair` 已经改为后台 worker 执行，Runtime event 通过 UI 线程归约到 `ConsoleState`，输入框不会被同步 Runtime 阻塞。
+- Textual 全屏路径支持 pending confirm：后台 Runtime 等待确认时，用户可输入 `/allow` 或 `/deny` 放行或拒绝当前命令；没有 pending confirm 时，`/allow` / `/deny` 仍可作为下一次 confirm 的一次性预设。
 - Textual 全屏路径支持最小运行中 steer：运行中输入普通文本时，先记录为 pending steer 并请求当前 run 在下一安全边界取消；当前 run 结束后，再把 steer 作为 follow-up 执行。
-- Textual runtime 面板展示 pending steer、cancel、下一次 confirm 决策、最近 confirm policy、活动工具、活动验证和 repair 轮次。
+- Textual runtime 面板展示 pending steer、cancel、当前 pending confirm、下一次 confirm 决策、最近 confirm policy、活动工具、活动验证和 repair 轮次。
 - `/context`、`/evidence`、`/diff` 优先展示当前会话摘要，不展开完整 Raw Trace。
 - `/cancel` 和 `Ctrl+C` 支持请求取消，Runtime 在模型规划、工具执行和验证命令前的安全边界停止，并写入取消事件；当前不是异步强杀正在运行的外部命令。
 
 v0.5 未完成 / 后续增强：
 
-- Textual 全屏路径目前仍是实验性 shell，已支持后台普通任务执行、任务间 follow-up 上下文包装、最小运行中 steer、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live` 和一次性权限确认。
+- Textual 全屏路径目前仍是实验性 shell，已支持后台普通任务执行、后台手动验证和 repair、任务间 follow-up 上下文包装、最小运行中 steer、`/model`、`/plan`、`/context`、`/evidence`、`/diff`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live` 和 pending confirm 交互响应。
 - Rich Live 动态仪表盘已具备固定区域刷新基础，但仍是 Rich 路径，不是完整 Textual 组件系统。
 - `/repair loop` 已支持最多两轮手动修复，但仍不是完整运行中 steer 的交互式 repair 工作流。
 - 运行中 steer 仍是安全边界后的排队 follow-up，不是 token 流级别的实时改写。
