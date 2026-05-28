@@ -8,7 +8,7 @@ from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.repo_intel.context_builder import build_symbol_context
 from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
-from xhx_agent.repo_intel.index import load_repo_intel_index, read_repo_intel_index, write_repo_intel_index
+from xhx_agent.repo_intel.index import diagnose_repo_intel_index, load_repo_intel_index, read_repo_intel_index, write_repo_intel_index
 from xhx_agent.repo_intel.references import build_reference_index, search_references
 
 
@@ -384,6 +384,40 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
     assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
     assert any(reference.name == "add" and reference.path == "tests/test_calc.py" for reference in index.reference_index.references)
+
+
+def test_repo_intel_diagnostics_reports_missing_index(tmp_path: Path) -> None:
+    diagnostics = diagnose_repo_intel_index(tmp_path)
+
+    assert diagnostics.status == "missing"
+    assert diagnostics.size_bytes == 0
+
+
+def test_repo_intel_diagnostics_reports_current_index(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+
+    diagnostics = diagnose_repo_intel_index(tmp_path)
+
+    assert diagnostics.status == "current"
+    assert diagnostics.file_count >= 1
+    assert diagnostics.symbol_count == 1
+    assert diagnostics.size_bytes > 0
+    assert diagnostics.content_fingerprint == diagnostics.current_fingerprint
+
+
+def test_repo_intel_diagnostics_reports_stale_index(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "calc.py"
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    source.write_text("def add(a, b):\n    return a + b\n# changed\n", encoding="utf-8")
+
+    diagnostics = diagnose_repo_intel_index(tmp_path)
+
+    assert diagnostics.status == "stale"
+    assert "fingerprint" in diagnostics.reason
 
 
 def test_load_repo_intel_index_rebuilds_when_file_content_changes(tmp_path: Path) -> None:
