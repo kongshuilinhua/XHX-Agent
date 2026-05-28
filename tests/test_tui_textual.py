@@ -49,6 +49,7 @@ def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None
     assert "verification: passed" in snapshot.runtime_state
     assert "context: 120/6000" in snapshot.runtime_state
     assert "src/calc.py" in snapshot.changed_files
+    assert "overview" in snapshot.details
     assert "/help /model /status" in snapshot.commands
 
 
@@ -95,6 +96,7 @@ def test_textual_command_console_app_can_render_initial_shell(tmp_path) -> None:
             assert app.title.startswith("xhx-agent | idle | profile: mock")
             assert "No conversation yet." in str(pilot.app.query_one("#conversation").content)
             assert "changed files:" in str(pilot.app.query_one("#changed").content)
+            assert "details:" in str(pilot.app.query_one("#details").content)
 
     import asyncio
 
@@ -496,6 +498,8 @@ def test_textual_context_command_summarizes_current_state(tmp_path) -> None:
     assert app.handle_text_input("/context")
 
     assert "context: turn=2 selected=5 omitted=1 budget=400/6000 languages=python files=9" in app.messages[-1]
+    assert app.active_detail == "context"
+    assert "budget: 400/6000" in app.detail_text
 
 
 def test_textual_evidence_command_summarizes_policy_decisions(tmp_path) -> None:
@@ -520,6 +524,8 @@ def test_textual_evidence_command_summarizes_policy_decisions(tmp_path) -> None:
 
     assert "policy evidence" in app.messages[-1]
     assert "python -m pytest" in app.messages[-1]
+    assert app.active_detail == "evidence"
+    assert "python -m pytest" in app.detail_text
 
 
 def test_textual_diff_command_uses_runtime_read_only_summary(tmp_path) -> None:
@@ -533,6 +539,8 @@ def test_textual_diff_command_uses_runtime_read_only_summary(tmp_path) -> None:
     assert runtime.diff_calls == [["src/calc.py"]]
     assert "1 changed file(s)." in app.messages[-1]
     assert "+return a + b" in app.messages[-1]
+    assert app.active_detail == "diff"
+    assert "+return a + b" in app.detail_text
 
 
 def test_textual_plan_command_previews_task_through_runtime(tmp_path) -> None:
@@ -545,6 +553,8 @@ def test_textual_plan_command_previews_task_through_runtime(tmp_path) -> None:
     assert "plan preview: success" in app.messages[-1]
     assert "Preview analyze repo" in app.messages[-1]
     assert "steps=2" in app.messages[-1]
+    assert app.active_detail == "plan"
+    assert "trace: .xhx/traces/dry-run-1.jsonl" in app.detail_text
 
 
 def test_textual_mode_command_shows_and_updates_state_mode(tmp_path) -> None:
@@ -653,6 +663,8 @@ def test_textual_dashboard_command_prints_state_summary(tmp_path) -> None:
     assert "status=running_tool" in app.messages[-1]
     assert "run=run-1" in app.messages[-1]
     assert "changed=1" in app.messages[-1]
+    assert app.active_detail == "dashboard"
+    assert "pending_confirm: none" in app.detail_text
 
 
 def test_textual_cancel_sets_state_for_running_task(tmp_path) -> None:

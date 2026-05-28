@@ -38,6 +38,7 @@ class TextualSnapshot:
     conversation: str
     runtime_state: str
     changed_files: str
+    details: str
     commands: str
 
     @classmethod
@@ -52,6 +53,8 @@ class TextualSnapshot:
         pending_steer: str | None = None,
         next_confirm_response: bool | None = None,
         pending_confirmation: str | None = None,
+        active_detail: str = "overview",
+        detail_text: str = "",
     ) -> TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
@@ -107,12 +110,14 @@ class TextualSnapshot:
             ]
         )
         changed_files = "\n".join(state.changed_files) if state.changed_files else "none"
+        details = f"{active_detail}\n\n{detail_text or 'No detail selected.'}"
         commands = " ".join(SLASH_COMMAND_HINTS)
         return cls(
             header=header,
             conversation="\n".join(conversation_lines),
             runtime_state=runtime_state,
             changed_files=changed_files,
+            details=details,
             commands=commands,
         )
 
@@ -179,6 +184,8 @@ class TextualCommandConsoleApp(App[None]):
         self.pending_steer: str | None = None
         self.pending_confirmation: PendingConfirmation | None = None
         self.permission_timeout_seconds = permission_timeout_seconds
+        self.active_detail = "overview"
+        self.detail_text = "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
 
@@ -189,6 +196,7 @@ class TextualCommandConsoleApp(App[None]):
             with Vertical(id="side"):
                 yield Static(id="runtime")
                 yield Static(id="changed")
+                yield Static(id="details")
                 yield Static(id="commands")
         yield Input(placeholder="Type a task or slash command. Fullscreen execution wiring is v0.5 in progress.", id="input")
         yield Footer()
@@ -209,6 +217,8 @@ class TextualCommandConsoleApp(App[None]):
             pending_steer=self.pending_steer,
             next_confirm_response=self.next_confirm_response,
             pending_confirmation=self.pending_confirmation.summary if self.pending_confirmation else None,
+            active_detail=self.active_detail,
+            detail_text=self.detail_text,
         )
         self.title = snapshot.header
         if not self.widgets_ready:
@@ -216,11 +226,14 @@ class TextualCommandConsoleApp(App[None]):
         self.query_one("#conversation", Static).update(snapshot.conversation)
         self.query_one("#runtime", Static).update(snapshot.runtime_state)
         self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
+        self.query_one("#details", Static).update("details:\n" + snapshot.details)
         self.query_one("#commands", Static).update(snapshot.commands)
 
     def action_clear(self) -> None:
         self.state = ConsoleState()
         self.messages.clear()
+        self.active_detail = "overview"
+        self.detail_text = "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
         self.refresh_snapshot()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -361,6 +374,22 @@ class TextualCommandConsoleApp(App[None]):
             self.append_message(
                 "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /live /allow /deny /clear /exit"
             )
+            self.set_detail(
+                "help",
+                "\n".join(
+                    [
+                        "/model [name] - list or switch profiles",
+                        "/plan [task] - show current plan or dry-run a plan",
+                        "/context - show current context pack summary",
+                        "/evidence - show recent policy evidence",
+                        "/diff - show changed files and git diff excerpt",
+                        "/verify - run verification for changed files",
+                        "/repair [loop] - repair after failed verification",
+                        "/allow or /deny - answer pending confirmation",
+                        "/cancel - request safe-boundary cancellation",
+                    ]
+                ),
+            )
             return True
         if command == "/model":
             self.print_model(argument or None)
@@ -430,6 +459,18 @@ class TextualCommandConsoleApp(App[None]):
         )
         self.last_manual_verification = result
         self.append_message(f"system> manual verification: {result.status}")
+        self.set_detail(
+            "verify",
+            "\n".join(
+                [
+                    f"status: {result.status}",
+                    f"changed_files: {', '.join(result.changed_files) or 'none'}",
+                    f"commands: {', '.join(result.commands) or 'none'}",
+                    f"summary: {result.summary_path}",
+                    f"risks: {'; '.join(result.risk_summary) if result.risk_summary else 'none'}",
+                ]
+            ),
+        )
 
     def start_manual_verification_worker(self) -> None:
         self.cancel_requested = False
@@ -473,6 +514,20 @@ class TextualCommandConsoleApp(App[None]):
         self.state.summary_path = result.summary_path
         self.state.repair_attempts = result.repair_attempts
         self.append_message(f"system> manual repair: {result.status}, verification: {result.verification}")
+        self.set_detail(
+            "repair",
+            "\n".join(
+                [
+                    f"status: {result.status}",
+                    f"verification: {result.verification}",
+                    f"attempts: {result.repair_attempts}",
+                    f"changed_files: {', '.join(result.changed_files) or 'none'}",
+                    f"commands: {', '.join(result.commands) or 'none'}",
+                    f"summary: {result.summary_path}",
+                    f"risks: {'; '.join(result.risk_summary) if result.risk_summary else 'none'}",
+                ]
+            ),
+        )
 
     def start_manual_repair_worker(self, max_attempts: int = 1) -> None:
         self.cancel_requested = False
@@ -489,13 +544,22 @@ class TextualCommandConsoleApp(App[None]):
         if not task:
             if not self.state.plan_summary:
                 self.append_message("system> plan: no active plan")
+                self.set_detail("plan", "No active plan.")
                 return
+            detail = "\n".join(
+                [
+                    f"summary: {self.state.plan_summary}",
+                    f"status: {self.state.plan_status or 'unknown'}",
+                    f"steps: {self.state.plan_step_count}",
+                ]
+            )
             self.append_message(
                 "system> "
                 f"plan: {self.state.plan_summary}; "
                 f"status={self.state.plan_status or 'unknown'}; "
                 f"steps={self.state.plan_step_count}"
             )
+            self.set_detail("plan", detail)
             return
         result = self.runtime.preview_plan(task, self.profile)
         parts = [
@@ -508,6 +572,19 @@ class TextualCommandConsoleApp(App[None]):
         if result.risk_summary:
             parts.append("risks=" + "; ".join(result.risk_summary))
         self.append_message(" | ".join(parts))
+        self.set_detail(
+            "plan",
+            "\n".join(
+                [
+                    f"status: {result.status}",
+                    f"summary: {result.summary}",
+                    f"steps: {result.step_count}",
+                    f"context: {result.context_used_tokens_estimate}/{result.context_budget_tokens}",
+                    f"trace: {result.trace_path}",
+                    f"risks: {'; '.join(result.risk_summary) if result.risk_summary else 'none'}",
+                ]
+            ),
+        )
 
     def set_mode(self, argument: str) -> None:
         if argument:
@@ -518,6 +595,7 @@ class TextualCommandConsoleApp(App[None]):
         if profile_name:
             self.profile = profile_name
             self.append_message(f"system> active profile: {self.profile}")
+            self.set_detail("model", f"active profile: {self.profile}")
             return
         profiles = load_profiles(self.workspace).profiles
         items = []
@@ -525,14 +603,17 @@ class TextualCommandConsoleApp(App[None]):
             marker = "*" if profile.name == self.profile else ""
             items.append(f"{profile.name}{marker} [{profile.provider}/{profile.model or ''}]")
         self.append_message("system> profiles: " + (" | ".join(items) if items else "none"))
+        self.set_detail("model", "\n".join(items) if items else "none")
 
     def print_skills(self) -> None:
         skill_root = self.workspace / ".xhx" / "skills"
         if not skill_root.exists():
             self.append_message("system> skills: none")
+            self.set_detail("skills", "none")
             return
         skills = [path.relative_to(self.workspace).as_posix() for path in sorted(skill_root.iterdir())]
         self.append_message("system> skills: " + (" | ".join(skills) if skills else "none"))
+        self.set_detail("skills", "\n".join(skills) if skills else "none")
 
     def print_dashboard_summary(self) -> None:
         self.append_message(
@@ -543,6 +624,21 @@ class TextualCommandConsoleApp(App[None]):
             f"changed={len(self.state.changed_files)}; "
             f"context={self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0}; "
             f"events={len(self.state.events)}"
+        )
+        self.set_detail(
+            "dashboard",
+            "\n".join(
+                [
+                    f"status: {self.state.status}",
+                    f"run: {self.state.run_id or 'none'}",
+                    f"verification: {self.state.verification}",
+                    f"changed_files: {len(self.state.changed_files)}",
+                    f"context: {self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0}",
+                    f"events: {len(self.state.events)}",
+                    f"pending_steer: {self.pending_steer or 'none'}",
+                    f"pending_confirm: {self.pending_confirmation.summary if self.pending_confirmation else 'none'}",
+                ]
+            ),
         )
 
     def request_cancel(self, reason: str = "Cancel requested by user.") -> bool:
@@ -559,6 +655,16 @@ class TextualCommandConsoleApp(App[None]):
 
     def print_context_summary(self) -> None:
         languages = ", ".join(self.state.detected_languages) or "unknown"
+        detail = "\n".join(
+            [
+                f"turn: {self.state.context_turn or 'none'}",
+                f"selected: {self.state.context_selected}",
+                f"omitted: {self.state.context_omitted}",
+                f"budget: {self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0}",
+                f"languages: {languages}",
+                f"files: {self.state.file_count}",
+            ]
+        )
         self.append_message(
             "system> "
             f"context: turn={self.state.context_turn or 'none'} "
@@ -568,21 +674,25 @@ class TextualCommandConsoleApp(App[None]):
             f"languages={languages} "
             f"files={self.state.file_count}"
         )
+        self.set_detail("context", detail)
 
     def print_evidence_summary(self) -> None:
         if not self.state.policy_decisions:
             self.append_message("system> policy evidence: none")
+            self.set_detail("evidence", "policy evidence: none")
             return
         items = [
             f"{item.source or item.scope}: {item.decision} ({item.risk}) {item.reason}"
             for item in self.state.policy_decisions[-3:]
         ]
         self.append_message("system> policy evidence: " + " | ".join(items))
+        self.set_detail("evidence", "\n".join(items))
 
     def print_diff_summary(self) -> None:
         changed_files = self.current_changed_files()
         if not changed_files:
             self.append_message("system> diff: no changed files")
+            self.set_detail("diff", "No changed files.")
             return
         result = self.runtime.diff_changed_files(changed_files)
         diff_excerpt = result.diff_text.strip()
@@ -593,7 +703,9 @@ class TextualCommandConsoleApp(App[None]):
             parts.append(diff_excerpt)
         if result.risk_summary:
             parts.append("notes: " + "; ".join(result.risk_summary))
-        self.append_message("system> diff: " + "\n".join(parts))
+        detail = "\n".join(parts)
+        self.append_message("system> diff: " + detail)
+        self.set_detail("diff", detail)
 
     def apply_runtime_event(self, event: RuntimeEvent) -> None:
         self.state.reduce(event)
@@ -646,6 +758,14 @@ class TextualCommandConsoleApp(App[None]):
 
     def _append_message(self, message: str) -> None:
         self.messages.append(message)
+        self.refresh_snapshot()
+
+    def set_detail(self, title: str, text: str) -> None:
+        self.call_ui(self._set_detail, title, text)
+
+    def _set_detail(self, title: str, text: str) -> None:
+        self.active_detail = title
+        self.detail_text = text
         self.refresh_snapshot()
 
     def call_ui(self, callback: Callable[..., T], *args: object) -> T | None:
