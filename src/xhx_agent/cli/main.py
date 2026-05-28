@@ -28,6 +28,7 @@ def init() -> None:
     console.print(f"config.json: {'created' if result.config_created else 'exists'}")
     console.print(f"profiles.json: {'created' if result.profiles_created else 'exists'}")
     console.print(f"XHX.md: {'created' if result.xhx_md_created else 'exists'}")
+    console.print(f"repo index: {result.repo_index_path}")
 
 
 @app.command("run")

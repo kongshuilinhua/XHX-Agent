@@ -152,13 +152,14 @@ v0.1 按三个固定子阶段推进：
 - Context Pack 任务关键词驱动的 symbol context 注入。
 - Python / JavaScript / TypeScript source -> direct test 的基础 impact mapping。
 - 轻量 import graph 辅助 impact mapping。
+- `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index 和 import graph。
 - `XHX.md` Repo Map / Symbols 摘要。
 - Verification Router targeted pytest 接入。
 
 仍未完成：
 
 - Tree-sitter。
-- SQLite 索引。
+- SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 完整调用图和引用图。
 - test runner 参数推断、递归 import graph 和更强的大项目 symbol context 选择。
 
