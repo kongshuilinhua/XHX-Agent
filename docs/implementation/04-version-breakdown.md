@@ -189,6 +189,7 @@ v0.1 只能拆成三个固定子阶段：
 - Context Pack 按任务文本选择少量 symbol context，并继续受 token budget 裁剪。
 - Context Pack 从 changed files 和 recent error 文件路径出发，选择 import graph 邻接文件中的有限 symbol context，作为 repair / follow-up 的轻量上下文补充。
 - Verification Router 使用 impact summary 选择 targeted pytest。
+- Verification Router 对 `vitest`、`jest` 和 `node --test` 这类常见 JS/TS runner，可把 impacted test 文件转换为 targeted `npm test -- <test-file>`；未知 runner 仍保持 `npm test`。
 
 未完成：
 
@@ -196,7 +197,7 @@ v0.1 只能拆成三个固定子阶段：
 - SQLite 索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
 - 真正增量更新索引；当前过期时会重建整个 JSON 索引。
 - 完整调用图 / 引用图。
-- test runner 参数和跨语言影响面分析。
+- 更完整的 test runner 参数和跨语言影响面分析。
 - 更强的 Context Pack 查询策略，例如调用图、引用图或语义检索；当前 import context 只做有限邻接选择。
 
 功能任务：
