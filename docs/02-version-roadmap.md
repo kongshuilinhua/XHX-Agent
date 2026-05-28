@@ -156,6 +156,7 @@ v0.1 按三个固定子阶段推进：
 - JS/TS extensionless 相对 import 会按 importer 后缀解析 `.js`、`.jsx`、`.mjs`、`.cjs`、`.ts`、`.tsx` 和 index 文件。
 - JS/TS alias import 有限支持根目录 `tsconfig.json` 的 `compilerOptions.baseUrl` 和单通配符 `paths`。
 - `.xhx/repo/index.json` 结构化仓库索引，当前包含 repo map、symbol index、import graph 和带截断元数据的 reference index。
+- `xhx repo-index` 只读诊断索引状态、大小、条目数、content fingerprint、当前 fingerprint 和 reference 截断情况。
 - Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，缺失、损坏或文件指纹过期时再即时构建。
 - Context Pack 可以从 changed files 和 recent error 中的文件路径出发，选择 import graph 邻接文件里的少量符号上下文。
 - Context Pack 可以按任务关键词选择少量 `reference_context`。

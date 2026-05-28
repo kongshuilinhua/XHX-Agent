@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 
 from xhx_agent.cli.console import CommandConsole
+from xhx_agent.repo_intel.index import diagnose_repo_intel_index
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
@@ -29,6 +30,32 @@ def init() -> None:
     console.print(f"profiles.json: {'created' if result.profiles_created else 'exists'}")
     console.print(f"XHX.md: {'created' if result.xhx_md_created else 'exists'}")
     console.print(f"repo index: {result.repo_index_path}")
+
+
+@app.command("repo-index")
+def repo_index(
+    json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON diagnostics.")] = False,
+) -> None:
+    diagnostics = diagnose_repo_intel_index(Path.cwd())
+    if json_output:
+        console.print(diagnostics.model_dump_json(indent=2))
+        return
+    console.print(f"repo index: {diagnostics.status}")
+    console.print(f"path: {diagnostics.path}")
+    console.print(f"reason: {diagnostics.reason}")
+    if diagnostics.status in {"missing", "invalid"}:
+        return
+    console.print(f"schema: {diagnostics.schema_version}")
+    console.print(f"size: {diagnostics.size_bytes} bytes")
+    console.print(f"files: {diagnostics.file_count}")
+    console.print(f"symbols: {diagnostics.symbol_count}")
+    console.print(f"import edges: {diagnostics.import_edge_count}")
+    console.print(f"references: {diagnostics.reference_count}")
+    console.print(f"reference truncated: {diagnostics.reference_truncated}")
+    if diagnostics.skipped_reference_files:
+        console.print("skipped reference files:")
+        for path in diagnostics.skipped_reference_files[:10]:
+            console.print(f"  - {path}")
 
 
 @app.command("run")
