@@ -393,6 +393,8 @@ v0.6 已完成：
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
 - `.xhx/repo/index.json` 当前包含 repo map、symbol index 和 import graph，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
 - `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失或损坏时再即时构建。
+- Runtime 在成功 `apply_patch` 后会刷新 `.xhx/repo/index.json`，并在刷新后重新推断验证命令。
+- repo index refresh 会写入 Raw Trace，并通过 Runtime event 暴露；刷新失败只记录风险，不自动回滚已成功的 patch。
 - Verification Router 已开始使用 impact summary，能优先运行 targeted pytest。
 - Verification Router 的 impact analysis 会优先复用落盘 repo map 和 import graph，避免每次都重新扫描。
 - Verification Router 在 Node 项目中会识别 direct JS/TS test 映射，但仍使用 `npm test` / `npm run typecheck` / `npm run build` 这类 package scripts 作为便携验证命令。

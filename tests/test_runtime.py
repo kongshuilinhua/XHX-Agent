@@ -113,6 +113,48 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     assert list((workspace / ".xhx" / "context").glob("*.json"))
 
 
+def test_runtime_refreshes_repo_index_after_patch_before_verification(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_facade.py").write_text("from public_api import add\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    app = RuntimeApp(tmp_path)
+    events = []
+
+    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+        summary="add public api",
+        steps=[
+            ToolStep(
+                tool="apply_patch",
+                arguments={
+                    "patch": """*** Begin Patch
+*** Add File: src/public_api.py
++from calc import add as _add
++
++def add(a, b):
++    return _add(a, b)
+*** End Patch
+"""
+                },
+            )
+        ],
+    )
+
+    result = app.run_task("add public api", assume_yes=False, event_callback=events.append)
+
+    assert result.status == "success"
+    assert result.verification == "requires_confirmation"
+    assert result.commands == ["python -m pytest tests/test_facade.py"]
+    index = read_repo_intel_index(tmp_path)
+    assert any(symbol.name == "add" and symbol.path == "src/public_api.py" for symbol in index.symbol_index.symbols)
+    assert any(edge.importer == "tests/test_facade.py" and edge.target == "src/public_api.py" for edge in index.import_graph.edges)
+    assert any(event.type == "repo_index_refresh" and event.payload["status"] == "success" for event in events)
+    trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
+    trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
+    assert any(item["type"] == "repo_index_refresh" and item["payload"]["status"] == "success" for item in trace_lines)
+
+
 def test_node_fixture_mock_closed_loop(tmp_path: Path) -> None:
     fixture = Path(__file__).parent / "fixtures" / "node_bug"
     workspace = tmp_path / "node_bug"

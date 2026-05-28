@@ -222,6 +222,8 @@ class RuntimeApp:
             event_callback=event_callback,
             cancel_check=cancel_check,
         )
+        if changed_files and status not in {"failed", "cancelled"}:
+            _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
 
         verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
         commands = [item.command for item in verification_plan.commands] if verification_plan else []
@@ -246,6 +248,8 @@ class RuntimeApp:
                 evidence.write_trace("cancel_requested", {"stage": "before_verification"})
                 emit_event(event_callback, "run_cancelled", "Run cancelled before verification.", run_id=run_id)
                 break
+            verification_plan = infer_verification(self.workspace, changed_files)
+            commands = [item.command for item in verification_plan.commands]
             checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
             emit_event(
                 event_callback,
@@ -369,6 +373,7 @@ class RuntimeApp:
                 risks.append(message)
                 evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
                 break
+            _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
             continue
         if status == "failed" and checkpoint is not None:
             kernel.create_restore_plan(checkpoint)
@@ -822,6 +827,7 @@ class RuntimeApp:
             )
             normalized_changed_files = sorted(set(mutable_changed_files))
             if status not in {"failed", "cancelled"}:
+                _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
                 checkpoint = kernel.create_checkpoint(normalized_changed_files)
                 emit_event(
                     event_callback,
@@ -1231,6 +1237,25 @@ def _is_git_worktree(workspace: Path) -> bool:
 
 def _manual_repair_attempt_limit(max_attempts: int) -> int:
     return max(1, min(max_attempts, MAX_REPAIR_ATTEMPTS))
+
+
+def _refresh_repo_intel_index(
+    workspace: Path,
+    evidence: EvidenceStore,
+    event_callback: EventCallback | None,
+    risks: list[str],
+) -> None:
+    try:
+        path = write_repo_intel_index(workspace)
+    except Exception as exc:  # noqa: BLE001 - repo index refresh should not discard a successful patch
+        message = f"Repo intelligence index refresh failed: {exc}"
+        risks.append(message)
+        evidence.write_trace("repo_index_refresh", {"status": "failed", "error": str(exc)})
+        emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refresh failed.", status="failed", error=str(exc))
+        return
+    relative_path = path.relative_to(workspace).as_posix()
+    evidence.write_trace("repo_index_refresh", {"status": "success", "path": relative_path})
+    emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refreshed.", status="success", path=relative_path)
 
 
 def checkpoint_path_value(workspace: Path, run_id: str) -> Path:
