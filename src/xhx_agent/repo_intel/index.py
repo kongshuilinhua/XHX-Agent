@@ -45,3 +45,10 @@ def write_repo_intel_index(workspace: Path, index: RepoIntelIndex | None = None)
 
 def read_repo_intel_index(workspace: Path) -> RepoIntelIndex:
     return RepoIntelIndex.model_validate_json(repo_index_path(workspace).read_text(encoding="utf-8"))
+
+
+def load_repo_intel_index(workspace: Path) -> RepoIntelIndex:
+    try:
+        return read_repo_intel_index(workspace)
+    except (OSError, ValueError):
+        return build_repo_intel_index(workspace)

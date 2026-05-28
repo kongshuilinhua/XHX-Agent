@@ -4,7 +4,9 @@ import json
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.context.debug import write_context_debug_report
 from xhx_agent.evidence.store import EvidenceEntry
+from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
+from xhx_agent.repo_intel.symbols import build_symbol_index
 
 
 def test_context_pack_includes_project_map_and_tool_summaries(tmp_path: Path) -> None:
@@ -73,6 +75,73 @@ def test_context_pack_includes_symbol_context_for_task_query(tmp_path: Path) -> 
     assert "5:     value = a + b" in symbol_items[0].content
     assert pack.debug is not None
     assert any(record.kind == "symbol_context" and record.selected for record in pack.debug.records)
+
+
+def test_context_pack_prefers_persisted_repo_index_for_symbol_context(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "calc.py"
+    source.write_text("def cached_symbol(a, b):\n    return a + b\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    def fail_immediate_scan(*args, **kwargs):
+        raise AssertionError("Context Pack should use the persisted repo index before rebuilding symbols.")
+
+    monkeypatch.setattr("xhx_agent.repo_intel.index.build_repo_intel_index", fail_immediate_scan)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix cached_symbol bug",
+        scan=scan,
+        budget_tokens=2_000,
+    )
+
+    symbol_items = [item for item in pack.items if item.kind == "symbol_context"]
+    assert len(symbol_items) == 1
+    assert symbol_items[0].source == "src/calc.py:1:cached_symbol"
+    assert "1: def cached_symbol(a, b):" in symbol_items[0].content
+
+
+def test_context_pack_falls_back_when_persisted_repo_index_is_invalid(tmp_path: Path) -> None:
+    (tmp_path / ".xhx" / "repo").mkdir(parents=True)
+    (tmp_path / ".xhx" / "repo" / "index.json").write_text("{not-json", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n", encoding="utf-8")
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix add_numbers bug",
+        scan=scan,
+        budget_tokens=2_000,
+    )
+
+    assert any(item.kind == "symbol_context" and item.source == "src/calc.py:1:add_numbers" for item in pack.items)
+
+
+def test_context_pack_fallback_rebuilds_symbols_for_invalid_repo_index(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / ".xhx" / "repo").mkdir(parents=True)
+    (tmp_path / ".xhx" / "repo" / "index.json").write_text("{not-json", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n", encoding="utf-8")
+    scan = scan_project(tmp_path)
+    called = {"value": False}
+
+    def tracked_build(workspace, repo_map=None):
+        called["value"] = True
+        return build_symbol_index(workspace, repo_map)
+
+    monkeypatch.setattr("xhx_agent.repo_intel.index.build_symbol_index", tracked_build)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix add_numbers bug",
+        scan=scan,
+        budget_tokens=2_000,
+    )
+
+    assert called["value"]
+    assert any(item.kind == "symbol_context" and item.source == "src/calc.py:1:add_numbers" for item in pack.items)
 
 
 def test_context_pack_omits_symbol_context_when_over_budget(tmp_path: Path) -> None:
