@@ -101,6 +101,28 @@ def test_context_pack_includes_import_context_for_changed_file(tmp_path: Path) -
     assert any(record.kind == "import_context" and record.selected for record in pack.debug.records)
 
 
+def test_context_pack_includes_reference_context_for_task_query(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add_numbers\n\ndef test_add_numbers():\n    assert add_numbers(1, 2) == 3\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="fix add_numbers bug",
+        scan=scan,
+        budget_tokens=2_000,
+    )
+
+    reference_items = [item for item in pack.items if item.kind == "reference_context"]
+    assert any(item.source == "tests/test_calc.py:1:add_numbers" for item in reference_items)
+    assert any("assert add_numbers(1, 2)" in item.content for item in reference_items)
+    assert pack.debug is not None
+    assert any(record.kind == "reference_context" and record.selected for record in pack.debug.records)
+
+
 def test_context_pack_uses_recent_error_path_for_import_context(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
