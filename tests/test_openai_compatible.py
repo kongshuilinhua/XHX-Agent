@@ -106,7 +106,10 @@ def test_openai_compatible_parses_segmented_content(monkeypatch: pytest.MonkeyPa
                         "message": {
                             "content": [
                                 {"type": "text", "text": '{"summary":"Read README",'},
-                                {"type": "text", "text": '"steps":[{"tool":"read_file","arguments":{"path":"README.md"}}]}'},
+                                {
+                                    "type": "text",
+                                    "text": '"steps":[{"tool":"read_file","arguments":{"path":"README.md"}}]}',
+                                },
                             ]
                         }
                     }

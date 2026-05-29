@@ -53,7 +53,9 @@ class MockModelClient:
         return MockPlan(
             summary="Read-only mock plan.",
             steps=[
-                ToolStep(tool="search", arguments={"query": task.split()[0] if task.split() else "README", "glob": "*"}),
+                ToolStep(
+                    tool="search", arguments={"query": task.split()[0] if task.split() else "README", "glob": "*"}
+                ),
             ],
         )
 

@@ -122,7 +122,9 @@ class ConsoleState:
         elif event.type == "tool_result":
             self._update_tool(event)
         elif event.type == "checkpoint":
-            self.changed_files = _merge_unique(self.changed_files, [str(item) for item in payload.get("changed_files", [])])
+            self.changed_files = _merge_unique(
+                self.changed_files, [str(item) for item in payload.get("changed_files", [])]
+            )
         elif event.type == "verification_start":
             self.status = "verifying"
             command = str(payload.get("command", ""))
@@ -153,7 +155,9 @@ class ConsoleState:
             self.status = str(payload.get("status", "finished"))
             self.verification = str(payload.get("verification", self.verification))
             self.summary_path = str(payload.get("summary_path", "")) or self.summary_path
-            self.changed_files = _merge_unique(self.changed_files, [str(item) for item in payload.get("changed_files", [])])
+            self.changed_files = _merge_unique(
+                self.changed_files, [str(item) for item in payload.get("changed_files", [])]
+            )
 
     def apply_result(self, result: RunResult) -> None:
         self.status = result.status
@@ -222,10 +226,12 @@ def _merge_unique(existing: list[str], incoming: list[str]) -> list[str]:
 def _optional_int(value: object) -> int | None:
     if value is None:
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, (int, float, str, bytes)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _trim_model_output(text: str, limit: int = 4000) -> str:

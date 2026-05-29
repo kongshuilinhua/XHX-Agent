@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from typing import Any
 
 
@@ -15,29 +16,21 @@ class MCPClient:
             {
                 "name": "mcp_fetch_weather",
                 "description": "Get current weather for a city",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string"}
-                    },
-                    "required": ["city"]
-                }
+                "inputSchema": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
             },
             {
                 "name": "mcp_calculate",
                 "description": "Run mathematical calculation",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "expression": {"type": "string"}
-                    },
-                    "required": ["expression"]
-                }
-            }
+                    "properties": {"expression": {"type": "string"}},
+                    "required": ["expression"],
+                },
+            },
         ]
 
     def connect(self) -> None:
-        if self.is_mock:
+        if self.is_mock or not self.command:
             return
 
         try:
@@ -48,14 +41,17 @@ class MCPClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
             # Initialize handshake
-            self._send_request("initialize", {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "xhx-agent", "version": "1.0.0"}
-            })
+            self._send_request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "xhx-agent", "version": "1.0.0"},
+                },
+            )
             # Send initialized notification
             self._send_notification("initialized", {})
         except Exception:
@@ -76,12 +72,7 @@ class MCPClient:
         req_id = self._next_id
         self._next_id += 1
 
-        msg = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "method": method,
-            "params": params
-        }
+        msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
 
         try:
             self.process.stdin.write(json.dumps(msg) + "\n")
@@ -99,11 +90,7 @@ class MCPClient:
     def _send_notification(self, method: str, params: dict[str, Any]) -> None:
         if self.is_mock or not self.process or not self.process.stdin:
             return
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params
-        }
+        msg = {"jsonrpc": "2.0", "method": method, "params": params}
         try:
             self.process.stdin.write(json.dumps(msg) + "\n")
             self.process.stdin.flush()
@@ -121,12 +108,14 @@ class MCPClient:
                 name = t["name"]
                 if not name.startswith("mcp_"):
                     name = f"mcp_{name}"
-                tools.append({
-                    "name": name,
-                    "original_name": t["name"],
-                    "description": t.get("description", ""),
-                    "inputSchema": t.get("inputSchema", {})
-                })
+                tools.append(
+                    {
+                        "name": name,
+                        "original_name": t["name"],
+                        "description": t.get("description", ""),
+                        "inputSchema": t.get("inputSchema", {}),
+                    }
+                )
             return tools
         return self._mock_tools
 
@@ -139,12 +128,44 @@ class MCPClient:
             if name == "mcp_calculate":
                 expr = arguments.get("expression", "2+2")
                 try:
-                    import re
-                    # Restrict expression to simple arithmetic characters only
-                    clean_expr = re.sub(r"[^0-9+\-*/().\s]", "", expr)
-                    if not clean_expr.strip():
-                        return {"content": [{"type": "text", "text": "Error: Empty or invalid expression."}]}
-                    val = eval(clean_expr, {"__builtins__": None}, {})
+                    import ast
+                    import operator
+
+                    safe_binops: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
+                        ast.Add: operator.add,
+                        ast.Sub: operator.sub,
+                        ast.Mult: operator.mul,
+                        ast.Div: operator.truediv,
+                    }
+                    safe_unaryops: dict[type[ast.unaryop], Callable[[Any], Any]] = {
+                        ast.USub: operator.neg,
+                        ast.UAdd: lambda x: x,
+                    }
+
+                    def _eval_node(node: ast.AST) -> Any:
+                        if isinstance(node, ast.Expression):
+                            return _eval_node(node.body)
+                        elif isinstance(node, ast.Constant):
+                            if isinstance(node.value, (int, float)):
+                                return node.value
+                            raise TypeError("Only numeric constants allowed")
+                        elif isinstance(node, ast.BinOp):
+                            left = _eval_node(node.left)
+                            right = _eval_node(node.right)
+                            binop_type = type(node.op)
+                            if binop_type in safe_binops:
+                                return safe_binops[binop_type](left, right)
+                            raise NotImplementedError(f"Operator {binop_type} not supported")
+                        elif isinstance(node, ast.UnaryOp):
+                            operand = _eval_node(node.operand)
+                            unaryop_type = type(node.op)
+                            if unaryop_type in safe_unaryops:
+                                return safe_unaryops[unaryop_type](operand)
+                            raise NotImplementedError(f"Unary operator {unaryop_type} not supported")
+                        raise TypeError(f"Unsupported AST node type: {type(node)}")
+
+                    tree = ast.parse(expr, mode="eval")
+                    val = _eval_node(tree)
                     return {"content": [{"type": "text", "text": str(val)}]}
                 except Exception as e:
                     return {"content": [{"type": "text", "text": f"Error: {e}"}]}
@@ -154,10 +175,7 @@ class MCPClient:
         if name.startswith("mcp_"):
             original_name = name[4:]
 
-        res = self._send_request("tools/call", {
-            "name": original_name,
-            "arguments": arguments
-        })
+        res = self._send_request("tools/call", {"name": original_name, "arguments": arguments})
         if "result" in res:
             return res["result"]
         if "error" in res:
@@ -192,7 +210,7 @@ class MCPClient:
                             trace_payload={"tool": name, "arguments": arguments, "result": res},
                             evidence_kind="decision",
                             evidence_source=name,
-                            evidence_summary=summary
+                            evidence_summary=summary,
                         )
                     except Exception as e:
                         return ToolExecutionResult(
@@ -200,8 +218,9 @@ class MCPClient:
                             status="failed",
                             summary=f"Error executing MCP tool {name}: {e}",
                             trace_payload={"tool": name, "arguments": arguments, "error": str(e)},
-                            error=str(e)
+                            error=str(e),
                         )
+
                 return runner
 
             # Register runner under tool_name (which starts with mcp_)

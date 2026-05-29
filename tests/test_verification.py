@@ -86,7 +86,9 @@ def test_node_source_change_uses_targeted_vitest_when_supported(tmp_path: Path) 
     (tmp_path / "test").mkdir()
     (tmp_path / "src" / "index.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
     (tmp_path / "test" / "index.test.js").write_text("import '../src/index.js';\n", encoding="utf-8")
-    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run","build":"node -c src/index.js"}}', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest run","build":"node -c src/index.js"}}', encoding="utf-8"
+    )
 
     plan = infer_verification(tmp_path, changed_files=["src/index.js"])
 
@@ -99,20 +101,31 @@ def test_node_source_change_keeps_portable_npm_test_for_unknown_runner(tmp_path:
     (tmp_path / "test").mkdir()
     (tmp_path / "src" / "index.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
     (tmp_path / "test" / "index.test.js").write_text("import '../src/index.js';\n", encoding="utf-8")
-    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/index.test.js","build":"node -c src/index.js"}}', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node test/index.test.js","build":"node -c src/index.js"}}', encoding="utf-8"
+    )
 
     plan = infer_verification(tmp_path, changed_files=["src/index.js"])
 
     assert [command.command for command in plan.commands] == ["npm test"]
-    assert plan.commands[0].reason == "Repo intelligence mapped changed source files to dependent JS/TS tests; package.json defines test script."
+    assert (
+        plan.commands[0].reason
+        == "Repo intelligence mapped changed source files to dependent JS/TS tests; package.json defines test script."
+    )
 
 
 def test_node_source_change_uses_targeted_jest_for_import_graph_mapping(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
-    (tmp_path / "src" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
-    (tmp_path / "src" / "public_api.ts").write_text("import { add } from './math_ops';\nexport { add };\n", encoding="utf-8")
-    (tmp_path / "tests" / "public_api.spec.ts").write_text("import { add } from '../src/public_api';\n", encoding="utf-8")
+    (tmp_path / "src" / "math_ops.ts").write_text(
+        "export const add = (a: number, b: number) => a + b;\n", encoding="utf-8"
+    )
+    (tmp_path / "src" / "public_api.ts").write_text(
+        "import { add } from './math_ops';\nexport { add };\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "public_api.spec.ts").write_text(
+        "import { add } from '../src/public_api';\n", encoding="utf-8"
+    )
     (tmp_path / "package.json").write_text('{"scripts":{"test":"jest --runInBand"}}', encoding="utf-8")
 
     plan = infer_verification(tmp_path, changed_files=["src/math_ops.ts"])

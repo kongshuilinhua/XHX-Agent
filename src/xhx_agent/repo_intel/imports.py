@@ -243,9 +243,7 @@ def _js_ts_candidate_paths(raw: str, importer: str) -> list[str]:
 
 def _first_known(candidates: list[str], known_files: set[str]) -> str:
     normalized = [
-        posixpath.normpath(candidate.replace("\\", "/")).lstrip("./")
-        for candidate in candidates
-        if candidate
+        posixpath.normpath(candidate.replace("\\", "/")).lstrip("./") for candidate in candidates if candidate
     ]
     for candidate in normalized:
         if candidate in known_files:

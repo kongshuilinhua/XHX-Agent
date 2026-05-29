@@ -49,7 +49,9 @@ class CheckpointRestorePlan(BaseModel):
 
 def create_checkpoint(workspace: Path, run_id: str, changed_files: list[str] | None = None) -> Checkpoint:
     ensure_xhx_dirs(workspace)
-    files = [_checkpoint_file(workspace, path) for path in sorted(set(changed_files or [])) if (workspace / path).is_file()]
+    files = [
+        _checkpoint_file(workspace, path) for path in sorted(set(changed_files or [])) if (workspace / path).is_file()
+    ]
     checkpoint = Checkpoint(
         id=f"checkpoint-{run_id}",
         kind="pre_verification",

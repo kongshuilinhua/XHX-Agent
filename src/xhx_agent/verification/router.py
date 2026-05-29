@@ -42,7 +42,9 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
                 )
             )
         else:
-            commands.append(VerificationCommand(command=base_command, reason="Python project with tests or pytest config."))
+            commands.append(
+                VerificationCommand(command=base_command, reason="Python project with tests or pytest config.")
+            )
     if package_json.exists():
         scripts = _package_scripts(package_json)
         test_script = scripts.get("test")
@@ -57,7 +59,9 @@ def infer_verification(workspace: Path, changed_files: list[str] | None = None) 
                 reason = "Repo intelligence mapped changed source files to a targeted JS/TS test command."
             commands.append(VerificationCommand(command=target_command or "npm test", reason=reason))
         elif "typecheck" in scripts:
-            commands.append(VerificationCommand(command="npm run typecheck", reason="package.json defines typecheck script."))
+            commands.append(
+                VerificationCommand(command="npm run typecheck", reason="package.json defines typecheck script.")
+            )
         elif "build" in scripts:
             commands.append(VerificationCommand(command="npm run build", reason="package.json defines build script."))
     if commands:
@@ -96,13 +100,7 @@ def _has_js_ts_impacted_tests(paths: list[str]) -> bool:
 
 
 def _python_test_targets(paths: list[str]) -> list[str]:
-    return sorted(
-        dict.fromkeys(
-            path.replace("\\", "/")
-            for path in paths
-            if path.replace("\\", "/").endswith(".py")
-        )
-    )
+    return sorted(dict.fromkeys(path.replace("\\", "/") for path in paths if path.replace("\\", "/").endswith(".py")))
 
 
 def _package_scripts(package_json: Path) -> dict[str, str]:
@@ -129,9 +127,7 @@ def _targeted_node_test_command(test_script: str, impacted_tests: list[str]) -> 
 def _js_ts_test_targets(paths: list[str]) -> list[str]:
     return sorted(
         dict.fromkeys(
-            path.replace("\\", "/")
-            for path in paths
-            if Path(path).suffix.lower() in {".js", ".jsx", ".ts", ".tsx"}
+            path.replace("\\", "/") for path in paths if Path(path).suffix.lower() in {".js", ".jsx", ".ts", ".tsx"}
         )
     )
 

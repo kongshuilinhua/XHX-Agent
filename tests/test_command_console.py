@@ -327,7 +327,9 @@ def test_command_console_repair_loop_uses_two_attempts(tmp_path: Path, monkeypat
     command_console.profile_name = "real"
     command_console.assume_yes = True
     command_console.runtime._build_plan = fake_build_plan  # type: ignore[method-assign]
-    command_console.last_manual_verification = command_console.runtime.verify_changed_files(["demo.py"], assume_yes=True)
+    command_console.last_manual_verification = command_console.runtime.verify_changed_files(
+        ["demo.py"], assume_yes=True
+    )
     command_console.last_manual_verification.status = "failed"
     command_console.last_manual_verification.verification_results = [
         TerminalResult(

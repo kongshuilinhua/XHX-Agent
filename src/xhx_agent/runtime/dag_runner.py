@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xhx_agent.evidence.report import write_report
 from xhx_agent.evidence.store import EvidenceStore
 from xhx_agent.planner.planner import DAGPlanner, DAGScheduler
-from xhx_agent.planner.reviewer import Reviewer
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.tools.registry import ToolContext
@@ -17,7 +15,10 @@ from xhx_agent.tools.terminal import TerminalResult
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RunResult, RuntimeApp
 
-ConfirmationCallback = Callable[[str, object], bool]
+from xhx_agent.runtime.verify_loop import _refresh_repo_intel_index
+from xhx_agent.safety.policy import PolicyDecision
+
+ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
 
@@ -28,26 +29,6 @@ def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
         return bool(cancel_check())
     except Exception:
         return False
-
-
-def _refresh_repo_intel_index(
-    workspace: Path,
-    evidence: EvidenceStore,
-    event_callback: EventCallback | None,
-    risks: list[str],
-) -> None:
-    from xhx_agent.repo_intel.index import write_repo_intel_index
-    try:
-        path = write_repo_intel_index(workspace)
-    except Exception as exc:  # noqa: BLE001 - repo index refresh should not discard a successful patch
-        message = f"Repo intelligence index refresh failed: {exc}"
-        risks.append(message)
-        evidence.write_trace("repo_index_refresh", {"status": "failed", "error": str(exc)})
-        emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refresh failed.", status="failed", error=str(exc))
-        return
-    relative_path = path.relative_to(workspace).as_posix()
-    evidence.write_trace("repo_index_refresh", {"status": "success", "path": relative_path})
-    emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refreshed.", status="success", path=relative_path)
 
 
 class DAGRunner:
@@ -80,6 +61,7 @@ class DAGRunner:
         evidence.write_trace("model_plan", dag_plan.model_dump())
 
         import threading
+
         state_lock = threading.Lock()
 
         changed_files: list[str] = []
@@ -92,14 +74,26 @@ class DAGRunner:
                 return False, "Cancelled by user"
 
             if node.tool == "terminal":
-                emit_event(event_callback, "verification_start", f"DAG node verify: {node.description}", command=node.arguments.get("command", ""))
+                emit_event(
+                    event_callback,
+                    "verification_start",
+                    f"DAG node verify: {node.description}",
+                    command=node.arguments.get("command", ""),
+                )
                 res = kernel.run_verification(
                     node.arguments.get("command", ""),
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
-                    event_callback=event_callback
+                    event_callback=event_callback,
                 )
-                emit_event(event_callback, "verification_result", "DAG node verify finished.", command=node.arguments.get("command", ""), status=res.status, exit_code=res.exit_code)
+                emit_event(
+                    event_callback,
+                    "verification_result",
+                    "DAG node verify finished.",
+                    command=node.arguments.get("command", ""),
+                    status=res.status,
+                    exit_code=res.exit_code,
+                )
                 with state_lock:
                     verification_results.append(res)
                     commands_run.append(node.arguments.get("command", ""))
@@ -110,7 +104,14 @@ class DAGRunner:
                 res, tr, pol = kernel.execute_tool(tool_context, step, 1, event_callback)
                 if res is None or tr is None:
                     return (False, pol.reason)
-                emit_event(event_callback, "tool_result", "DAG node tool finished.", tool=node.tool, status=res.status, summary=res.summary)
+                emit_event(
+                    event_callback,
+                    "tool_result",
+                    "DAG node tool finished.",
+                    tool=node.tool,
+                    status=res.status,
+                    summary=res.summary,
+                )
                 with state_lock:
                     changed_files.extend(res.changed_files)
                 return (res.status == "success", res.summary or "Tool executed successfully")
@@ -127,11 +128,14 @@ class DAGRunner:
 
         try:
             from xhx_agent.skills.hooks import hooks_manager
+
             hooks_manager.trigger("after_verify", workspace=self.workspace, results=verification_results)
         except Exception:
             pass
 
-        reviewer = Reviewer()
+        from xhx_agent.planner.agents import ReviewerAgent
+
+        reviewer = ReviewerAgent()
         review_dec = reviewer.review(task, changed_files, verification_results)
 
         status = "success" if (dag_success and review_dec.passed) else "failed"
@@ -144,13 +148,14 @@ class DAGRunner:
 
         try:
             from xhx_agent.skills.hooks import hooks_manager
+
             hooks_manager.trigger(
                 "before_summary",
                 workspace=self.workspace,
                 run_id=run_id,
                 task=task,
                 status=status,
-                changed_files=changed_files
+                changed_files=changed_files,
             )
         except Exception:
             pass

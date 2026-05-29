@@ -50,7 +50,11 @@ def search_symbols(index: SymbolIndex, query: str, *, limit: int = 20) -> list[S
         return index.symbols[:limit]
     exact = [symbol for symbol in index.symbols if symbol.name.lower() == lowered]
     prefix = [symbol for symbol in index.symbols if symbol not in exact and symbol.name.lower().startswith(lowered)]
-    contains = [symbol for symbol in index.symbols if symbol not in exact and symbol not in prefix and lowered in symbol.name.lower()]
+    contains = [
+        symbol
+        for symbol in index.symbols
+        if symbol not in exact and symbol not in prefix and lowered in symbol.name.lower()
+    ]
     return (exact + prefix + contains)[:limit]
 
 
@@ -107,7 +111,14 @@ _JS_TS_PATTERNS = [
 ]
 
 
-def _traverse_ast(node, code_bytes: bytes, symbols: list[Symbol], relative_path: str, language_name: str, parent_name: str | None = None) -> None:
+def _traverse_ast(
+    node,
+    code_bytes: bytes,
+    symbols: list[Symbol],
+    relative_path: str,
+    language_name: str,
+    parent_name: str | None = None,
+) -> None:
     node_type = node.type
     name = None
     kind = None
@@ -116,31 +127,31 @@ def _traverse_ast(node, code_bytes: bytes, symbols: list[Symbol], relative_path:
         kind = "class"
         for child in node.children:
             if child.type == "identifier":
-                name = code_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
+                name = code_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="ignore")
                 break
     elif node_type == "interface_declaration":
         kind = "interface"
         for child in node.children:
             if child.type == "identifier":
-                name = code_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
+                name = code_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="ignore")
                 break
     elif node_type == "type_alias_declaration":
         kind = "type"
         for child in node.children:
             if child.type == "identifier":
-                name = code_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
+                name = code_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="ignore")
                 break
     elif node_type in ("function_declaration", "generator_function_declaration"):
         kind = "function"
         for child in node.children:
             if child.type == "identifier":
-                name = code_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
+                name = code_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="ignore")
                 break
     elif node_type == "method_definition":
         kind = "function"
         for child in node.children:
             if child.type in ("property_identifier", "identifier"):
-                name = code_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
+                name = code_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="ignore")
                 break
     elif node_type in ("lexical_declaration", "variable_declaration"):
         for child in node.children:
@@ -149,7 +160,7 @@ def _traverse_ast(node, code_bytes: bytes, symbols: list[Symbol], relative_path:
                 is_func = False
                 for sub in child.children:
                     if sub.type in ("identifier", "property_identifier"):
-                        var_name = code_bytes[sub.start_byte:sub.end_byte].decode("utf-8", errors="ignore")
+                        var_name = code_bytes[sub.start_byte : sub.end_byte].decode("utf-8", errors="ignore")
                     elif sub.type in ("arrow_function", "function_expression", "generator_function"):
                         is_func = True
                 if var_name and is_func:
@@ -184,18 +195,15 @@ def _js_ts_symbols(root: Path, path: Path, language: str) -> list[Symbol]:
     symbols: list[Symbol] = []
 
     try:
-        from tree_sitter import Parser, Language
         import tree_sitter_javascript
         import tree_sitter_typescript
+        from tree_sitter import Language, Parser
 
         js_lang = Language(tree_sitter_javascript.language())
         ts_lang = Language(tree_sitter_typescript.language_typescript())
         tsx_lang = Language(tree_sitter_typescript.language_tsx())
 
-        if language == "typescript":
-            lang = tsx_lang if path.suffix.lower() == ".tsx" else ts_lang
-        else:
-            lang = js_lang
+        lang = (tsx_lang if path.suffix.lower() == ".tsx" else ts_lang) if language == "typescript" else js_lang
 
         parser = Parser(lang)
         tree = parser.parse(code_bytes)
@@ -222,4 +230,3 @@ def _js_ts_symbols(root: Path, path: Path, language: str) -> list[Symbol]:
                 )
                 break
     return symbols
-

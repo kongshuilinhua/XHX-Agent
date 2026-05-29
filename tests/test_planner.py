@@ -97,7 +97,7 @@ def test_reviewer_quality_gate() -> None:
         status="failed",
         policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="allow"),
         exit_code=1,
-        summary="failed"
+        summary="failed",
     )
     decision2 = reviewer.review("fix calc", ["src/calc.py"], [failed_test])
     assert decision2.passed is False
@@ -109,7 +109,7 @@ def test_reviewer_quality_gate() -> None:
         status="success",
         policy=PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM, reason="allow"),
         exit_code=0,
-        summary="passed"
+        summary="passed",
     )
     decision3 = reviewer.review("fix calc", ["src/calc.py"], [passed_test])
     assert decision3.passed is True

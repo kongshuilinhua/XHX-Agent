@@ -30,22 +30,21 @@ class BenchmarkRunner:
             BenchmarkFixture(
                 id="research-symbols",
                 name="Research package symbols",
-                task="Find where write_report is defined and how it works"
+                task="Find where write_report is defined and how it works",
             ),
             BenchmarkFixture(
-                id="config-diagnose",
-                name="Config diagnostics",
-                task="Scan the project config settings and profiles"
+                id="config-diagnose", name="Config diagnostics", task="Scan the project config settings and profiles"
             ),
             BenchmarkFixture(
                 id="skills-triggers",
                 name="Verify skill trigger rules",
-                task="Identify triggers for skill loaded from the system"
-            )
+                task="Identify triggers for skill loaded from the system",
+            ),
         ]
 
     def run_benchmark(self, profile_name: str) -> list[BenchmarkResult]:
         from xhx_agent.runtime.app import RuntimeApp
+
         results: list[BenchmarkResult] = []
         app = RuntimeApp(workspace=self.workspace)
 
@@ -64,7 +63,7 @@ class BenchmarkRunner:
                         turns=res.turns,
                         duration_seconds=metrics.duration_seconds if metrics else round(time.time() - start_time, 2),
                         tokens_estimate=metrics.tokens_estimate if metrics else 0,
-                        success=(res.status == "success")
+                        success=(res.status == "success"),
                     )
                 )
             except Exception:
@@ -77,7 +76,7 @@ class BenchmarkRunner:
                         turns=0,
                         duration_seconds=round(time.time() - start_time, 2),
                         tokens_estimate=0,
-                        success=False
+                        success=False,
                     )
                 )
         return results

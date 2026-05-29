@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -39,7 +39,9 @@ from xhx_agent.runtime.verify_loop import (
 )
 from xhx_agent.safety.checkpoint import Checkpoint
 from xhx_agent.safety.kernel import SafeExecutionKernel
+from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
+from xhx_agent.safety.worktree import WorktreeContext
 from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
@@ -82,7 +84,7 @@ class PlanPreview(BaseModel):
     risk_summary: list[str]
 
 
-ConfirmationCallback = Callable[[str, object], bool]
+ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
 
@@ -129,244 +131,261 @@ class RuntimeApp:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"run-{int(time.time())}"
-        evidence = EvidenceStore(self.workspace, run_id)
-        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
-        emit_event(event_callback, "run_start", "Run started.", run_id=run_id, task=task, profile=profile.name)
-        evidence.write_trace("run_start", {"task": task, "profile": profile.name})
-        scan = scan_project(self.workspace)
-        emit_event(
-            event_callback,
-            "scan",
-            "Project scan completed.",
-            detected_languages=scan.detected_languages,
-            file_count=scan.file_count,
-        )
-        changed_files: list[str] = []
-        commands_run: list[str] = []
-        verification_results: list[TerminalResult] = []
-        checkpoint: Checkpoint | None = None
-        restore_plan_created = False
-        repair_decision: RepairDecision | None = None
-        repair_attempts = 0
-        risks: list[str] = []
-        status = "success"
-        turns_completed = 0
-        plan_summaries: list[str] = [
-            "Load project configuration.",
-            f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
-        ]
-        tool_summaries: list[str] = []
-        evidence_entries: list[EvidenceEntry] = []
-        recent_error: str | None = None
-        tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
-        if _cancel_requested(cancel_check):
-            status = "cancelled"
-            verification_status = "cancelled"
-            risks.append("Run cancelled by user before model planning.")
-            evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
-            emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
-            summary = write_report(
-                workspace=self.workspace,
-                run_id=run_id,
-                task=task,
-                plan=plan_summaries + ["Run cancelled before model planning."],
-                changed_files=[],
-                commands=[],
-                verification=verification_status,
-                risks=risks,
-            )
-            evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-            emit_event(
-                event_callback,
-                "run_end",
-                "Run cancelled.",
-                run_id=run_id,
-                status=status,
-                verification=verification_status,
-                changed_files=[],
-                summary_path=str(summary.relative_to(self.workspace)),
-            )
-            metrics = RunMetrics(
-                duration_seconds=round(time.time() - start_time, 2),
-                turns=turns_completed,
-                tokens_estimate=metrics_tracker["tokens"],
-                files_changed_count=0,
-                commands_run_count=0,
-                repair_attempts=repair_attempts,
-                success=False,
-            )
-            return RunResult(
-                run_id=run_id,
-                status=status,
-                turns=turns_completed,
-                changed_files=[],
-                commands=[],
-                verification=verification_status,
-                verification_results=[],
-                summary_path=str(summary.relative_to(self.workspace)),
-                risk_summary=risks,
-                metrics=metrics,
-                mode="direct",
-            )
+        original_workspace = self.workspace.resolve()
+        with WorktreeContext(original_workspace, run_id) as wt_ctx:
+            try:
+                self.workspace = wt_ctx.active_path
 
-        mode = ModeClassifier().classify(task, scan)
+                evidence = EvidenceStore(original_workspace, run_id)
+                kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
+                emit_event(event_callback, "run_start", "Run started.", run_id=run_id, task=task, profile=profile.name)
+                evidence.write_trace("run_start", {"task": task, "profile": profile.name})
+                scan = scan_project(self.workspace)
+                emit_event(
+                    event_callback,
+                    "scan",
+                    "Project scan completed.",
+                    detected_languages=scan.detected_languages,
+                    file_count=scan.file_count,
+                )
+                changed_files: list[str] = []
+                commands_run: list[str] = []
+                verification_results: list[TerminalResult] = []
+                checkpoint: Checkpoint | None = None
+                restore_plan_created = False
+                repair_decision: RepairDecision | None = None
+                repair_attempts = 0
+                risks: list[str] = []
+                status = "success"
+                turns_completed = 0
+                plan_summaries: list[str] = [
+                    "Load project configuration.",
+                    f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
+                ]
+                tool_summaries: list[str] = []
+                evidence_entries: list[EvidenceEntry] = []
+                recent_error: str | None = None
+                tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
-        if mode == ExecutionMode.DAG_EXECUTE:
-            runner = DAGRunner(self)
-            res = runner.run_dag(
-                task=task,
-                run_id=run_id,
-                evidence=evidence,
-                kernel=kernel,
-                tool_context=tool_context,
-                assume_yes=assume_yes,
-                confirm_callback=confirm_callback,
-                event_callback=event_callback,
-                cancel_check=cancel_check,
-                start_time=start_time,
-                metrics_tracker=metrics_tracker,
-            )
-            res.mode = "dag-execute"
-            return res
+                if _cancel_requested(cancel_check):
+                    status = "cancelled"
+                    verification_status = "cancelled"
+                    risks.append("Run cancelled by user before model planning.")
+                    evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
+                    emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
+                    summary = write_report(
+                        workspace=original_workspace,
+                        run_id=run_id,
+                        task=task,
+                        plan=plan_summaries + ["Run cancelled before model planning."],
+                        changed_files=[],
+                        commands=[],
+                        verification=verification_status,
+                        risks=risks,
+                    )
+                    evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+                    emit_event(
+                        event_callback,
+                        "run_end",
+                        "Run cancelled.",
+                        run_id=run_id,
+                        status=status,
+                        verification=verification_status,
+                        changed_files=[],
+                        summary_path=str(summary.relative_to(original_workspace)),
+                    )
+                    metrics = RunMetrics(
+                        duration_seconds=round(time.time() - start_time, 2),
+                        turns=turns_completed,
+                        tokens_estimate=metrics_tracker["tokens"],
+                        files_changed_count=0,
+                        commands_run_count=0,
+                        repair_attempts=repair_attempts,
+                        success=False,
+                    )
+                    return RunResult(
+                        run_id=run_id,
+                        status=status,
+                        turns=turns_completed,
+                        changed_files=[],
+                        commands=[],
+                        verification=verification_status,
+                        verification_results=[],
+                        summary_path=str(summary.relative_to(original_workspace)),
+                        risk_summary=risks,
+                        metrics=metrics,
+                        mode="direct",
+                    )
 
-        # Linear Edit Mode
-        status, turns_completed, recent_error = self._run_model_tool_loop(
-            task=task,
-            profile=profile,
-            scan=scan,
-            evidence=evidence,
-            kernel=kernel,
-            tool_context=tool_context,
-            changed_files=changed_files,
-            tool_summaries=tool_summaries,
-            evidence_entries=evidence_entries,
-            plan_summaries=plan_summaries,
-            risks=risks,
-            recent_error=recent_error,
-            starting_turn=1,
-            event_callback=event_callback,
-            cancel_check=cancel_check,
-            metrics_tracker=metrics_tracker,
-        )
-        if changed_files and status not in {"failed", "cancelled"}:
-            _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
+                mode = ModeClassifier().classify(task, scan)
 
-        verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
-        commands = [item.command for item in verification_plan.commands] if verification_plan else []
-        verification_status = (
-            "cancelled"
-            if status == "cancelled"
-            else "not_executed"
-            if status == "failed"
-            else verification_plan.skip_reason
-            if verification_plan
-            else "skipped_no_changes"
-        )
-        if status not in {"failed", "cancelled"} and not changed_files:
-            verification_status = "skipped_no_changes"
-            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
+                if mode == ExecutionMode.DAG_EXECUTE:
+                    runner = DAGRunner(self)
+                    res = runner.run_dag(
+                        task=task,
+                        run_id=run_id,
+                        evidence=evidence,
+                        kernel=kernel,
+                        tool_context=tool_context,
+                        assume_yes=assume_yes,
+                        confirm_callback=confirm_callback,
+                        event_callback=event_callback,
+                        cancel_check=cancel_check,
+                        start_time=start_time,
+                        metrics_tracker=metrics_tracker,
+                    )
+                    res.mode = "dag-execute"
+                    if res.status == "success":
+                        wt_ctx.sync_to_workspace(res.changed_files)
+                    return res
 
-        # Run verification and repair loop in modular method
-        (
-            status,
-            verification_status,
-            repair_attempts,
-            turns_completed,
-            recent_error,
-            checkpoint,
-            repair_decision,
-            restore_plan_created,
-        ) = self._execute_verification_and_repair_loop(
-            status=status,
-            verification_status=verification_status,
-            changed_files=changed_files,
-            cancel_check=cancel_check,
-            risks=risks,
-            evidence=evidence,
-            run_id=run_id,
-            event_callback=event_callback,
-            kernel=kernel,
-            assume_yes=assume_yes,
-            confirm_callback=confirm_callback,
-            auto_repair=auto_repair,
-            repair_attempts=repair_attempts,
-            tool_summaries=tool_summaries,
-            evidence_entries=evidence_entries,
-            plan_summaries=plan_summaries,
-            recent_error=recent_error,
-            profile=profile,
-            scan=scan,
-            tool_context=tool_context,
-            metrics_tracker=metrics_tracker,
-            turns_completed=turns_completed,
-            commands_run=commands_run,
-            verification_results=verification_results,
-            task=task,
-        )
+                # Linear Edit Mode
+                status, turns_completed, recent_error = self._run_model_tool_loop(
+                    task=task,
+                    profile=profile,
+                    scan=scan,
+                    evidence=evidence,
+                    kernel=kernel,
+                    tool_context=tool_context,
+                    changed_files=changed_files,
+                    tool_summaries=tool_summaries,
+                    evidence_entries=evidence_entries,
+                    plan_summaries=plan_summaries,
+                    risks=risks,
+                    recent_error=recent_error,
+                    starting_turn=1,
+                    event_callback=event_callback,
+                    cancel_check=cancel_check,
+                    metrics_tracker=metrics_tracker,
+                )
+                if changed_files and status not in {"failed", "cancelled"}:
+                    _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
 
-        with contextlib.suppress(Exception):
-            hooks_manager.trigger(
-                "before_summary",
-                workspace=self.workspace,
-                run_id=run_id,
-                task=task,
-                status=status,
-                changed_files=changed_files
-            )
+                verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
+                commands = [item.command for item in verification_plan.commands] if verification_plan else []
+                verification_status = (
+                    "cancelled"
+                    if status == "cancelled"
+                    else "not_executed"
+                    if status == "failed"
+                    else (verification_plan.skip_reason or "not_executed")
+                    if verification_plan
+                    else "skipped_no_changes"
+                )
+                if status not in {"failed", "cancelled"} and not changed_files:
+                    verification_status = "skipped_no_changes"
+                    evidence.write_trace("verification_skipped", {"reason": "No changed files."})
 
-        summary = write_report(
-            workspace=self.workspace,
-            run_id=run_id,
-            task=task,
-            plan=plan_summaries + ["Write run summary."],
-            changed_files=sorted(set(changed_files)),
-            commands=commands_run or commands,
-            verification=verification_status,
-            risks=risks,
-            verification_results=verification_results,
-            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
-            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
-            repair=repair_decision,
-            repair_attempts=repair_attempts,
-        )
-        evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-        emit_event(
-            event_callback,
-            "run_end",
-            "Run finished.",
-            run_id=run_id,
-            status=status,
-            verification=verification_status,
-            changed_files=sorted(set(changed_files)),
-            summary_path=str(summary.relative_to(self.workspace)),
-        )
-        metrics = RunMetrics(
-            duration_seconds=round(time.time() - start_time, 2),
-            turns=turns_completed,
-            tokens_estimate=metrics_tracker["tokens"],
-            files_changed_count=len(changed_files),
-            commands_run_count=len(commands_run or commands),
-            repair_attempts=repair_attempts,
-            success=(status == "success"),
-        )
-        return RunResult(
-            run_id=run_id,
-            status=status,
-            turns=turns_completed,
-            changed_files=sorted(set(changed_files)),
-            commands=commands_run or commands,
-            verification=verification_status,
-            verification_results=verification_results,
-            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
-            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
-            repair=repair_decision,
-            repair_attempts=repair_attempts,
-            summary_path=str(summary.relative_to(self.workspace)),
-            risk_summary=risks,
-            metrics=metrics,
-            mode=mode.value,
-        )
+                # Run verification and repair loop in modular method
+                (
+                    status,
+                    verification_status,
+                    repair_attempts,
+                    turns_completed,
+                    recent_error,
+                    checkpoint,
+                    repair_decision,
+                    restore_plan_created,
+                ) = self._execute_verification_and_repair_loop(
+                    status=status,
+                    verification_status=verification_status,
+                    changed_files=changed_files,
+                    cancel_check=cancel_check,
+                    risks=risks,
+                    evidence=evidence,
+                    run_id=run_id,
+                    event_callback=event_callback,
+                    kernel=kernel,
+                    assume_yes=assume_yes,
+                    confirm_callback=confirm_callback,
+                    auto_repair=auto_repair,
+                    repair_attempts=repair_attempts,
+                    tool_summaries=tool_summaries,
+                    evidence_entries=evidence_entries,
+                    plan_summaries=plan_summaries,
+                    recent_error=recent_error,
+                    profile=profile,
+                    scan=scan,
+                    tool_context=tool_context,
+                    metrics_tracker=metrics_tracker,
+                    turns_completed=turns_completed,
+                    commands_run=commands_run,
+                    verification_results=verification_results,
+                    task=task,
+                )
+
+                if status == "success":
+                    wt_ctx.sync_to_workspace(changed_files)
+
+                with contextlib.suppress(Exception):
+                    hooks_manager.trigger(
+                        "before_summary",
+                        workspace=self.workspace,
+                        run_id=run_id,
+                        task=task,
+                        status=status,
+                        changed_files=changed_files,
+                    )
+
+                summary = write_report(
+                    workspace=original_workspace,
+                    run_id=run_id,
+                    task=task,
+                    plan=plan_summaries + ["Write run summary."],
+                    changed_files=sorted(set(changed_files)),
+                    commands=commands_run or commands,
+                    verification=verification_status,
+                    risks=risks,
+                    verification_results=verification_results,
+                    checkpoint_path=str(checkpoint_path_value(original_workspace, run_id)) if checkpoint else None,
+                    restore_plan_path=str(restore_plan_path_value(original_workspace, run_id))
+                    if restore_plan_created
+                    else None,
+                    repair=repair_decision,
+                    repair_attempts=repair_attempts,
+                )
+                evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+                emit_event(
+                    event_callback,
+                    "run_end",
+                    "Run finished.",
+                    run_id=run_id,
+                    status=status,
+                    verification=verification_status,
+                    changed_files=sorted(set(changed_files)),
+                    summary_path=str(summary.relative_to(original_workspace)),
+                )
+                metrics = RunMetrics(
+                    duration_seconds=round(time.time() - start_time, 2),
+                    turns=turns_completed,
+                    tokens_estimate=metrics_tracker["tokens"],
+                    files_changed_count=len(changed_files),
+                    commands_run_count=len(commands_run or commands),
+                    repair_attempts=repair_attempts,
+                    success=(status == "success"),
+                )
+                return RunResult(
+                    run_id=run_id,
+                    status=status,
+                    turns=turns_completed,
+                    changed_files=sorted(set(changed_files)),
+                    commands=commands_run or commands,
+                    verification=verification_status,
+                    verification_results=verification_results,
+                    checkpoint_path=str(checkpoint_path_value(original_workspace, run_id)) if checkpoint else None,
+                    restore_plan_path=str(restore_plan_path_value(original_workspace, run_id))
+                    if restore_plan_created
+                    else None,
+                    repair=repair_decision,
+                    repair_attempts=repair_attempts,
+                    summary_path=str(summary.relative_to(original_workspace)),
+                    risk_summary=risks,
+                    metrics=metrics,
+                    mode=mode.value,
+                )
+            finally:
+                self.workspace = original_workspace
 
     def _execute_verification_and_repair_loop(
         self,
@@ -443,7 +462,15 @@ class RuntimeApp:
             with contextlib.suppress(Exception):
                 hooks_manager.trigger("after_verify", workspace=self.workspace, results=verification_results)
 
-            repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
+            from xhx_agent.planner.agents import ReviewerAgent
+
+            reviewer = ReviewerAgent()
+            review_dec = reviewer.review(task, changed_files, verification_results)
+            evidence.write_trace("reviewer_decision", review_dec.model_dump())
+
+            repair_decision = decide_repair(
+                verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair
+            )
             evidence.write_trace("repair_decision", repair_decision.model_dump())
             emit_event(
                 event_callback,
@@ -486,7 +513,10 @@ class RuntimeApp:
             before_repair_changed = len(changed_files)
             status = "success"
 
-            status, turns_completed, recent_error = self._run_model_tool_loop(
+            from xhx_agent.planner.agents import CoderAgent
+
+            coder = CoderAgent(self)
+            status, turns_completed, recent_error = coder.execute_turn(
                 task=f"Repair after failed verification: {task}",
                 profile=profile,
                 scan=scan,
@@ -499,8 +529,7 @@ class RuntimeApp:
                 plan_summaries=plan_summaries,
                 risks=risks,
                 recent_error=recent_error,
-                starting_turn=turns_completed + 1,
-                max_turns=1,
+                turn=turns_completed + 1,
                 event_callback=event_callback,
                 cancel_check=cancel_check,
                 metrics_tracker=metrics_tracker,
@@ -511,7 +540,9 @@ class RuntimeApp:
                 status = "failed"
                 message = "Repair loop produced no additional changes."
                 risks.append(message)
-                evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
+                evidence.write_trace(
+                    "repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts}
+                )
                 break
             _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
 
@@ -520,7 +551,16 @@ class RuntimeApp:
             restore_plan_created = True
             emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
 
-        return (status, verification_status, repair_attempts, turns_completed, recent_error, checkpoint, repair_decision, restore_plan_created)
+        return (
+            status,
+            verification_status,
+            repair_attempts,
+            turns_completed,
+            recent_error,
+            checkpoint,
+            repair_decision,
+            restore_plan_created,
+        )
 
     def run_task_json(
         self,
@@ -545,7 +585,9 @@ class RuntimeApp:
         context_pack = compile_context_pack(workspace=self.workspace, task=task, scan=scan)
         context_debug = write_context_debug_report(self.workspace, run_id, 1, context_pack)
         evidence.write_trace("context_pack", context_pack.model_dump())
-        evidence.write_trace("context_debug_report", {"turn": 1, "path": str(context_debug.relative_to(self.workspace))})
+        evidence.write_trace(
+            "context_debug_report", {"turn": 1, "path": str(context_debug.relative_to(self.workspace))}
+        )
         risks: list[str] = []
         try:
             plan = self._build_plan(task, profile, context_pack)
@@ -657,6 +699,7 @@ class RuntimeApp:
         if profile.provider == "mock":
             return MockModelClient().plan(task, self.workspace)
         if profile.provider == "openai-compatible":
+
             def emit_model_delta(delta: str) -> None:
                 emit_event(
                     event_callback,
@@ -764,7 +807,10 @@ class RuntimeApp:
             except Exception:
                 pass
             try:
-                plan = self._build_plan_for_turn(task, profile, context_pack, event_callback, turn)
+                from xhx_agent.planner.agents import PlannerAgent
+
+                planner = PlannerAgent(self)
+                plan = planner.plan(task, profile, context_pack, event_callback, turn)
                 evidence.write_trace("model_plan", {"turn": turn, **plan.model_dump()})
                 emit_event(
                     event_callback,
@@ -791,7 +837,9 @@ class RuntimeApp:
                     evidence.write_trace("cancel_requested", {"stage": "before_tool", "turn": turn, "tool": step.tool})
                     emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
                     return "cancelled", turns_completed, message
-                emit_event(event_callback, "tool_start", f"Tool execution started: {step.tool}", turn=turn, tool=step.tool)
+                emit_event(
+                    event_callback, "tool_start", f"Tool execution started: {step.tool}", turn=turn, tool=step.tool
+                )
                 try:
                     result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
                     if result is None or trace is None:
@@ -835,12 +883,16 @@ class RuntimeApp:
                 except (OSError, ValueError, RuntimeError) as exc:
                     recent_error = f"Tool execution error: {exc}"
                     risks.append(recent_error)
-                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": False})
+                    evidence.write_trace(
+                        "tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": False}
+                    )
                     return "failed", turns_completed, recent_error
                 except Exception as exc:  # noqa: BLE001
                     recent_error = f"Fatal unexpected error: {exc}"
                     risks.append(recent_error)
-                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": True})
+                    evidence.write_trace(
+                        "tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": True}
+                    )
                     return "failed", turns_completed, recent_error
             if _should_stop_after_turn(profile, changed_files, plan.steps):
                 return status, turns_completed, recent_error
@@ -854,7 +906,7 @@ def _max_model_turns(profile: ModelProfile) -> int:
     return 2 if profile.provider == "mock" else 4
 
 
-def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], steps: list[object]) -> bool:
+def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], steps: Sequence[object]) -> bool:
     if profile.provider == "mock":
         return True
     if changed_files:

@@ -31,7 +31,9 @@ SLASH_COMMAND_HINTS = [
 ]
 
 
-def render_console_page(state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool) -> Panel:
+def render_console_page(
+    state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool
+) -> Panel:
     """Render the v0.5 terminal page without owning input or execution."""
 
     header = _header_table(state, workspace=workspace, profile=profile, auto_repair=auto_repair, assume_yes=assume_yes)
@@ -111,9 +113,9 @@ def _activity_table(state: ConsoleState) -> Table:
     table.add_column("Summary")
     for item in state.tools[-5:]:
         table.add_row(f"tool:{item.tool}", item.status, item.summary or "")
-    for item in state.verifications[-3:]:
-        exit_code = "none" if item.exit_code is None else str(item.exit_code)
-        table.add_row("verify", item.status, f"{item.command} exit_code={exit_code}")
+    for vitem in state.verifications[-3:]:
+        exit_code = "none" if vitem.exit_code is None else str(vitem.exit_code)
+        table.add_row("verify", vitem.status, f"{vitem.command} exit_code={exit_code}")
     if state.repair_attempts:
         table.add_row(
             "repair",
@@ -131,9 +133,7 @@ def _context_table(state: ConsoleState) -> Table:
     table.add_row("selected", str(state.context_selected))
     table.add_row("omitted", str(state.context_omitted))
     budget = (
-        f"{state.context_used_tokens_estimate}/{state.context_budget_tokens}"
-        if state.context_budget_tokens
-        else "none"
+        f"{state.context_used_tokens_estimate}/{state.context_budget_tokens}" if state.context_budget_tokens else "none"
     )
     table.add_row("budget", budget)
     table.add_row("languages", ", ".join(state.detected_languages) or "unknown")

@@ -50,4 +50,3 @@ def decide_tool(tool_name: str) -> PolicyDecision:
         risk=RiskLevel.DENY,
         reason=f"Tool {tool_name} is not allowed by policy.",
     )
-

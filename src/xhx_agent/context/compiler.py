@@ -163,6 +163,7 @@ def compile_context_pack(
         )
 
     import json
+
     all_evidence = list(evidence_entries or [])
     try:
         evidence_dir = workspace / ".xhx" / "evidence"
@@ -627,7 +628,7 @@ def _limit_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n...<truncated>"
 
 
-_tiktoken_encoding = None
+_tiktoken_encoding: Any = None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -635,6 +636,7 @@ def _estimate_tokens(text: str) -> int:
     if _tiktoken_encoding is None:
         try:
             import tiktoken
+
             _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
         except Exception:
             _tiktoken_encoding = False

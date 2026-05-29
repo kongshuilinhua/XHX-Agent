@@ -73,7 +73,7 @@ def sync_index_to_sqlite(workspace: Path, index: RepoIntelIndex) -> Path:
         # 2. Clear old records in this transaction
         cursor.execute("DELETE FROM symbols")
         cursor.execute("DELETE FROM imports")
-        cursor.execute("DELETE FROM \"references\"")
+        cursor.execute('DELETE FROM "references"')
         cursor.execute("DELETE FROM calls")
 
         # 3. Insert Symbols
@@ -90,32 +90,17 @@ def sync_index_to_sqlite(workspace: Path, index: RepoIntelIndex) -> Path:
             for s in index.symbol_index.symbols
         ]
         if symbols_data:
-            cursor.executemany(
-                "INSERT INTO symbols VALUES (?, ?, ?, ?, ?, ?, ?)",
-                symbols_data
-            )
+            cursor.executemany("INSERT INTO symbols VALUES (?, ?, ?, ?, ?, ?, ?)", symbols_data)
 
         # 4. Insert Imports
-        imports_data = [
-            (e.importer, e.target, e.kind)
-            for e in index.import_graph.edges
-        ]
+        imports_data = [(e.importer, e.target, e.kind) for e in index.import_graph.edges]
         if imports_data:
-            cursor.executemany(
-                "INSERT INTO imports VALUES (?, ?, ?)",
-                imports_data
-            )
+            cursor.executemany("INSERT INTO imports VALUES (?, ?, ?)", imports_data)
 
         # 5. Insert References
-        references_data = [
-            (r.name, r.path, r.line, r.excerpt)
-            for r in index.reference_index.references
-        ]
+        references_data = [(r.name, r.path, r.line, r.excerpt) for r in index.reference_index.references]
         if references_data:
-            cursor.executemany(
-                "INSERT INTO \"references\" VALUES (?, ?, ?, ?)",
-                references_data
-            )
+            cursor.executemany('INSERT INTO "references" VALUES (?, ?, ?, ?)', references_data)
 
         # 6. Insert Calls
         calls_data = [
@@ -133,10 +118,7 @@ def sync_index_to_sqlite(workspace: Path, index: RepoIntelIndex) -> Path:
             for c in index.call_graph.edges
         ]
         if calls_data:
-            cursor.executemany(
-                "INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                calls_data
-            )
+            cursor.executemany("INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", calls_data)
 
         conn.commit()
     finally:

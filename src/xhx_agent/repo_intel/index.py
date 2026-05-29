@@ -84,9 +84,12 @@ def _update_symbols(root: Path, old_symbols: list, changed_files: list, changed_
     return SymbolIndex(root=str(root), symbols=merged_symbols)
 
 
-def _update_imports(root: Path, old_edges: list, changed_files: list, changed_or_deleted_paths: set, new_files_by_path: dict) -> ImportGraph:
+def _update_imports(
+    root: Path, old_edges: list, changed_files: list, changed_or_deleted_paths: set, new_files_by_path: dict
+) -> ImportGraph:
     kept_edges = [
-        e for e in old_edges
+        e
+        for e in old_edges
         if e.importer not in changed_or_deleted_paths
         and e.importer in new_files_by_path
         and e.target in new_files_by_path
@@ -104,10 +107,19 @@ def _update_imports(root: Path, old_edges: list, changed_files: list, changed_or
     return ImportGraph(root=str(root), edges=merged_edges)
 
 
-def _update_call_graph(root: Path, old_edges: list, changed_files: list, changed_or_deleted_paths: set, new_files_by_path: dict, symbol_index: SymbolIndex, max_edges: int) -> CallGraph:
+def _update_call_graph(
+    root: Path,
+    old_edges: list,
+    changed_files: list,
+    changed_or_deleted_paths: set,
+    new_files_by_path: dict,
+    symbol_index: SymbolIndex,
+    max_edges: int,
+) -> CallGraph:
     resolver = _SymbolResolver(symbol_index.symbols)
     kept_call_edges = [
-        e for e in old_edges
+        e
+        for e in old_edges
         if e.caller_path not in changed_or_deleted_paths
         and e.caller_path in new_files_by_path
         and (e.callee_path is None or e.callee_path in new_files_by_path)
@@ -123,7 +135,9 @@ def _update_call_graph(root: Path, old_edges: list, changed_files: list, changed
             file_symbols = [symbol for symbol in symbol_index.symbols if symbol.path == file.path]
             new_call_edges.extend(_js_ts_call_edges(root, path, file.language, file_symbols, resolver))
 
-    merged_call_edges = sorted(kept_call_edges + new_call_edges, key=lambda e: (e.caller_path, e.caller_line, e.call_line, e.callee))
+    merged_call_edges = sorted(
+        kept_call_edges + new_call_edges, key=lambda e: (e.caller_path, e.caller_line, e.call_line, e.callee)
+    )
     call_graph_truncated = len(merged_call_edges) >= max_edges
     if call_graph_truncated:
         merged_call_edges = merged_call_edges[:max_edges]
@@ -148,8 +162,8 @@ def _update_references(
     definitions = {(symbol.name, symbol.path, symbol.line) for symbol in symbol_index.symbols}
     patterns = {name: re.compile(rf"\b{re.escape(name)}\b") for name in names}
 
-    new_references = []
-    per_symbol_counts = {}
+    new_references: list[Reference] = []
+    per_symbol_counts: dict[str, int] = {}
     for r in kept_references:
         per_symbol_counts[r.name] = per_symbol_counts.get(r.name, 0) + 1
 
@@ -237,11 +251,21 @@ def incremental_update_repo_intel_index(workspace: Path, old_index: RepoIntelInd
     symbol_index = _update_symbols(root, old_index.symbol_index.symbols, changed_files, changed_or_deleted_paths)
 
     # 2. Update Imports
-    import_graph = _update_imports(root, old_index.import_graph.edges, changed_files, changed_or_deleted_paths, new_files_by_path)
+    import_graph = _update_imports(
+        root, old_index.import_graph.edges, changed_files, changed_or_deleted_paths, new_files_by_path
+    )
 
     # 3. Update Call Graph
     max_edges = old_index.call_graph.max_edges or 2000
-    call_graph = _update_call_graph(root, old_index.call_graph.edges, changed_files, changed_or_deleted_paths, new_files_by_path, symbol_index, max_edges)
+    call_graph = _update_call_graph(
+        root,
+        old_index.call_graph.edges,
+        changed_files,
+        changed_or_deleted_paths,
+        new_files_by_path,
+        symbol_index,
+        max_edges,
+    )
 
     # 4. Update References
     reference_index = _update_references(
@@ -333,5 +357,5 @@ def diagnose_repo_intel_index(workspace: Path) -> RepoIntelDiagnostics:
 def repo_map_fingerprint(repo_map: RepoMap) -> str:
     digest = hashlib.sha256()
     for item in sorted(repo_map.files, key=lambda current: current.path):
-        digest.update(f"{item.path}\0{item.size_bytes}\0{item.mtime_ns}\n".encode("utf-8"))
+        digest.update(f"{item.path}\0{item.size_bytes}\0{item.mtime_ns}\n".encode())
     return digest.hexdigest()

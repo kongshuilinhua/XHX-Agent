@@ -13,6 +13,7 @@ class DiffSummary(BaseModel):
     truncated: bool = False
     risk_summary: list[str] = []
 
+
 def _is_git_worktree(workspace: Path) -> bool:
     try:
         completed = subprocess.run(
@@ -26,6 +27,7 @@ def _is_git_worktree(workspace: Path) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return completed.returncode == 0 and completed.stdout.strip() == "true"
+
 
 class GitOps:
     def __init__(self, workspace: Path) -> None:

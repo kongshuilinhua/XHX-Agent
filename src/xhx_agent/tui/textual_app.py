@@ -8,8 +8,10 @@ from typing import TypeVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, Static
 
+from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -17,8 +19,6 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
 
-from textual.suggester import Suggester
-from xhx_agent.cli.completion import XhxCompleter
 
 class XhxTextualSuggester(Suggester):
     def __init__(self, completer: XhxCompleter) -> None:
@@ -32,6 +32,7 @@ class XhxTextualSuggester(Suggester):
         if candidates:
             return candidates[0]
         return None
+
 
 T = TypeVar("T")
 
@@ -221,7 +222,7 @@ class TextualCommandConsoleApp(App[None]):
         yield Input(
             placeholder="Type a task or slash command. Press Tab or Right arrow to complete.",
             id="input",
-            suggester=XhxTextualSuggester(completer)
+            suggester=XhxTextualSuggester(completer),
         )
         yield Footer()
 

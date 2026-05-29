@@ -5,8 +5,14 @@ from xhx_agent.tui.state import ConsoleState
 def test_console_state_reduces_runtime_events() -> None:
     state = ConsoleState()
 
-    state.reduce(RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}))
-    state.reduce(RuntimeEvent(type="scan", message="Scan.", payload={"detected_languages": ["python"], "file_count": 4}))
+    state.reduce(
+        RuntimeEvent(
+            type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}
+        )
+    )
+    state.reduce(
+        RuntimeEvent(type="scan", message="Scan.", payload={"detected_languages": ["python"], "file_count": 4})
+    )
     state.reduce(
         RuntimeEvent(
             type="context_pack",
@@ -14,7 +20,11 @@ def test_console_state_reduces_runtime_events() -> None:
             payload={"turn": 1, "selected": 3, "omitted": 1, "used_tokens_estimate": 120, "budget_tokens": 6000},
         )
     )
-    state.reduce(RuntimeEvent(type="model_plan", message="Patch calc", payload={"turn": 1, "step_count": 1, "status": "continue"}))
+    state.reduce(
+        RuntimeEvent(
+            type="model_plan", message="Patch calc", payload={"turn": 1, "step_count": 1, "status": "continue"}
+        )
+    )
     state.reduce(RuntimeEvent(type="tool_start", message="Tool started.", payload={"turn": 1, "tool": "apply_patch"}))
     state.reduce(
         RuntimeEvent(
@@ -79,9 +89,17 @@ def test_console_state_reduces_runtime_events() -> None:
 def test_console_state_reduces_cancel_events() -> None:
     state = ConsoleState()
 
-    state.reduce(RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}))
-    state.reduce(RuntimeEvent(type="cancel_requested", message="Cancel requested by user.", payload={"source": "console"}))
-    state.reduce(RuntimeEvent(type="run_cancelled", message="Run cancelled before verification.", payload={"run_id": "run-1"}))
+    state.reduce(
+        RuntimeEvent(
+            type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}
+        )
+    )
+    state.reduce(
+        RuntimeEvent(type="cancel_requested", message="Cancel requested by user.", payload={"source": "console"})
+    )
+    state.reduce(
+        RuntimeEvent(type="run_cancelled", message="Run cancelled before verification.", payload={"run_id": "run-1"})
+    )
 
     assert state.status == "cancelled"
     assert state.cancel_requested is True
