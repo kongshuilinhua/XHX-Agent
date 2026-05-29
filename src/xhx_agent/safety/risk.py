@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     SAFE = "safe"
     CONFIRM = "confirm"
     DENY = "deny"

@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from xhx_agent.context.pack import ContextPack
 from xhx_agent.models.types import ModelClientError, ModelPlan
 
-
 ModelDeltaCallback = Callable[[str], None]
 
 

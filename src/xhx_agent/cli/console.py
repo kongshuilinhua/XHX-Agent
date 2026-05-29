@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from pathlib import Path
 import signal
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -19,7 +19,6 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.live import LiveDashboard
 from xhx_agent.tui.page import render_console_page
 from xhx_agent.tui.state import ConsoleState
-
 
 SLASH_COMMANDS = {
     "/help",

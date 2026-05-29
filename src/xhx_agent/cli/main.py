@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-import click
 import typer
 from rich.console import Console
 
@@ -14,7 +13,6 @@ from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
-
 
 app = typer.Typer(help="xhx-agent local coding agent CLI.")
 config_app = typer.Typer(help="Manage xhx-agent configuration.")
@@ -53,6 +51,8 @@ def repo_index(
     console.print(f"files: {diagnostics.file_count}")
     console.print(f"symbols: {diagnostics.symbol_count}")
     console.print(f"import edges: {diagnostics.import_edge_count}")
+    console.print(f"call edges: {diagnostics.call_edge_count}")
+    console.print(f"call graph truncated: {diagnostics.call_graph_truncated}")
     console.print(f"references: {diagnostics.reference_count}")
     console.print(f"reference truncated: {diagnostics.reference_truncated}")
     if diagnostics.skipped_reference_files:
@@ -141,6 +141,82 @@ def _confirm_terminal_command(command: str, decision: PolicyDecision) -> bool:
     console.print(f"reason: {decision.reason}")
     try:
         return typer.confirm("Run this command?", default=False, abort=False)
-    except (click.Abort, EOFError, KeyboardInterrupt):
+    except (typer.Abort, EOFError, KeyboardInterrupt):
         console.print("Verification command declined.")
         return False
+
+
+@app.command("rpc")
+def rpc() -> None:
+    from xhx_agent.cli.rpc import start_rpc_loop
+    start_rpc_loop()
+
+
+@app.command("replay")
+def replay(
+    run_id: Annotated[str, typer.Argument(help="Run ID to replay from trace file.")],
+    json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON result.")] = False,
+) -> None:
+    from xhx_agent.evals.replay import TrailReplayer
+    replayer = TrailReplayer(Path.cwd())
+    try:
+        result = replayer.replay(run_id)
+        if json_output:
+            console.print(result.model_dump_json(indent=2))
+            return
+        console.print(f"Replay successful for run: {run_id}")
+        console.print(f"status: {result.status}")
+        console.print(f"summary: {result.summary_path}")
+        if result.metrics:
+            console.print(f"turns: {result.metrics.turns}")
+            console.print(f"duration: {result.metrics.duration_seconds}s")
+            console.print(f"tokens: {result.metrics.tokens_estimate}")
+    except Exception as e:
+        console.print(f"[red]Error during replay: {e}[/red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("benchmark")
+def benchmark(
+    profile: Annotated[str, typer.Option("--profile", help="Model profile name to benchmark.")] = "mock",
+    json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
+) -> None:
+    from xhx_agent.evals.benchmark import BenchmarkRunner
+    runner = BenchmarkRunner(Path.cwd())
+    if not json_output:
+        console.print(f"Running benchmark fixtures against profile: {profile}...")
+    try:
+        results = runner.run_benchmark(profile)
+        if json_output:
+            import json
+            console.print(json.dumps([r.model_dump() for r in results], indent=2))
+            return
+
+        # Render a beautiful rich table
+        from rich.table import Table
+        table = Table(title=f"xhx-agent Benchmark Results ({profile})")
+        table.add_column("Fixture ID", style="cyan")
+        table.add_column("Name", style="magenta")
+        table.add_column("Status", style="green")
+        table.add_column("Turns", justify="right")
+        table.add_column("Duration", justify="right")
+        table.add_column("Est. Tokens", justify="right")
+        table.add_column("Success", justify="center")
+
+        for r in results:
+            success_emoji = "✅" if r.success else "❌"
+            status_style = "bold green" if r.status == "success" else "bold red"
+            table.add_row(
+                r.fixture_id,
+                r.name,
+                f"[{status_style}]{r.status}[/{status_style}]",
+                str(r.turns),
+                f"{r.duration_seconds:.2f}s",
+                str(r.tokens_estimate),
+                success_emoji
+            )
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error running benchmarks: {e}[/red]")
+        raise typer.Exit(code=1)
+

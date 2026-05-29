@@ -2,9 +2,9 @@
 
 本文档是 xhx-agent 的实现总纲。它把项目从规划文档推进到可执行开发路线，说明目标形态、技术选型、模块边界、版本顺序和验收标准。
 
-更细的实施级规格见 [实施文档索引](implementation/00-implementation-index.md)。总纲用于判断方向，实施文档用于拆任务、定接口和写测试。
+更细的实施级规格见 [实施文档索引](implementation/13-implementation-index.md)。总纲用于判断方向，实施文档用于拆任务、定接口和写测试。
 
-后续开发以 [版本实施基线](implementation/07-implementation-baseline.md) 为准。版本名称、进入条件和验收标准必须先在基线文档中确认，不允许实现时临时新增小版本名。
+后续开发以 [版本实施基线](implementation/20-implementation-baseline.md) 为准。版本名称、进入条件和验收标准必须先在基线文档中确认，不允许实现时临时新增小版本名。
 
 ## 1. 项目目标
 
@@ -174,13 +174,14 @@ xhx-agent/
     11-verification-router.md
     12-development-plan.md
     implementation/
-      00-implementation-index.md
-      01-module-boundaries.md
-      02-runtime-contracts.md
-      03-v0.1-implementation-spec.md
-      04-version-breakdown.md
-      05-testing-fixtures.md
-      06-tui-command-console-spec.md
+      13-implementation-index.md
+      14-module-boundaries.md
+      15-runtime-contracts.md
+      16-v0.1-implementation-spec.md
+      17-version-breakdown.md
+      18-testing-fixtures.md
+      19-tui-command-console-spec.md
+      20-implementation-baseline.md
 ```
 
 ## 4. 本地状态目录
@@ -868,11 +869,11 @@ model_name
 
 编码前先阅读实施文档：
 
-1. [模块边界](implementation/01-module-boundaries.md)。
-2. [运行时契约](implementation/02-runtime-contracts.md)。
-3. [v0.1 实施规格](implementation/03-v0.1-implementation-spec.md)。
-4. [测试 Fixture 与验收](implementation/05-testing-fixtures.md)。
-5. [版本实施基线](implementation/07-implementation-baseline.md)。
+1. [模块边界](implementation/14-module-boundaries.md)。
+2. [运行时契约](implementation/15-runtime-contracts.md)。
+3. [v0.1 实施规格](implementation/16-v0.1-implementation-spec.md)。
+4. [测试 Fixture 与验收](implementation/18-testing-fixtures.md)。
+5. [版本实施基线](implementation/20-implementation-baseline.md)。
 
 ## 9. 明确反模式
 

@@ -1,12 +1,11 @@
 from pathlib import Path
 
-from xhx_agent.cli.main import _confirm_terminal_command
-from xhx_agent.cli.main import app
+from typer.testing import CliRunner
+
+from xhx_agent.cli.main import _confirm_terminal_command, app
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
-from typer.testing import CliRunner
-
 
 runner = CliRunner()
 
@@ -50,6 +49,7 @@ def test_repo_index_command_json_reports_current_index() -> None:
     assert result.exit_code == 0
     assert '"status": "current"' in result.output
     assert '"symbol_count": 1' in result.output
+    assert '"call_edge_count": 0' in result.output
 
 
 def test_repo_index_refresh_creates_missing_index() -> None:

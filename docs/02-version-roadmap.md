@@ -12,7 +12,7 @@ v0.1 按三个固定子阶段推进：
 - **v0.1-B Tool-call loop**：Runtime 能执行“模型 -> 工具调用 -> 工具结果 -> 再调用模型”的最小循环。
 - **v0.1-C 验证闭环**：完成“读 -> 改 -> 测 -> 报告”的真实 v0.1 闭环。
 
-子阶段名称、当前完成度和路线变更规则以 [版本实施基线](implementation/07-implementation-baseline.md) 为准。
+子阶段名称、当前完成度和路线变更规则以 [版本实施基线](implementation/20-implementation-baseline.md) 为准。
 
 必须实现：
 
@@ -176,7 +176,7 @@ v0.1 按三个固定子阶段推进：
 必须实现：
 
 - repo map。
-- Python、JavaScript、TypeScript 的 Tree-sitter 符号提取。
+- Python (使用内置 ast)、JavaScript/TypeScript 的轻量正则符号提取 (Tree-sitter 作为后续增强)。
 - symbol search。
 - 围绕符号的 context builder。
 - 文件、模块、函数、测试、构建命令之间的关系。

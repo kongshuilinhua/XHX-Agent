@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-
 MAX_REPAIR_ATTEMPTS = 2
 
 

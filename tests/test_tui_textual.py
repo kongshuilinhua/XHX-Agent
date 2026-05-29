@@ -1,15 +1,23 @@
-from xhx_agent.runtime.events import RuntimeEvent
-from xhx_agent.tui.state import ConsoleState
-from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
-from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, PlanPreview, RunResult, RuntimeApp
-from xhx_agent.safety.policy import PolicyDecision
-from xhx_agent.safety.risk import RiskLevel
-from xhx_agent.tools.terminal import TerminalResult
-from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 import asyncio
 import shutil
 import threading
 from pathlib import Path
+
+from xhx_agent.runtime.app import (
+    DiffSummary,
+    ManualRepairResult,
+    ManualVerificationResult,
+    PlanPreview,
+    RunResult,
+    RuntimeApp,
+)
+from xhx_agent.runtime.events import RuntimeEvent
+from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
+from xhx_agent.safety.policy import PolicyDecision
+from xhx_agent.safety.risk import RiskLevel
+from xhx_agent.tools.terminal import TerminalResult
+from xhx_agent.tui.state import ConsoleState
+from xhx_agent.tui.textual_app import TextualCommandConsoleApp, TextualSnapshot
 
 
 def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None:

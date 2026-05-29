@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -15,7 +16,6 @@ from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
-
 
 T = TypeVar("T")
 
@@ -75,7 +75,7 @@ class TextualSnapshot:
         if state.cancel_requested:
             conversation_lines.append(f"cancel> {state.cancel_reason or 'requested'}")
         if getattr(state, "textual_messages", None):
-            conversation_lines.extend(str(item) for item in getattr(state, "textual_messages"))
+            conversation_lines.extend(str(item) for item in state.textual_messages)
         if not conversation_lines:
             conversation_lines.append("No conversation yet.")
         permission_state = "next confirm: default-deny"

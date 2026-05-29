@@ -1,22 +1,28 @@
 import json
 from pathlib import Path
 
-from xhx_agent.repo_intel.repo_map import build_repo_map
-from xhx_agent.repo_intel.symbols import build_symbol_index, search_symbols
-from xhx_agent.repo_intel.scanner import scan_project
-from xhx_agent.repo_intel.xhx_md import render_xhx_md
+from xhx_agent.repo_intel.calls import build_call_graph
 from xhx_agent.repo_intel.context_builder import build_symbol_context
-from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.impact import analyze_impact
-from xhx_agent.repo_intel.index import diagnose_repo_intel_index, load_repo_intel_index, read_repo_intel_index, write_repo_intel_index
+from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
+from xhx_agent.repo_intel.index import (
+    diagnose_repo_intel_index,
+    load_repo_intel_index,
+    read_repo_intel_index,
+    write_repo_intel_index,
+)
 from xhx_agent.repo_intel.references import build_reference_index, search_references
+from xhx_agent.repo_intel.repo_map import build_repo_map
+from xhx_agent.repo_intel.scanner import scan_project
+from xhx_agent.repo_intel.symbols import build_symbol_index, search_symbols
+from xhx_agent.repo_intel.xhx_md import render_xhx_md
 
 
 def test_repo_map_classifies_files_and_verification_hints(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     (tmp_path / "package.json").write_text('{"scripts":{"test":"node test.js","build":"node -c src/index.js"}}', encoding="utf-8")
     (tmp_path / ".xhx").mkdir()
@@ -342,6 +348,61 @@ def test_js_ts_import_graph_resolves_tsconfig_paths_alias(tmp_path: Path) -> Non
     assert any(edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges)
 
 
+def test_call_graph_tracks_python_function_calls(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text(
+        "\n".join(
+            [
+                "def normalize(value):",
+                "    return int(value)",
+                "",
+                "def add(a, b):",
+                "    return normalize(a) + normalize(b)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    graph = build_call_graph(tmp_path)
+
+    assert any(
+        edge.caller == "add"
+        and edge.callee == "normalize"
+        and edge.callee_path == "src/calc.py"
+        and edge.confidence >= 0.8
+        for edge in graph.edges
+    )
+
+
+def test_call_graph_tracks_js_function_calls(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "math_ops.js").write_text(
+        "\n".join(
+            [
+                "export function normalize(value) {",
+                "  return Number(value);",
+                "}",
+                "export function add(a, b) {",
+                "  return normalize(a) + normalize(b);",
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    graph = build_call_graph(tmp_path)
+
+    assert any(
+        edge.caller == "add"
+        and edge.callee == "normalize"
+        and edge.callee_path == "src/math_ops.js"
+        and edge.confidence >= 0.8
+        for edge in graph.edges
+    )
+
+
 def test_js_ts_import_graph_resolves_tsconfig_base_url_import(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
@@ -372,7 +433,7 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
 
     path = write_repo_intel_index(tmp_path)
     index = read_repo_intel_index(tmp_path)
@@ -383,6 +444,7 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     assert any(item.path == "src/calc.py" for item in index.repo_map.files)
     assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
     assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
+    assert any(edge.caller == "test_add" and edge.callee == "add" for edge in index.call_graph.edges)
     assert any(reference.name == "add" and reference.path == "tests/test_calc.py" for reference in index.reference_index.references)
 
 
@@ -403,6 +465,7 @@ def test_repo_intel_diagnostics_reports_current_index(tmp_path: Path) -> None:
     assert diagnostics.status == "current"
     assert diagnostics.file_count >= 1
     assert diagnostics.symbol_count == 1
+    assert diagnostics.call_edge_count == 0
     assert diagnostics.size_bytes > 0
     assert diagnostics.content_fingerprint == diagnostics.current_fingerprint
 
@@ -462,3 +525,124 @@ def test_load_repo_intel_index_rebuilds_legacy_index_without_references(tmp_path
 
     assert loaded.reference_index.root
     assert any(reference.name == "add" for reference in loaded.reference_index.references)
+
+
+def test_load_repo_intel_index_rebuilds_legacy_index_without_call_graph(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    path = write_repo_intel_index(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("call_graph")
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    diagnostics = diagnose_repo_intel_index(tmp_path)
+    loaded = load_repo_intel_index(tmp_path)
+
+    assert diagnostics.status == "stale"
+    assert "call_graph" in diagnostics.reason
+    assert loaded.call_graph.root
+    assert any(edge.caller == "test_add" and edge.callee == "add" for edge in loaded.call_graph.edges)
+
+
+def test_symbol_index_extracts_ts_interfaces_and_types(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "types.ts").write_text(
+        "\n".join(
+            [
+                "export interface User {",
+                "    id: string;",
+                "    name: string;",
+                "}",
+                "export type UserID = string;",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    index = build_symbol_index(tmp_path)
+    by_name = {symbol.name: symbol for symbol in index.symbols}
+
+    assert by_name["User"].kind == "interface"
+    assert by_name["User"].path == "src/types.ts"
+    assert by_name["UserID"].kind == "type"
+    assert by_name["UserID"].path == "src/types.ts"
+
+
+def test_sqlite_sync_functionality(tmp_path: Path) -> None:
+    import sqlite3
+
+    from xhx_agent.repo_intel.db import repo_db_path
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+
+    # This should automatically trigger SQLite sync
+    write_repo_intel_index(tmp_path)
+
+    db_file = repo_db_path(tmp_path)
+    assert db_file.exists()
+
+    conn = sqlite3.connect(str(db_file))
+    try:
+        cursor = conn.cursor()
+
+        # Verify symbols
+        cursor.execute("SELECT name, kind, path FROM symbols ORDER BY name")
+        symbols = cursor.fetchall()
+        assert any(name == "add" and kind == "function" and path == "src/calc.py" for name, kind, path in symbols)
+        assert any(name == "test_add" and kind == "function" and path == "tests/test_calc.py" for name, kind, path in symbols)
+
+        # Verify imports
+        cursor.execute("SELECT importer, target FROM imports")
+        imports = cursor.fetchall()
+        assert any(importer == "tests/test_calc.py" and target == "src/calc.py" for importer, target in imports)
+
+        # Verify references
+        cursor.execute("SELECT name, path, line FROM \"references\"")
+        references = cursor.fetchall()
+        assert any(name == "add" and path == "tests/test_calc.py" and line == 1 for name, path, line in references)
+        assert any(name == "add" and path == "tests/test_calc.py" and line == 4 for name, path, line in references)
+
+        # Verify calls
+        cursor.execute("SELECT caller, callee FROM calls")
+        calls = cursor.fetchall()
+        assert any(caller == "test_add" and callee == "add" for caller, callee in calls)
+
+    finally:
+        conn.close()
+
+
+def test_incremental_index_updates_add_modify_delete(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    source1 = tmp_path / "src" / "calc.py"
+    source1.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    # Load first time (full build)
+    index1 = load_repo_intel_index(tmp_path)
+    assert any(symbol.name == "add" for symbol in index1.symbol_index.symbols)
+
+    # 1. Modify existing file
+    source1.write_text("def add(a, b):\n    return a + b\n# modified\n", encoding="utf-8")
+    index2 = load_repo_intel_index(tmp_path)
+    assert index2.content_fingerprint != index1.content_fingerprint
+    assert any(symbol.name == "add" for symbol in index2.symbol_index.symbols)
+
+    # 2. Add new file
+    source2 = tmp_path / "src" / "extra.py"
+    source2.write_text("def multiply(a, b):\n    return a * b\n", encoding="utf-8")
+
+    index3 = load_repo_intel_index(tmp_path)
+    assert any(symbol.name == "multiply" for symbol in index3.symbol_index.symbols)
+    assert any(symbol.name == "add" for symbol in index3.symbol_index.symbols)
+
+    # 3. Delete a file
+    source2.unlink()
+    index4 = load_repo_intel_index(tmp_path)
+    assert not any(symbol.name == "multiply" for symbol in index4.symbol_index.symbols)
+    assert any(symbol.name == "add" for symbol in index4.symbol_index.symbols)
+

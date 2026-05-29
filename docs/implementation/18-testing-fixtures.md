@@ -261,7 +261,7 @@ foreach($l in $links){ if(-not (Test-Path $l)){ $missing += $l } }
 if($missing.Count){ $missing } else { 'all README docs links exist' }
 ```
 
-实施文档索引链接校验同样适用于 `docs/implementation/00-implementation-index.md`。
+实施文档索引链接校验同样适用于 `docs/implementation/13-implementation-index.md`。
 
 ## 成功率指标
 

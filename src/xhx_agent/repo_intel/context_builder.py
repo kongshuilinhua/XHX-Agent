@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from xhx_agent.repo_intel.symbols import Symbol, SymbolIndex, build_symbol_index, search_symbols
+from xhx_agent.repo_intel.symbols import Symbol, build_symbol_index, search_symbols
 
 
 class SymbolContext(BaseModel):

@@ -39,8 +39,15 @@ def decide_tool(tool_name: str) -> PolicyDecision:
             risk=RiskLevel.CONFIRM,
             reason="Structured repository write allowed by apply_patch-only policy.",
         )
+    if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason=f"Dynamic MCP tool {tool_name} execution allowed under sandbox controls.",
+        )
     return PolicyDecision(
         decision="deny",
         risk=RiskLevel.DENY,
         reason=f"Tool {tool_name} is not allowed by policy.",
     )
+
