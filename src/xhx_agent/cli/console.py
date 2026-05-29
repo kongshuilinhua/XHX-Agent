@@ -20,6 +20,22 @@ from xhx_agent.tui.live import LiveDashboard
 from xhx_agent.tui.page import render_console_page
 from xhx_agent.tui.state import ConsoleState
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from xhx_agent.cli.completion import XhxCompleter
+
+class PromptToolkitCompleter(Completer):
+    def __init__(self, completer: XhxCompleter) -> None:
+        self.completer = completer
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.strip():
+            return
+        candidates = self.completer.get_completions(text)
+        for val in candidates:
+            yield Completion(val, start_position=-len(text))
+
 SLASH_COMMANDS = {
     "/help",
     "/model",
@@ -65,13 +81,23 @@ class CommandConsole:
         self.cancel_requested = False
         self.live_enabled = self.console.is_interactive if live_enabled is None else live_enabled
         self.live_dashboard: LiveDashboard | None = None
+        self.completer = XhxCompleter(self.workspace)
+        try:
+            self.prompt_session = PromptSession(completer=PromptToolkitCompleter(self.completer))
+        except Exception:
+            self.prompt_session = None
 
     def run(self) -> None:
-        self.console.print(Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent"))
+        self.console.print(
+            Panel("xhx-agent command console. Type /help for commands, /exit to quit.", title="xhx-agent")
+        )
         self.print_dashboard()
         while True:
             try:
-                text = typer.prompt("xhx")
+                if self.prompt_session:
+                    text = self.prompt_session.prompt("xhx> ")
+                else:
+                    text = typer.prompt("xhx")
             except EOFError:
                 self.console.print("Exiting xhx-agent console.")
                 return
@@ -604,9 +630,9 @@ class CommandConsole:
             for item in self.state.tools[-3:]:
                 table.add_row(f"tool:{item.tool}", item.status, item.summary or "")
         if self.state.verifications:
-            for item in self.state.verifications[-2:]:
-                exit_code = "none" if item.exit_code is None else str(item.exit_code)
-                table.add_row("verify", item.status, f"{item.command} exit_code={exit_code}")
+            for vitem in self.state.verifications[-2:]:
+                exit_code = "none" if vitem.exit_code is None else str(vitem.exit_code)
+                table.add_row("verify", vitem.status, f"{vitem.command} exit_code={exit_code}")
         if self.state.repair_attempts:
             table.add_row(
                 "repair",
