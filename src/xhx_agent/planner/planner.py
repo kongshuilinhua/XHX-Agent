@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 from pathlib import Path
 
 from xhx_agent.planner.modes import DAGNode, DAGPlan
@@ -18,63 +19,67 @@ class DAGPlanner:
 
         if "refactor" in lowered or "math" in lowered:
             # Multi-step math refactoring task
-            nodes.extend([
-                DAGNode(
-                    node_id="read_calc",
-                    description="Read calc.py to understand math implementation",
-                    tool="read_file",
-                    arguments={"path": "src/calc.py"},
-                    dependencies=[]
-                ),
-                DAGNode(
-                    node_id="search_math",
-                    description="Search for math usages across project",
-                    tool="search",
-                    arguments={"query": "add"},
-                    dependencies=[]
-                ),
-                DAGNode(
-                    node_id="patch_calc",
-                    description="Refactor calc.py with robust math functions",
-                    tool="apply_patch",
-                    arguments={
-                        "patch": "*** Begin Patch\n*** Update File: src/calc.py\n@@\n-def add(a, b):\n-    return a + b\n+def add(a, b):\n+    \"\"\"Add two numbers safely\"\"\"\n+    return float(a) + float(b)\n*** End Patch\n"
-                    },
-                    dependencies=["read_calc", "search_math"]
-                ),
-                DAGNode(
-                    node_id="verify_test",
-                    description="Run verification tests",
-                    tool="terminal",
-                    arguments={"command": "python -m pytest"},
-                    dependencies=["patch_calc"]
-                )
-            ])
+            nodes.extend(
+                [
+                    DAGNode(
+                        node_id="read_calc",
+                        description="Read calc.py to understand math implementation",
+                        tool="read_file",
+                        arguments={"path": "src/calc.py"},
+                        dependencies=[],
+                    ),
+                    DAGNode(
+                        node_id="search_math",
+                        description="Search for math usages across project",
+                        tool="search",
+                        arguments={"query": "add"},
+                        dependencies=[],
+                    ),
+                    DAGNode(
+                        node_id="patch_calc",
+                        description="Refactor calc.py with robust math functions",
+                        tool="apply_patch",
+                        arguments={
+                            "patch": '*** Begin Patch\n*** Update File: src/calc.py\n@@\n-def add(a, b):\n-    return a + b\n+def add(a, b):\n+    """Add two numbers safely"""\n+    return float(a) + float(b)\n*** End Patch\n'
+                        },
+                        dependencies=["read_calc", "search_math"],
+                    ),
+                    DAGNode(
+                        node_id="verify_test",
+                        description="Run verification tests",
+                        tool="terminal",
+                        arguments={"command": "python -m pytest"},
+                        dependencies=["patch_calc"],
+                    ),
+                ]
+            )
         else:
             # Default fallback simple linear edit in DAG format
-            nodes.extend([
-                DAGNode(
-                    node_id="read_root",
-                    description="Read main codebase file",
-                    tool="read_file",
-                    arguments={"path": "README.md"},
-                    dependencies=[]
-                ),
-                DAGNode(
-                    node_id="verify_root",
-                    description="Verify project state",
-                    tool="terminal",
-                    arguments={"command": "python -m pytest"},
-                    dependencies=["read_root"]
-                )
-            ])
+            nodes.extend(
+                [
+                    DAGNode(
+                        node_id="read_root",
+                        description="Read main codebase file",
+                        tool="read_file",
+                        arguments={"path": "README.md"},
+                        dependencies=[],
+                    ),
+                    DAGNode(
+                        node_id="verify_root",
+                        description="Verify project state",
+                        tool="terminal",
+                        arguments={"command": "python -m pytest"},
+                        dependencies=["read_root"],
+                    ),
+                ]
+            )
 
         return DAGPlan(root=str(self.workspace), nodes=nodes)
 
 
 def topological_sort(nodes: list[DAGNode]) -> list[DAGNode]:
     # Kahn's algorithm for topological sorting and cycle detection
-    adj = {node.node_id: [] for node in nodes}
+    adj: dict[str, list[str]] = {node.node_id: [] for node in nodes}
     in_degree = {node.node_id: 0 for node in nodes}
     nodes_by_id = {node.node_id: node for node in nodes}
 
@@ -111,8 +116,6 @@ class DAGScheduler:
             topological_sort(plan.nodes)
         except ValueError:
             return False
-
-        import concurrent.futures
 
         node_status = {node.node_id: "pending" for node in plan.nodes}
         nodes_by_id = {node.node_id: node for node in plan.nodes}
@@ -192,8 +195,10 @@ class DAGScheduler:
             if status == "success":
                 return True
             if status == "blocked":
-                return any(node_status.get(dep) == "failed" or node_status.get(dep) == "blocked" for dep in nodes_by_id[node_id].dependencies)
+                return any(
+                    node_status.get(dep) == "failed" or node_status.get(dep) == "blocked"
+                    for dep in nodes_by_id[node_id].dependencies
+                )
             return False
 
         return all(_is_acceptable(status, nid) for nid, status in node_status.items())
-

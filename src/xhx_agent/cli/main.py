@@ -33,7 +33,9 @@ def init() -> None:
 @app.command("repo-index")
 def repo_index(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON diagnostics.")] = False,
-    refresh: Annotated[bool, typer.Option("--refresh", help="Rebuild .xhx/repo/index.json before printing diagnostics.")] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Rebuild .xhx/repo/index.json before printing diagnostics.")
+    ] = False,
 ) -> None:
     if refresh:
         write_repo_intel_index(Path.cwd())
@@ -67,29 +69,37 @@ def run(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON result.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow confirm-level verification commands.")] = False,
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only build the first model plan; do not execute tools.")] = False,
-    auto_repair: Annotated[bool, typer.Option("--auto-repair", help="Allow up to two repair attempts after failed verification.")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Only build the first model plan; do not execute tools.")
+    ] = False,
+    auto_repair: Annotated[
+        bool, typer.Option("--auto-repair", help="Allow up to two repair attempts after failed verification.")
+    ] = False,
 ) -> None:
     runtime = RuntimeApp()
     if dry_run:
-        result = runtime.preview_plan(task, profile)
+        preview_result = runtime.preview_plan(task, profile)
         if json_output:
-            console.print(result.model_dump_json(indent=2))
+            console.print(preview_result.model_dump_json(indent=2))
             return
-        console.print(f"status: {result.status}")
-        console.print(f"summary: {result.summary}")
-        console.print(f"steps: {result.step_count}")
-        console.print(f"context: {result.context_used_tokens_estimate}/{result.context_budget_tokens} estimated tokens")
-        console.print(f"trace: {result.trace_path}")
-        if result.risk_summary:
+        console.print(f"status: {preview_result.status}")
+        console.print(f"summary: {preview_result.summary}")
+        console.print(f"steps: {preview_result.step_count}")
+        console.print(
+            f"context: {preview_result.context_used_tokens_estimate}/{preview_result.context_budget_tokens} estimated tokens"
+        )
+        console.print(f"trace: {preview_result.trace_path}")
+        if preview_result.risk_summary:
             console.print("risks:")
-            for risk in result.risk_summary:
+            for risk in preview_result.risk_summary:
                 console.print(f"  - {risk}")
         return
     if json_output:
         console.print(runtime.run_task_json(task, profile, assume_yes=yes, auto_repair=auto_repair))
         return
-    result = runtime.run_task(task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair)
+    result = runtime.run_task(
+        task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair
+    )
     console.print(f"status: {result.status}")
     console.print(f"summary: {result.summary_path}")
     if result.commands:
@@ -109,7 +119,9 @@ def chat() -> None:
 
 @app.command("tui")
 def tui(
-    fullscreen: Annotated[bool, typer.Option("--fullscreen", help="Run the experimental fullscreen Textual console.")] = False,
+    fullscreen: Annotated[
+        bool, typer.Option("--fullscreen", help="Run the experimental fullscreen Textual console.")
+    ] = False,
 ) -> None:
     if fullscreen:
         run_textual_console()
@@ -149,6 +161,7 @@ def _confirm_terminal_command(command: str, decision: PolicyDecision) -> bool:
 @app.command("rpc")
 def rpc() -> None:
     from xhx_agent.cli.rpc import start_rpc_loop
+
     start_rpc_loop()
 
 
@@ -158,6 +171,7 @@ def replay(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON result.")] = False,
 ) -> None:
     from xhx_agent.evals.replay import TrailReplayer
+
     replayer = TrailReplayer(Path.cwd())
     try:
         result = replayer.replay(run_id)
@@ -182,6 +196,7 @@ def benchmark(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
 ) -> None:
     from xhx_agent.evals.benchmark import BenchmarkRunner
+
     runner = BenchmarkRunner(Path.cwd())
     if not json_output:
         console.print(f"Running benchmark fixtures against profile: {profile}...")
@@ -189,11 +204,13 @@ def benchmark(
         results = runner.run_benchmark(profile)
         if json_output:
             import json
+
             console.print(json.dumps([r.model_dump() for r in results], indent=2))
             return
 
         # Render a beautiful rich table
         from rich.table import Table
+
         table = Table(title=f"xhx-agent Benchmark Results ({profile})")
         table.add_column("Fixture ID", style="cyan")
         table.add_column("Name", style="magenta")
@@ -213,10 +230,9 @@ def benchmark(
                 str(r.turns),
                 f"{r.duration_seconds:.2f}s",
                 str(r.tokens_estimate),
-                success_emoji
+                success_emoji,
             )
         console.print(table)
     except Exception as e:
         console.print(f"[red]Error running benchmarks: {e}[/red]")
         raise typer.Exit(code=1)
-

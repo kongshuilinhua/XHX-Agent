@@ -12,7 +12,8 @@ def render_xhx_md(scan: ProjectScan) -> str:
     symbol_index = build_symbol_index(Path(scan.root), repo_map)
     languages = ", ".join(scan.detected_languages) or "unknown"
     node_scripts = scan.node.get("scripts", {})
-    script_lines = "\n".join(f"- npm run {name}" for name in sorted(node_scripts)) or "- none detected"
+    script_names = sorted(str(k) for k in node_scripts) if isinstance(node_scripts, dict) else []
+    script_lines = "\n".join(f"- npm run {name}" for name in script_names) or "- none detected"
     verification: list[str] = []
     if scan.python.get("tests_dir") or scan.python.get("pytest_ini"):
         verification.append("- python -m pytest")

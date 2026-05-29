@@ -1,12 +1,24 @@
 from pathlib import Path
+
 from xhx_agent.repo_intel.index import load_repo_intel_index
+
 
 class XhxCompleter:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
         self.commands = [
-            "/help", "/exit", "/model", "/status", "/plan", "/evidence", 
-            "/context", "/verify", "/repair", "/diff", "/skills", "/clear"
+            "/help",
+            "/exit",
+            "/model",
+            "/status",
+            "/plan",
+            "/evidence",
+            "/context",
+            "/verify",
+            "/repair",
+            "/diff",
+            "/skills",
+            "/clear",
         ]
         self._index = None
 
@@ -21,18 +33,18 @@ class XhxCompleter:
     def get_completions(self, text: str) -> list[str]:
         if not text:
             return []
-        
+
         # 1. 补全斜杠命令
         if text.startswith("/"):
             if " " in text:
                 cmd, _, arg = text.partition(" ")
                 return [f"{cmd} {p}" for p in self._get_path_completions(arg)]
             return [cmd for cmd in self.commands if cmd.startswith(text)]
-            
+
         # 2. 如果包含路径分隔符或以点开头，补全文件路径
         if "/" in text or "\\" in text or text.startswith("."):
             return self._get_path_completions(text)
-            
+
         # 3. 混合补全：支持符号名与前缀路径
         return self._get_symbol_completions(text) + self._get_path_completions(text)
 
@@ -45,8 +57,9 @@ class XhxCompleter:
         else:
             try:
                 paths = [
-                    str(p.relative_to(self.workspace)).replace("\\", "/") 
-                    for p in self.workspace.glob("**/*") if p.is_file()
+                    str(p.relative_to(self.workspace)).replace("\\", "/")
+                    for p in self.workspace.glob("**/*")
+                    if p.is_file()
                 ]
             except Exception:
                 pass

@@ -155,7 +155,10 @@ class OpenAICompatibleClient:
                     raise ModelClientError(
                         code="http_error",
                         message=f"Model request returned HTTP {response.status_code}.",
-                        details={"status_code": response.status_code, "body": response.read().decode("utf-8", errors="replace")[:1000]},
+                        details={
+                            "status_code": response.status_code,
+                            "body": response.read().decode("utf-8", errors="replace")[:1000],
+                        },
                     )
                 content = _collect_stream_content(response, delta_callback)
         except ModelClientError:

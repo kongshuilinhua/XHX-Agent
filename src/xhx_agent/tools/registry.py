@@ -35,7 +35,7 @@ class ToolContext(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
-ToolRunner = Callable[[ToolContext, dict[str, object]], ToolExecutionResult]
+ToolRunner = Callable[[ToolContext, dict[str, Any]], ToolExecutionResult]
 
 
 class ToolRegistry:
@@ -106,7 +106,7 @@ def _invalid_tool_arguments(index: int, step: ToolStep, message: str) -> ModelCl
     )
 
 
-def _run_search(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+def _run_search(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
     query = str(arguments["query"])
     glob = arguments.get("glob")
     results = search(
@@ -126,7 +126,7 @@ def _run_search(context: ToolContext, arguments: dict[str, object]) -> ToolExecu
     )
 
 
-def _run_read_file(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+def _run_read_file(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
     path = str(arguments["path"])
     start_line = int(arguments.get("start_line", 1))
     max_lines = int(arguments.get("max_lines", 200))
@@ -148,7 +148,7 @@ def _run_read_file(context: ToolContext, arguments: dict[str, object]) -> ToolEx
     )
 
 
-def _run_apply_patch(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+def _run_apply_patch(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
     with contextlib.suppress(Exception):
         hooks_manager.trigger("before_patch", workspace=context.workspace, patch=str(arguments.get("patch", "")))
     result: PatchResult = apply_patch(context.workspace, str(arguments["patch"]))

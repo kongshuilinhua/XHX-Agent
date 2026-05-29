@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from xhx_agent.repo_intel.imports import build_import_graph, impacted_tests_from_imports
 from xhx_agent.repo_intel.index import load_repo_intel_index
-from xhx_agent.repo_intel.repo_map import RepoMap
+from xhx_agent.repo_intel.repo_map import RepoMap, build_repo_map
 
 
 class ImpactSummary(BaseModel):
@@ -17,8 +17,12 @@ class ImpactSummary(BaseModel):
 
 
 def analyze_impact(workspace: Path, changed_files: list[str], repo_map: RepoMap | None = None) -> ImpactSummary:
-    repo_index = None if repo_map else load_repo_intel_index(workspace)
-    repo_map = repo_map or repo_index.repo_map
+    repo_index = None
+    if not repo_map:
+        repo_index = load_repo_intel_index(workspace)
+        if repo_index is not None:
+            repo_map = repo_index.repo_map
+    repo_map = repo_map or build_repo_map(workspace)
     normalized = [path.replace("\\", "/") for path in changed_files if path]
     impacted_tests = sorted({_direct_test_for(path, repo_map) for path in normalized} - {""})
     notes: list[str] = []

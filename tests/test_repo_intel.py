@@ -22,9 +22,13 @@ def test_repo_map_classifies_files_and_verification_hints(tmp_path: Path) -> Non
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    (tmp_path / "package.json").write_text('{"scripts":{"test":"node test.js","build":"node -c src/index.js"}}', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node test.js","build":"node -c src/index.js"}}', encoding="utf-8"
+    )
     (tmp_path / ".xhx").mkdir()
     (tmp_path / ".xhx" / "ignored.py").write_text("def hidden(): pass\n", encoding="utf-8")
 
@@ -112,7 +116,9 @@ def test_reference_index_finds_symbol_usages_without_definition_lines(tmp_path: 
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
 
     references = build_reference_index(tmp_path)
     results = search_references(references, "add")
@@ -286,7 +292,9 @@ def test_impact_uses_js_import_graph_when_direct_name_mapping_misses(tmp_path: P
     (tmp_path / "src").mkdir()
     (tmp_path / "test").mkdir()
     (tmp_path / "src" / "math_ops.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
-    (tmp_path / "test" / "public-api.test.js").write_text("import { add } from '../src/math_ops.js';\n", encoding="utf-8")
+    (tmp_path / "test" / "public-api.test.js").write_text(
+        "import { add } from '../src/math_ops.js';\n", encoding="utf-8"
+    )
     (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/public-api.test.js"}}', encoding="utf-8")
 
     impact = analyze_impact(tmp_path, ["src/math_ops.js"])
@@ -300,8 +308,12 @@ def test_impact_uses_recursive_js_import_graph_when_direct_name_mapping_misses(t
     (tmp_path / "src").mkdir()
     (tmp_path / "test").mkdir()
     (tmp_path / "src" / "math_ops.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
-    (tmp_path / "src" / "public_api.js").write_text("import { add } from './math_ops.js';\nexport { add };\n", encoding="utf-8")
-    (tmp_path / "test" / "public-api.test.js").write_text("import { add } from '../src/public_api.js';\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.js").write_text(
+        "import { add } from './math_ops.js';\nexport { add };\n", encoding="utf-8"
+    )
+    (tmp_path / "test" / "public-api.test.js").write_text(
+        "import { add } from '../src/public_api.js';\n", encoding="utf-8"
+    )
     (tmp_path / "package.json").write_text('{"scripts":{"test":"node test/public-api.test.js"}}', encoding="utf-8")
 
     impact = analyze_impact(tmp_path, ["src/math_ops.js"])
@@ -333,19 +345,27 @@ def test_js_import_graph_resolves_mjs_extensionless_imports(tmp_path: Path) -> N
 
     graph = build_import_graph(tmp_path)
 
-    assert any(edge.importer == "test/public-api.test.mjs" and edge.target == "src/math_ops.mjs" for edge in graph.edges)
+    assert any(
+        edge.importer == "test/public-api.test.mjs" and edge.target == "src/math_ops.mjs" for edge in graph.edges
+    )
 
 
 def test_js_ts_import_graph_resolves_tsconfig_paths_alias(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
-    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text(
+        "export const add = (a: number, b: number) => a + b;\n", encoding="utf-8"
+    )
     (tmp_path / "tests" / "math_ops.spec.ts").write_text("import { add } from '@lib/math_ops';\n", encoding="utf-8")
-    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8"
+    )
 
     graph = build_import_graph(tmp_path)
 
-    assert any(edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges)
+    assert any(
+        edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges
+    )
 
 
 def test_call_graph_tracks_python_function_calls(tmp_path: Path) -> None:
@@ -406,22 +426,30 @@ def test_call_graph_tracks_js_function_calls(tmp_path: Path) -> None:
 def test_js_ts_import_graph_resolves_tsconfig_base_url_import(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
-    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text(
+        "export const add = (a: number, b: number) => a + b;\n", encoding="utf-8"
+    )
     (tmp_path / "tests" / "math_ops.spec.ts").write_text("import { add } from 'lib/math_ops';\n", encoding="utf-8")
     (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":"src"}}', encoding="utf-8")
 
     graph = build_import_graph(tmp_path)
 
-    assert any(edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges)
+    assert any(
+        edge.importer == "tests/math_ops.spec.ts" and edge.target == "src/lib/math_ops.ts" for edge in graph.edges
+    )
 
 
 def test_impact_uses_tsconfig_alias_import_graph_when_direct_name_mapping_misses(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
-    (tmp_path / "src" / "lib" / "math_ops.ts").write_text("export const add = (a: number, b: number) => a + b;\n", encoding="utf-8")
+    (tmp_path / "src" / "lib" / "math_ops.ts").write_text(
+        "export const add = (a: number, b: number) => a + b;\n", encoding="utf-8"
+    )
     (tmp_path / "tests" / "public-api.spec.ts").write_text("import { add } from '@lib/math_ops';\n", encoding="utf-8")
     (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
-    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}', encoding="utf-8"
+    )
 
     impact = analyze_impact(tmp_path, ["src/lib/math_ops.ts"])
 
@@ -433,7 +461,9 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
 
     path = write_repo_intel_index(tmp_path)
     index = read_repo_intel_index(tmp_path)
@@ -443,9 +473,14 @@ def test_repo_intel_index_round_trips_to_json(tmp_path: Path) -> None:
     assert index.content_fingerprint
     assert any(item.path == "src/calc.py" for item in index.repo_map.files)
     assert any(symbol.name == "add" for symbol in index.symbol_index.symbols)
-    assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
+    assert any(
+        edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges
+    )
     assert any(edge.caller == "test_add" and edge.callee == "add" for edge in index.call_graph.edges)
-    assert any(reference.name == "add" and reference.path == "tests/test_calc.py" for reference in index.reference_index.references)
+    assert any(
+        reference.name == "add" and reference.path == "tests/test_calc.py"
+        for reference in index.reference_index.references
+    )
 
 
 def test_repo_intel_diagnostics_reports_missing_index(tmp_path: Path) -> None:
@@ -515,7 +550,9 @@ def test_load_repo_intel_index_rebuilds_legacy_index_without_references(tmp_path
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
     path = write_repo_intel_index(tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     data.pop("reference_index")
@@ -531,7 +568,9 @@ def test_load_repo_intel_index_rebuilds_legacy_index_without_call_graph(tmp_path
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
     path = write_repo_intel_index(tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     data.pop("call_graph")
@@ -579,7 +618,9 @@ def test_sqlite_sync_functionality(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
 
     # This should automatically trigger SQLite sync
     write_repo_intel_index(tmp_path)
@@ -595,7 +636,9 @@ def test_sqlite_sync_functionality(tmp_path: Path) -> None:
         cursor.execute("SELECT name, kind, path FROM symbols ORDER BY name")
         symbols = cursor.fetchall()
         assert any(name == "add" and kind == "function" and path == "src/calc.py" for name, kind, path in symbols)
-        assert any(name == "test_add" and kind == "function" and path == "tests/test_calc.py" for name, kind, path in symbols)
+        assert any(
+            name == "test_add" and kind == "function" and path == "tests/test_calc.py" for name, kind, path in symbols
+        )
 
         # Verify imports
         cursor.execute("SELECT importer, target FROM imports")
@@ -603,7 +646,7 @@ def test_sqlite_sync_functionality(tmp_path: Path) -> None:
         assert any(importer == "tests/test_calc.py" and target == "src/calc.py" for importer, target in imports)
 
         # Verify references
-        cursor.execute("SELECT name, path, line FROM \"references\"")
+        cursor.execute('SELECT name, path, line FROM "references"')
         references = cursor.fetchall()
         assert any(name == "add" and path == "tests/test_calc.py" and line == 1 for name, path, line in references)
         assert any(name == "add" and path == "tests/test_calc.py" and line == 4 for name, path, line in references)
@@ -645,4 +688,3 @@ def test_incremental_index_updates_add_modify_delete(tmp_path: Path) -> None:
     index4 = load_repo_intel_index(tmp_path)
     assert not any(symbol.name == "multiply" for symbol in index4.symbol_index.symbols)
     assert any(symbol.name == "add" for symbol in index4.symbol_index.symbols)
-

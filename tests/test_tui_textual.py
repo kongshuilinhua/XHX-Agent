@@ -36,12 +36,19 @@ def test_textual_snapshot_from_console_state_shows_status_and_commands() -> None
             payload={"turn": 1, "selected": 3, "omitted": 1, "used_tokens_estimate": 120, "budget_tokens": 6000},
         )
     )
-    state.reduce(RuntimeEvent(type="model_plan", message="Patch failing test", payload={"status": "continue", "step_count": 1}))
+    state.reduce(
+        RuntimeEvent(type="model_plan", message="Patch failing test", payload={"status": "continue", "step_count": 1})
+    )
     state.reduce(
         RuntimeEvent(
             type="run_end",
             message="Run finished.",
-            payload={"status": "success", "verification": "passed", "changed_files": ["src/calc.py"], "summary_path": ".xhx/logbook/run-1.md"},
+            payload={
+                "status": "success",
+                "verification": "passed",
+                "changed_files": ["src/calc.py"],
+                "summary_path": ".xhx/logbook/run-1.md",
+            },
         )
     )
 
@@ -79,7 +86,9 @@ def test_textual_snapshot_shows_pending_steer_cancel_and_permission_state() -> N
             },
         )
     )
-    state.reduce(RuntimeEvent(type="cancel_requested", message="Steer requested by user.", payload={"source": "textual"}))
+    state.reduce(
+        RuntimeEvent(type="cancel_requested", message="Steer requested by user.", payload={"source": "textual"})
+    )
 
     snapshot = TextualSnapshot.from_state(
         state,
@@ -136,13 +145,25 @@ class FakeRuntime:
 
     def run_task(self, task, **kwargs):
         self.calls.append((task, kwargs))
-        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": task, "profile": "mock"}))
-        kwargs["event_callback"](RuntimeEvent(type="model_plan", message="Analyze task", payload={"status": "done", "step_count": 0}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_start", message="Run started.", payload={"run_id": "run-1", "task": task, "profile": "mock"}
+            )
+        )
+        kwargs["event_callback"](
+            RuntimeEvent(type="model_plan", message="Analyze task", payload={"status": "done", "step_count": 0})
+        )
         kwargs["event_callback"](
             RuntimeEvent(
                 type="run_end",
                 message="Run finished.",
-                payload={"run_id": "run-1", "status": "success", "verification": "skipped_no_changes", "changed_files": [], "summary_path": ".xhx/logbook/run-1.md"},
+                payload={
+                    "run_id": "run-1",
+                    "status": "success",
+                    "verification": "skipped_no_changes",
+                    "changed_files": [],
+                    "summary_path": ".xhx/logbook/run-1.md",
+                },
             )
         )
         return RunResult(
@@ -157,14 +178,32 @@ class FakeRuntime:
 
     def verify_changed_files(self, changed_files, **kwargs):
         self.verify_calls.append((changed_files, kwargs))
-        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Manual verification started.", payload={"run_id": "verify-1", "task": "manual verification", "profile": "manual"}))
-        kwargs["event_callback"](RuntimeEvent(type="verification_start", message="Verification started.", payload={"command": "python -m pytest"}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_start",
+                message="Manual verification started.",
+                payload={"run_id": "verify-1", "task": "manual verification", "profile": "manual"},
+            )
+        )
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="verification_start", message="Verification started.", payload={"command": "python -m pytest"}
+            )
+        )
         allowed = kwargs["confirm_callback"](
             "python -m pytest",
-            PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True),
+            PolicyDecision(
+                decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True
+            ),
         )
         status = "success" if allowed else "confirm"
-        kwargs["event_callback"](RuntimeEvent(type="verification_result", message="Verification finished.", payload={"command": "python -m pytest", "status": status, "exit_code": 0 if allowed else None}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="verification_result",
+                message="Verification finished.",
+                payload={"command": "python -m pytest", "status": status, "exit_code": 0 if allowed else None},
+            )
+        )
         return ManualVerificationResult(
             run_id="verify-1",
             status="passed" if allowed else "requires_confirmation",
@@ -199,13 +238,31 @@ class FakeRuntime:
 
     def repair_after_failed_verification(self, **kwargs):
         self.repair_calls.append(kwargs)
-        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Manual repair started.", payload={"run_id": "repair-1", "task": kwargs["task"], "profile": "mock"}))
-        kwargs["event_callback"](RuntimeEvent(type="repair_start", message="Manual repair attempt started.", payload={"attempt": 1, "max_attempts": kwargs["max_attempts"]}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_start",
+                message="Manual repair started.",
+                payload={"run_id": "repair-1", "task": kwargs["task"], "profile": "mock"},
+            )
+        )
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="repair_start",
+                message="Manual repair attempt started.",
+                payload={"attempt": 1, "max_attempts": kwargs["max_attempts"]},
+            )
+        )
         kwargs["event_callback"](
             RuntimeEvent(
                 type="run_end",
                 message="Manual repair finished.",
-                payload={"run_id": "repair-1", "status": "success", "verification": "passed", "changed_files": kwargs["changed_files"], "summary_path": ".xhx/logbook/repair-1.md"},
+                payload={
+                    "run_id": "repair-1",
+                    "status": "success",
+                    "verification": "passed",
+                    "changed_files": kwargs["changed_files"],
+                    "summary_path": ".xhx/logbook/repair-1.md",
+                },
             )
         )
         return ManualRepairResult(
@@ -241,15 +298,33 @@ class BlockingVerifyRuntime(FakeRuntime):
 
     def verify_changed_files(self, changed_files, **kwargs):
         self.verify_calls.append((changed_files, kwargs))
-        kwargs["event_callback"](RuntimeEvent(type="run_start", message="Manual verification started.", payload={"run_id": "verify-1", "task": "manual verification", "profile": "manual"}))
-        kwargs["event_callback"](RuntimeEvent(type="verification_start", message="Verification started.", payload={"command": "python -m pytest"}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="run_start",
+                message="Manual verification started.",
+                payload={"run_id": "verify-1", "task": "manual verification", "profile": "manual"},
+            )
+        )
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="verification_start", message="Verification started.", payload={"command": "python -m pytest"}
+            )
+        )
         self.confirm_seen.set()
         allowed = kwargs["confirm_callback"](
             "python -m pytest",
-            PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True),
+            PolicyDecision(
+                decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True
+            ),
         )
         status = "success" if allowed else "confirm"
-        kwargs["event_callback"](RuntimeEvent(type="verification_result", message="Verification finished.", payload={"command": "python -m pytest", "status": status, "exit_code": 0 if allowed else None}))
+        kwargs["event_callback"](
+            RuntimeEvent(
+                type="verification_result",
+                message="Verification finished.",
+                payload={"command": "python -m pytest", "status": status, "exit_code": 0 if allowed else None},
+            )
+        )
         self.verify_finished.set()
         return ManualVerificationResult(
             run_id="verify-1",
@@ -283,7 +358,11 @@ def test_textual_command_console_runs_task_through_runtime(tmp_path) -> None:
 def test_textual_command_console_clear_and_exit_are_local(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
     app.messages.append("system> old")
-    app.state.reduce(RuntimeEvent(type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}))
+    app.state.reduce(
+        RuntimeEvent(
+            type="run_start", message="Run started.", payload={"run_id": "run-1", "task": "fix", "profile": "mock"}
+        )
+    )
 
     assert app.handle_text_input("/clear")
     assert app.messages == []
@@ -368,7 +447,9 @@ def test_textual_submitted_verify_can_wait_for_permission(tmp_path) -> None:
     runtime = BlockingVerifyRuntime()
     state = ConsoleState()
     state.changed_files = ["src/calc.py"]
-    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime, state=state, permission_timeout_seconds=2)
+    app = TextualCommandConsoleApp(
+        workspace=tmp_path, profile="mock", runtime=runtime, state=state, permission_timeout_seconds=2
+    )
 
     async def run_app() -> None:
         async with app.run_test() as pilot:
@@ -497,15 +578,15 @@ def test_textual_permission_confirmation_defaults_to_decline_without_fullscreen(
 
 def test_textual_fullscreen_permission_can_wait_for_allow(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", permission_timeout_seconds=2)
-    decision = PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True)
+    decision = PolicyDecision(
+        decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True
+    )
     result: dict[str, bool] = {}
 
     async def run_app() -> None:
         async with app.run_test() as pilot:
             worker = threading.Thread(
-                target=lambda: result.update(
-                    allowed=app.confirm_terminal_command("python -m pytest", decision)
-                )
+                target=lambda: result.update(allowed=app.confirm_terminal_command("python -m pytest", decision))
             )
             worker.start()
             await pilot.pause()
@@ -529,15 +610,15 @@ def test_textual_fullscreen_permission_can_wait_for_allow(tmp_path) -> None:
 
 def test_textual_fullscreen_permission_can_wait_for_deny(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", permission_timeout_seconds=2)
-    decision = PolicyDecision(decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True)
+    decision = PolicyDecision(
+        decision="confirm", risk=RiskLevel.CONFIRM, reason="Confirm test command.", requires_user=True
+    )
     result: dict[str, bool] = {}
 
     async def run_app() -> None:
         async with app.run_test() as pilot:
             worker = threading.Thread(
-                target=lambda: result.update(
-                    allowed=app.confirm_terminal_command("python -m pytest", decision)
-                )
+                target=lambda: result.update(allowed=app.confirm_terminal_command("python -m pytest", decision))
             )
             worker.start()
             await pilot.pause()

@@ -10,5 +10,6 @@ class SkillMetadata(BaseModel):
     permissions: dict[str, str] = Field(default_factory=dict)
     folder_name: str = ""
 
+
 class Skill(SkillMetadata):
     content: str | None = None

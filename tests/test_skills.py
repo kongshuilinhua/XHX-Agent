@@ -17,10 +17,7 @@ from xhx_agent.tools.registry import ToolContext, ToolRegistry
 def test_skill_models() -> None:
     # Test valid parsing
     meta = SkillMetadata(
-        name="test-skill",
-        description="A test skill",
-        triggers=["deploy", "build"],
-        permissions={"network": "allow"}
+        name="test-skill", description="A test skill", triggers=["deploy", "build"], permissions={"network": "allow"}
     )
     assert meta.name == "test-skill"
     assert meta.triggers == ["deploy", "build"]
@@ -31,7 +28,7 @@ def test_skill_models() -> None:
         description=meta.description,
         triggers=meta.triggers,
         permissions=meta.permissions,
-        content="SKILL.md content"
+        content="SKILL.md content",
     )
     assert skill.content == "SKILL.md content"
 
@@ -58,12 +55,7 @@ def test_skill_loader_progressive_disclosure(tmp_path: Path) -> None:
     skill1_dir = skills_dir / "skill1"
     skill1_dir.mkdir()
     with open(skill1_dir / "SKILL.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "name": "skill1",
-            "description": "First skill",
-            "triggers": ["deploy"],
-            "permissions": {}
-        }, f)
+        json.dump({"name": "skill1", "description": "First skill", "triggers": ["deploy"], "permissions": {}}, f)
     with open(skill1_dir / "SKILL.md", "w", encoding="utf-8") as f:
         f.write("# Skill 1 Instructions")
 
@@ -71,12 +63,7 @@ def test_skill_loader_progressive_disclosure(tmp_path: Path) -> None:
     skill2_dir = skills_dir / "skill2"
     skill2_dir.mkdir()
     with open(skill2_dir / "SKILL.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "name": "skill2",
-            "description": "Second skill",
-            "triggers": ["cleanup"],
-            "permissions": {}
-        }, f)
+        json.dump({"name": "skill2", "description": "Second skill", "triggers": ["cleanup"], "permissions": {}}, f)
     with open(skill2_dir / "SKILL.md", "w", encoding="utf-8") as f:
         f.write("# Skill 2 Instructions")
 
@@ -158,12 +145,8 @@ def test_mcp_client_dynamic_tool_registration() -> None:
 
     # Check validation bypass (custom tools should pass validation checks)
     from xhx_agent.models.types import ModelPlan, ToolStep
-    plan = ModelPlan(
-        summary="MCP step",
-        steps=[
-            ToolStep(tool="mcp_calculate", arguments={"expression": "10 - 2"})
-        ]
-    )
+
+    plan = ModelPlan(summary="MCP step", steps=[ToolStep(tool="mcp_calculate", arguments={"expression": "10 - 2"})])
     registry.validate_plan(plan)  # Should not raise any errors
 
     # Check execution
@@ -180,29 +163,22 @@ def test_skills_compiler_integration(tmp_path: Path) -> None:
     skill_dir = skills_dir / "my_custom_skill"
     skill_dir.mkdir()
     with open(skill_dir / "SKILL.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "name": "my_custom_skill",
-            "description": "Custom developer actions",
-            "triggers": ["custom-action"],
-            "permissions": {}
-        }, f)
+        json.dump(
+            {
+                "name": "my_custom_skill",
+                "description": "Custom developer actions",
+                "triggers": ["custom-action"],
+                "permissions": {},
+            },
+            f,
+        )
     with open(skill_dir / "SKILL.md", "w", encoding="utf-8") as f:
         f.write("# Execute custom action steps here")
 
-    scan = ProjectScan(
-        root=str(tmp_path),
-        detected_languages=[],
-        python={},
-        node={},
-        file_count=0
-    )
+    scan = ProjectScan(root=str(tmp_path), detected_languages=[], python={}, node={}, file_count=0)
 
     # Compile context with matching task
-    pack = compile_context_pack(
-        workspace=tmp_path,
-        task="Please run the custom-action on the code",
-        scan=scan
-    )
+    pack = compile_context_pack(workspace=tmp_path, task="Please run the custom-action on the code", scan=scan)
 
     # Verify skill is compiled into ContextPack items
     skill_items = [item for item in pack.items if item.kind == "skill"]

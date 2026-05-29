@@ -21,7 +21,7 @@ def test_run_metrics_model() -> None:
         files_changed_count=2,
         commands_run_count=1,
         repair_attempts=0,
-        success=True
+        success=True,
     )
     assert m.duration_seconds == 12.34
     assert m.turns == 3
@@ -53,8 +53,8 @@ def test_trail_replayer(tmp_path: Path) -> None:
                 "status": "success",
                 "exit_code": 0,
                 "summary": "all tests passed",
-                "policy": {"decision": "allow", "risk": "confirm", "reason": "pytest is standard"}
-            }
+                "policy": {"decision": "allow", "risk": "confirm", "reason": "pytest is standard"},
+            },
         },
         {
             "type": "run_end",
@@ -68,9 +68,9 @@ def test_trail_replayer(tmp_path: Path) -> None:
                 "restore_plan_path": None,
                 "repair_attempts": 0,
                 "risk_summary": [],
-                "duration_seconds": 4.56
-            }
-        }
+                "duration_seconds": 4.56,
+            },
+        },
     ]
     with open(trace_file, "w", encoding="utf-8") as f:
         for entry in entries:
@@ -124,7 +124,7 @@ def test_jsonl_rpc_loop(monkeypatch, tmp_path: Path) -> None:
     reqs = [
         {"jsonrpc": "2.0", "id": 1, "method": "init", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "repo-index", "params": {"refresh": True}},
-        {"jsonrpc": "2.0", "id": 3, "method": "exit", "params": {}}
+        {"jsonrpc": "2.0", "id": 3, "method": "exit", "params": {}},
     ]
     input_data = "\n".join(json.dumps(r) for r in reqs) + "\n"
 

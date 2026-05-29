@@ -65,7 +65,7 @@ class TrailReplayer:
                     command=payload.get("command", ""),
                     status=payload.get("status", "success"),
                     exit_code=payload.get("exit_code"),
-                    summary=payload.get("summary"),
+                    summary=payload.get("summary") or "",
                     policy=policy_dec,
                 )
                 verification_results.append(res)

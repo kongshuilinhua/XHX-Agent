@@ -28,7 +28,9 @@ def _python_search(workspace: Path, query: str, glob: str | None, max_results: i
     pattern = glob or "*"
     results: list[str] = []
     for path in workspace.rglob(pattern):
-        if not path.is_file() or any(part in {".git", ".venv", "node_modules"} for part in path.relative_to(workspace).parts):
+        if not path.is_file() or any(
+            part in {".git", ".venv", "node_modules"} for part in path.relative_to(workspace).parts
+        ):
             continue
         try:
             for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):

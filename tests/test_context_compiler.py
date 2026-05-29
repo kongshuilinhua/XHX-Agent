@@ -81,8 +81,13 @@ def test_context_pack_includes_import_context_for_changed_file(tmp_path: Path) -
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "src" / "public_api.py").write_text("from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_public_api.py").write_text("from public_api import add_public\n\ndef test_public_add():\n    assert add_public(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text(
+        "from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_public_api.py").write_text(
+        "from public_api import add_public\n\ndef test_public_add():\n    assert add_public(1, 2) == 3\n",
+        encoding="utf-8",
+    )
     write_repo_intel_index(tmp_path)
     scan = scan_project(tmp_path)
 
@@ -104,7 +109,9 @@ def test_context_pack_includes_import_context_for_changed_file(tmp_path: Path) -
 def test_context_pack_includes_call_context_for_changed_file(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "src" / "public_api.py").write_text("from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text(
+        "from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8"
+    )
     write_repo_intel_index(tmp_path)
     scan = scan_project(tmp_path)
 
@@ -127,7 +134,9 @@ def test_context_pack_includes_reference_context_for_task_query(tmp_path: Path) 
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add_numbers\n\ndef test_add_numbers():\n    assert add_numbers(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add_numbers\n\ndef test_add_numbers():\n    assert add_numbers(1, 2) == 3\n", encoding="utf-8"
+    )
     write_repo_intel_index(tmp_path)
     scan = scan_project(tmp_path)
 
@@ -149,7 +158,9 @@ def test_context_pack_uses_recent_error_path_for_import_context(tmp_path: Path) 
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
     write_repo_intel_index(tmp_path)
     scan = scan_project(tmp_path)
 
@@ -168,7 +179,9 @@ def test_context_pack_keeps_recent_error_context_when_changed_files_exist(tmp_pa
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n", encoding="utf-8"
+    )
     write_repo_intel_index(tmp_path)
     scan = scan_project(tmp_path)
 
@@ -289,11 +302,15 @@ def test_context_pack_omits_low_priority_items_when_over_budget(tmp_path: Path) 
 def test_context_pack_selects_top_k_evidence_by_priority(tmp_path: Path) -> None:
     scan = scan_project(tmp_path)
     entries = [
-        EvidenceEntry(kind="policy", source=f"policy-{index}", summary="low", artifact_ref="trace://low", confidence=0.2)
+        EvidenceEntry(
+            kind="policy", source=f"policy-{index}", summary="low", artifact_ref="trace://low", confidence=0.2
+        )
         for index in range(6)
     ]
     entries.append(
-        EvidenceEntry(kind="test", source="pytest", summary="high value failure", artifact_ref="trace://test", confidence=0.95)
+        EvidenceEntry(
+            kind="test", source="pytest", summary="high value failure", artifact_ref="trace://test", confidence=0.95
+        )
     )
 
     pack = compile_context_pack(

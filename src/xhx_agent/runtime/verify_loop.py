@@ -23,8 +23,11 @@ from xhx_agent.verification.router import infer_verification
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RuntimeApp
 
-ConfirmationCallback = Callable[[str, object], bool]
+from xhx_agent.safety.policy import PolicyDecision
+
+ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
+
 
 class ManualVerificationResult(BaseModel):
     run_id: str
@@ -86,17 +89,26 @@ def _refresh_repo_intel_index(
     risks: list[str],
 ) -> None:
     from xhx_agent.repo_intel.index import write_repo_intel_index
+
     try:
         path = write_repo_intel_index(workspace)
     except Exception as exc:  # noqa: BLE001 - repo index refresh should not discard a successful patch
         message = f"Repo intelligence index refresh failed: {exc}"
         risks.append(message)
         evidence.write_trace("repo_index_refresh", {"status": "failed", "error": str(exc)})
-        emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refresh failed.", status="failed", error=str(exc))
+        emit_event(
+            event_callback,
+            "repo_index_refresh",
+            "Repo intelligence index refresh failed.",
+            status="failed",
+            error=str(exc),
+        )
         return
     relative_path = path.relative_to(workspace).as_posix()
     evidence.write_trace("repo_index_refresh", {"status": "success", "path": relative_path})
-    emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refreshed.", status="success", path=relative_path)
+    emit_event(
+        event_callback, "repo_index_refresh", "Repo intelligence index refreshed.", status="success", path=relative_path
+    )
 
 
 class VerificationLoop:
@@ -380,7 +392,7 @@ class VerificationLoop:
             f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
         ]
         evidence_entries: list[EvidenceEntry] = []
-        recent_error = _last_verification_error(current_failed_results)
+        recent_error: str | None = _last_verification_error(current_failed_results)
         while repair_attempts < attempt_limit:
             repair_decision = decide_repair("failed", attempts_used=repair_attempts, auto_repair_enabled=True)
             evidence.write_trace("repair_decision", repair_decision.model_dump())
@@ -401,7 +413,9 @@ class VerificationLoop:
                 status = "cancelled"
                 risks.append("Manual repair cancelled by user before repair attempt.")
                 evidence.write_trace("cancel_requested", {"stage": "before_manual_repair_attempt"})
-                emit_event(event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id)
+                emit_event(
+                    event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id
+                )
                 break
 
             repair_attempts += 1

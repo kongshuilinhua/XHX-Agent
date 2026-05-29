@@ -13,23 +13,16 @@ def make_rpc_event_callback() -> Any:
         notification = {
             "jsonrpc": "2.0",
             "method": "event",
-            "params": {
-                "event": event_type,
-                "message": message,
-                "details": kwargs
-            }
+            "params": {"event": event_type, "message": message, "details": kwargs},
         }
         sys.stdout.write(json.dumps(notification, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+
     return callback
 
 
 def send_rpc_response(req_id: Any, result: Any) -> None:
-    resp = {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "result": result
-    }
+    resp = {"jsonrpc": "2.0", "id": req_id, "result": result}
     sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -38,11 +31,7 @@ def send_rpc_error(req_id: Any, code: int, message: str, data: Any = None) -> No
     resp = {
         "jsonrpc": "2.0",
         "id": req_id,
-        "error": {
-            "code": code,
-            "message": message,
-            **({"data": data} if data is not None else {})
-        }
+        "error": {"code": code, "message": message, **({"data": data} if data is not None else {})},
     }
     sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -53,12 +42,12 @@ def start_rpc_loop() -> None:
     # Ensure stdout and stdin are line-buffered and use utf-8
     if hasattr(sys.stdout, "reconfigure"):
         try:
-            sys.stdout.reconfigure(line_buffering=True, encoding="utf-8") # type: ignore
+            sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")  # type: ignore
         except Exception:
             pass
     if hasattr(sys.stdin, "reconfigure"):
         try:
-            sys.stdin.reconfigure(encoding="utf-8") # type: ignore
+            sys.stdin.reconfigure(encoding="utf-8")  # type: ignore
         except Exception:
             pass
 
@@ -123,7 +112,7 @@ def start_rpc_loop() -> None:
                     profile_name=profile,
                     assume_yes=yes,
                     auto_repair=auto_repair,
-                    event_callback=make_rpc_event_callback()
+                    event_callback=make_rpc_event_callback(),
                 )
                 send_rpc_response(req_id, run_res.model_dump())
             except Exception as e:

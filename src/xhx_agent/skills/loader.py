@@ -35,6 +35,7 @@ class SkillLoader:
                 return {}
             yaml_text = match.group(1)
             import yaml
+
             try:
                 data = yaml.safe_load(yaml_text)
                 if isinstance(data, dict):
@@ -58,7 +59,7 @@ class SkillLoader:
                                 triggers=data.get("triggers", []),
                                 permissions=data.get("permissions", {}),
                                 folder_name=path.name,
-                                content=None
+                                content=None,
                             )
                             skills.append(skill)
                             skill_loaded = True
@@ -77,7 +78,7 @@ class SkillLoader:
                                 triggers=data.get("triggers", []),
                                 permissions=data.get("permissions", {}),
                                 folder_name=path.name,
-                                content=None
+                                content=None,
                             )
                             skills.append(skill)
                         except (json.JSONDecodeError, OSError):

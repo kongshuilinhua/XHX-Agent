@@ -7,10 +7,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import typer
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
@@ -20,9 +23,6 @@ from xhx_agent.tui.live import LiveDashboard
 from xhx_agent.tui.page import render_console_page
 from xhx_agent.tui.state import ConsoleState
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
-from xhx_agent.cli.completion import XhxCompleter
 
 class PromptToolkitCompleter(Completer):
     def __init__(self, completer: XhxCompleter) -> None:
@@ -35,6 +35,7 @@ class PromptToolkitCompleter(Completer):
         candidates = self.completer.get_completions(text)
         for val in candidates:
             yield Completion(val, start_position=-len(text))
+
 
 SLASH_COMMANDS = {
     "/help",
@@ -82,10 +83,11 @@ class CommandConsole:
         self.live_enabled = self.console.is_interactive if live_enabled is None else live_enabled
         self.live_dashboard: LiveDashboard | None = None
         self.completer = XhxCompleter(self.workspace)
+        self.prompt_session: PromptSession | None = None
         try:
             self.prompt_session = PromptSession(completer=PromptToolkitCompleter(self.completer))
         except Exception:
-            self.prompt_session = None
+            pass
 
     def run(self) -> None:
         self.console.print(
@@ -94,10 +96,7 @@ class CommandConsole:
         self.print_dashboard()
         while True:
             try:
-                if self.prompt_session:
-                    text = self.prompt_session.prompt("xhx> ")
-                else:
-                    text = typer.prompt("xhx")
+                text = self.prompt_session.prompt("xhx> ") if self.prompt_session else typer.prompt("xhx")
             except EOFError:
                 self.console.print("Exiting xhx-agent console.")
                 return

@@ -37,5 +37,6 @@ class HooksManager:
                     # Print and absorb hook exception to maintain app stability
                     print(f"Error in hook '{stage}' callback {callback}: {e}")
 
+
 # Global instance of hooks manager
 hooks_manager = HooksManager()

@@ -31,7 +31,9 @@ def test_init_project_writes_expected_files(tmp_path: Path) -> None:
     index = read_repo_intel_index(tmp_path)
     assert index.repo_map.files
     assert any(symbol.name == "add" and symbol.path == "src/calc.py" for symbol in index.symbol_index.symbols)
-    assert any(edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges)
+    assert any(
+        edge.importer == "tests/test_calc.py" and edge.target == "src/calc.py" for edge in index.import_graph.edges
+    )
 
 
 def test_run_task_writes_report(tmp_path: Path) -> None:
@@ -148,7 +150,10 @@ def test_runtime_refreshes_repo_index_after_patch_before_verification(tmp_path: 
     assert result.commands == ["python -m pytest tests/test_facade.py"]
     index = read_repo_intel_index(tmp_path)
     assert any(symbol.name == "add" and symbol.path == "src/public_api.py" for symbol in index.symbol_index.symbols)
-    assert any(edge.importer == "tests/test_facade.py" and edge.target == "src/public_api.py" for edge in index.import_graph.edges)
+    assert any(
+        edge.importer == "tests/test_facade.py" and edge.target == "src/public_api.py"
+        for edge in index.import_graph.edges
+    )
     assert any(event.type == "repo_index_refresh" and event.payload["status"] == "success" for event in events)
     trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))
     trace_lines = [json.loads(line) for line in trace_files[0].read_text(encoding="utf-8").splitlines()]
