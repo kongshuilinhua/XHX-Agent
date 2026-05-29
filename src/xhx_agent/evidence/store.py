@@ -140,3 +140,19 @@ class EvidenceStore:
             status="missing",
             summary="Checkpoint reference was not found in this run.",
         )
+
+    def load_all_historical_evidence(self) -> list[EvidenceEntry]:
+        evidence_dir = xhx_dir(self.workspace) / "evidence"
+        if not evidence_dir.exists():
+            return []
+        entries: list[EvidenceEntry] = []
+        for path in evidence_dir.glob("*.jsonl"):
+            try:
+                for row in self._read_jsonl(path):
+                    try:
+                        entries.append(EvidenceEntry(**row))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return entries
