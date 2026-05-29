@@ -396,7 +396,7 @@ v0.6 已完成：
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
 - `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、带截断元数据的 reference index 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
 - `repo_intel.index` 提供只读 diagnostics，可区分 missing / invalid / stale / current，并报告索引大小、文件数、符号数、import edge 数、reference 数、指纹和 reference 截断情况。
-- CLI 提供 `xhx repo-index` 和 `xhx repo-index --json`，只做诊断，不自动重建或刷新索引。
+- CLI 提供 `xhx repo-index` 和 `xhx repo-index --json`，默认只做诊断，不自动重建或刷新索引；`xhx repo-index --refresh` 和 `xhx repo-index --refresh --json` 可由用户显式重建索引后输出诊断。
 - `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失、损坏或文件指纹过期时再即时构建。
 - `load_repo_intel_index` 会在旧索引缺少 reference index 时重建，避免升级后继续使用不完整索引。
 - Runtime 在成功 `apply_patch` 后会刷新 `.xhx/repo/index.json`，并在刷新后重新推断验证命令。
