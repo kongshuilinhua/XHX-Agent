@@ -73,6 +73,7 @@ def compile_context_pack(
     # Dynamic local Skill matching and lazy loading for v0.8
     try:
         from xhx_agent.skills.loader import SkillLoader
+
         skill_loader = SkillLoader(workspace)
         matched_skills = skill_loader.match_skills(task)
         for skill in matched_skills:
@@ -89,7 +90,6 @@ def compile_context_pack(
     except Exception:
         # Gracefully handle any issues with dynamic loading
         pass
-
 
     repo_index = _load_repo_index(workspace)
 
@@ -607,7 +607,24 @@ def _limit_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n...<truncated>"
 
 
+_tiktoken_encoding = None
+
+
 def _estimate_tokens(text: str) -> int:
+    global _tiktoken_encoding
+    if _tiktoken_encoding is None:
+        try:
+            import tiktoken
+            _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _tiktoken_encoding = False
+
+    if _tiktoken_encoding:
+        try:
+            return len(_tiktoken_encoding.encode(text, disallowed_special=()))
+        except Exception:
+            pass
+
     tokens = 0.0
     for char in text:
         if ord(char) > 127:
