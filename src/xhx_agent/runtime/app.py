@@ -734,6 +734,7 @@ class RuntimeApp:
                 scan=scan,
                 changed_files=sorted(set(changed_files)),
                 tool_summaries=tool_summaries,
+                plan_summaries=plan_summaries,
                 evidence_entries=evidence_entries,
                 recent_error=recent_error,
             )
@@ -759,7 +760,6 @@ class RuntimeApp:
                 emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
                 return "cancelled", turns_completed, message
             try:
-                from xhx_agent.skills.hooks import hooks_manager
                 hooks_manager.trigger("before_plan", task=task, turn=turn, profile=profile, context_pack=context_pack)
             except Exception:
                 pass
