@@ -162,7 +162,27 @@ def compile_context_pack(
             )
         )
 
-    for evidence in _select_top_evidence(evidence_entries or [], limit=top_k_evidence):
+    import json
+    all_evidence = list(evidence_entries or [])
+    try:
+        evidence_dir = workspace / ".xhx" / "evidence"
+        if evidence_dir.exists():
+            for path in evidence_dir.glob("*.jsonl"):
+                try:
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        if line.strip():
+                            try:
+                                data = json.loads(line)
+                                entry = EvidenceEntry(**data)
+                                all_evidence.append(entry)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    for evidence in _select_top_evidence(all_evidence, limit=top_k_evidence):
         candidates.append(
             ContextItem(
                 kind=f"evidence:{evidence.kind}",
