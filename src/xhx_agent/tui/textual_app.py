@@ -17,6 +17,22 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
 
+from textual.suggester import Suggester
+from xhx_agent.cli.completion import XhxCompleter
+
+class XhxTextualSuggester(Suggester):
+    def __init__(self, completer: XhxCompleter) -> None:
+        super().__init__(case_sensitive=False)
+        self.completer = completer
+
+    async def get_suggestion(self, value: str) -> str | None:
+        if not value:
+            return None
+        candidates = self.completer.get_completions(value)
+        if candidates:
+            return candidates[0]
+        return None
+
 T = TypeVar("T")
 
 
@@ -74,8 +90,9 @@ class TextualSnapshot:
             conversation_lines.append(f"summary> {state.summary_path}")
         if state.cancel_requested:
             conversation_lines.append(f"cancel> {state.cancel_reason or 'requested'}")
-        if getattr(state, "textual_messages", None):
-            conversation_lines.extend(str(item) for item in state.textual_messages)
+        textual_messages = getattr(state, "textual_messages", None)
+        if textual_messages:
+            conversation_lines.extend(str(item) for item in textual_messages)
         if not conversation_lines:
             conversation_lines.append("No conversation yet.")
         permission_state = "next confirm: default-deny"
@@ -185,7 +202,9 @@ class TextualCommandConsoleApp(App[None]):
         self.pending_confirmation: PendingConfirmation | None = None
         self.permission_timeout_seconds = permission_timeout_seconds
         self.active_detail = "overview"
-        self.detail_text = "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+        self.detail_text = (
+            "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+        )
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
 
@@ -198,7 +217,12 @@ class TextualCommandConsoleApp(App[None]):
                 yield Static(id="changed")
                 yield Static(id="details")
                 yield Static(id="commands")
-        yield Input(placeholder="Type a task or slash command. Fullscreen execution wiring is v0.5 in progress.", id="input")
+        completer = XhxCompleter(self.workspace)
+        yield Input(
+            placeholder="Type a task or slash command. Press Tab or Right arrow to complete.",
+            id="input",
+            suggester=XhxTextualSuggester(completer)
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -233,7 +257,9 @@ class TextualCommandConsoleApp(App[None]):
         self.state = ConsoleState()
         self.messages.clear()
         self.active_detail = "overview"
-        self.detail_text = "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+        self.detail_text = (
+            "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+        )
         self.refresh_snapshot()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -249,7 +275,7 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if stripped.startswith("/"):
             return self.handle_slash_command(stripped, use_worker=use_worker)
-        if self.is_running():
+        if self.is_task_running():
             self.queue_steer(stripped)
             return True
         if use_worker and self.widgets_ready:
@@ -306,7 +332,7 @@ class TextualCommandConsoleApp(App[None]):
         self.append_message(f"system> steer queued: {text}")
         self.request_cancel("Steer requested by user.")
 
-    def is_running(self) -> bool:
+    def is_task_running(self) -> bool:
         return self.state.status not in {"idle", "success", "failed", "cancelled", "skipped_no_changes"}
 
     def build_runtime_task(self, task: str) -> str:
@@ -429,7 +455,9 @@ class TextualCommandConsoleApp(App[None]):
             self.print_dashboard_summary()
             return True
         if command == "/live":
-            self.append_message("system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels")
+            self.append_message(
+                "system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels"
+            )
             return True
         if command == "/cancel":
             self.request_cancel()
@@ -716,9 +744,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def open_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
         self.pending_confirmation = confirmation
-        self._append_message(
-            f"system> permission required: {confirmation.summary}; use /allow or /deny"
-        )
+        self._append_message(f"system> permission required: {confirmation.summary}; use /allow or /deny")
 
     def resolve_pending_confirmation(self, response: bool) -> bool:
         confirmation = self.pending_confirmation
