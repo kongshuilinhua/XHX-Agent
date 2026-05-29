@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 
 from xhx_agent.cli.console import CommandConsole
-from xhx_agent.repo_intel.index import diagnose_repo_intel_index
+from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
@@ -35,7 +35,10 @@ def init() -> None:
 @app.command("repo-index")
 def repo_index(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON diagnostics.")] = False,
+    refresh: Annotated[bool, typer.Option("--refresh", help="Rebuild .xhx/repo/index.json before printing diagnostics.")] = False,
 ) -> None:
+    if refresh:
+        write_repo_intel_index(Path.cwd())
     diagnostics = diagnose_repo_intel_index(Path.cwd())
     if json_output:
         console.print(diagnostics.model_dump_json(indent=2))

@@ -50,3 +50,30 @@ def test_repo_index_command_json_reports_current_index() -> None:
     assert result.exit_code == 0
     assert '"status": "current"' in result.output
     assert '"symbol_count": 1' in result.output
+
+
+def test_repo_index_refresh_creates_missing_index() -> None:
+    with runner.isolated_filesystem() as workspace:
+        root = Path(workspace)
+        (root / "src").mkdir()
+        (root / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["repo-index", "--refresh"])
+
+        assert (root / ".xhx" / "repo" / "index.json").exists()
+
+    assert result.exit_code == 0
+    assert "repo index: current" in result.output
+
+
+def test_repo_index_refresh_json_reports_current_index() -> None:
+    with runner.isolated_filesystem() as workspace:
+        root = Path(workspace)
+        (root / "src").mkdir()
+        (root / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["repo-index", "--refresh", "--json"])
+
+    assert result.exit_code == 0
+    assert '"status": "current"' in result.output
+    assert '"symbol_count": 1' in result.output

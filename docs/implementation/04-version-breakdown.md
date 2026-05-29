@@ -186,7 +186,7 @@ v0.1 只能拆成三个固定子阶段：
 - JS/TS alias import 解析：有限支持根目录 `tsconfig.json` 的 `baseUrl` 和单通配符 `paths`。
 - impact fallback：direct test 命名匹配失败时，用 import graph 找直接或间接依赖变更源文件的测试。
 - `repo intelligence index`：`xhx init` 写入 `.xhx/repo/index.json`，保存 repo map、symbol index、import graph 和带截断元数据的 reference index。
-- `repo index diagnostics`：`xhx repo-index` 只读输出 missing / invalid / stale / current、索引大小、条目数、指纹和 reference 截断情况。
+- `repo index diagnostics`：`xhx repo-index` 默认只读输出 missing / invalid / stale / current、索引大小、条目数、指纹和 reference 截断情况；`--refresh` 可由用户显式重建索引。
 - index reuse：Context Pack 和 Verification Router 优先复用 `.xhx/repo/index.json`，索引不可用或文件指纹过期时再即时构建。
 - index refresh：成功 `apply_patch` 后刷新 `.xhx/repo/index.json`，并基于刷新后的索引重新推断验证命令。
 - `XHX.md` 输出 Repo Map 和 Symbols 摘要。
