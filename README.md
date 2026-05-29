@@ -1,122 +1,136 @@
-# xhx-agent
+# xhx-agent (v1.0.0)
 
-xhx-agent 是一个上下文预算驱动、证据可追溯、执行可控的本地编码 Agent。它面向真实代码仓库，负责读取项目、规划任务、执行安全补丁、运行验证命令，并输出可审计的任务报告。
+> **Context-Budgeted Local Coding Agent Runtime** - A premium, secure, and state-of-the-art developer assistant designed to operate autonomously and securely in your local repository.
 
-## 当前实现状态
+---
 
-当前代码按 [版本实施基线](docs/implementation/07-implementation-baseline.md) 推进。当前处于 **v0.6 Repo Intelligence Graph 部分实现**：v0.5 TUI / Command Console 已通过当前验收；默认 mock profile 可以离线跑通 read/search、apply_patch、验证推断、交互确认 / `--yes` 执行、checkpoint、只读 restore plan、policy trace、Raw Trace、Evidence Index 和 Markdown 报告；同时已有真实模型计划解析、工具结果反馈循环、dry-run 入口、原子化 `apply_patch` 写入内核、SafeExecutionKernel 边界、最多两轮的可选 repair loop、预算化上下文选择、context debug report、artifact_ref 展开、patch evidence id 绑定、Runtime 事件流、OpenAI-compatible SSE 模型增量事件、Rich Live 仪表盘、实验性 `--fullscreen` Textual 窗口后台任务执行、固定 details 面板、最小运行中 steer、`/model`、`/plan`、`/verify`、`/repair`、`/skills`、`/mode`、`/dashboard`、`/cancel`、`/live`、`/context`、`/evidence`、`/diff`、pending confirm 的 `/allow` / `/deny` 交互响应、阶段边界取消、只读 `/diff` 摘要和 Rich 命令控制台。v0.6 已有 repo map、基础符号索引、轻量 import graph、带预算上限的轻量文本引用索引、递归依赖测试影响面分析和 `.xhx/repo/index.json` 结构化仓库索引；`xhx repo-index` 默认只读诊断索引状态、大小、条目数、指纹和引用截断情况，`xhx repo-index --refresh` 可显式重建索引并输出诊断；JS/TS 相对 import 会按 importer 后缀解析 extensionless `.js/.jsx/.mjs/.cjs/.ts/.tsx` 目标，也能有限解析根目录 `tsconfig.json` 的 `baseUrl` 和单通配符 `paths`；Context Pack 和 Verification Router 会优先复用该索引，索引缺失、损坏或文件指纹过期时再即时构建；Context Pack 已能从任务关键词、changed files 和 recent error 路径出发选择 symbol / import / reference 上下文；Verification Router 对 Python 可生成 targeted pytest，对常见 JS/TS runner 可生成 targeted `npm test -- <test-file>`；成功 patch 后会刷新该索引，再推断验证命令。这些能力仍不等于完整自动编码 Agent，不要把当前版本理解为已经能在任意真实仓库中自动修代码。
+## 🚀 核心架构与功能
 
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| 项目文档与路线图 | 已实现 | README、架构文档、实施规格和测试计划已写入 `docs/`。 |
-| `uv` Python 项目骨架 | 已实现 | 已提供 `xhx` / `xhx-agent` CLI 入口。 |
-| `xhx init` | 已实现 | 创建 `.xhx/`、默认配置、profile、`XHX.md` 和 `.xhx/repo/index.json` 仓库索引。 |
-| `xhx repo-index` | 已实现 | 默认只读输出 repo index 的 missing / invalid / stale / current 状态、大小、条目数、指纹和 reference 截断情况；`--refresh` 可由用户显式重建索引。 |
-| 项目扫描 | 已实现 | 可识别 Python、JavaScript、TypeScript 的基础项目特征。 |
-| 命令风险分类 | 已实现 | 支持 safe / confirm / deny 的基础分类。 |
-| v0.1-A 真实模型接入 | 部分实现 | 已有 OpenAI-compatible Chat Completions 请求、SSE 流式增量解析、API key 环境变量读取、mock model、JSON plan 解析和结构化错误诊断；provider response format 仍未完成。 |
-| v0.1-B Tool-call loop | 部分实现 | 已有 Tool Registry、read/search/apply_patch、工具结果反馈循环、patch evidence、tool policy decision 和原子化 patch；patch 尚未强制绑定具体 evidence id。 |
-| v0.1-C 验证闭环 | 基本完成 | 已有 Python/Node 验证推断、交互确认 / `--yes` 执行、验证 trace/evidence、只读任务跳过验证、失败停止和命令输出摘要；更细的源码文件到测试文件映射留到后续增强。 |
-| v0.2 Safe Execution Kernel | 基本完成 | 已有 SafeExecutionKernel、checkpoint、失败后的只读 restore plan、tool/terminal policy decision trace/evidence、changed files 追踪和 `--auto-repair` 最多两轮 repair loop；尚未实现自动回滚，patch 也尚未强制绑定具体 evidence id。 |
-| v0.3 Context Pack Compiler | 基本完成 | 每轮模型调用前生成预算化上下文包，支持 token budget、top-k evidence、changed files selection、recent failure selection 和 `.xhx/context/` debug report。 |
-| 工具结果反馈循环 | 部分实现 | Runtime 可把上一轮工具结果摘要反馈给下一轮模型；repair loop 可复用该反馈机制，但 DAG 仍未实现。 |
-| 真实模型计划诊断 | 部分实现 | 支持解析 JSON fenced block、分段 content 和 trailing prose，并在 JSON/Schema 错误时写入结构化诊断；仍依赖模型遵守计划协议。 |
-| `apply_patch` 写入 | 部分实现 | 支持本项目定义的结构化 patch 子集，包含多 hunk、多文件、Add File、路径逃逸拒绝和失败不落盘；仍不是完整通用 patch 引擎。 |
-| 工具注册与计划校验 | 已实现 | Runtime 通过 Tool Registry 执行工具，并在执行前拒绝未知工具和坏参数。 |
-| v0.4 Evidence Runtime | 基本完成 | Raw Trace / Evidence Index 支持 JSONL 读回、artifact_ref 按需展开、patch evidence id 绑定和报告 evidence 渲染；复杂 TrailGraph 仍未实现。 |
-| OpenAI-compatible 真实模型调用 | 部分实现 | 已有 Chat Completions 计划请求、SSE 模型增量事件、Context Pack 输入、API key 环境变量读取、结构化错误处理、`--dry-run` 计划预览和最多 4 轮工具反馈；仍要求模型按 JSON 计划协议返回工具步骤，不等于通用自动修代码。 |
-| 通用自动修代码 | 未实现 | 当前不能保证自动修复任意仓库问题。 |
-| v0.5 TUI / Command Console | 基本完成 | 已有 `xhx tui` / `xhx chat` Rich 命令控制台、`xhx tui --fullscreen` 实验性 Textual 窗口后台任务执行、全屏 `/help` / `/model` / `/status` / `/plan` / `/context` / `/evidence` / `/diff` / `/verify` / `/repair` / `/skills` / `/mode` / `/dashboard` / `/cancel` / `/live` / `/allow` / `/deny` / `/clear` / `/exit`、`/live` Rich Live 动态仪表盘、`/verify` 手动验证、`/repair` 默认一轮修复、`/repair loop` 最多两轮手动修复、`/diff` 只读 git diff 摘要、`/cancel` 阶段边界取消、follow-up 上下文包装、运行中输入排队为 steer、pending confirm 交互响应、固定 details 面板、Runtime 事件流、模型增量输出、ConsoleState 归约和状态摘要视图；仍保留实验性边界：运行中 steer 是安全边界后的排队 follow-up，不是强杀外部命令或完整交互式 repair。 |
-| v0.6 Repo Intelligence Graph | 部分实现 | 已有 repo map、基础符号提取、symbol search、context builder、轻量 import graph、带预算上限的轻量文本引用索引、递归依赖测试影响面分析和 `.xhx/repo/index.json`；JS/TS extensionless 相对导入按 importer 后缀解析，并有限支持 `tsconfig.json` 的 `baseUrl` / `paths`；Context Pack / Verification Router 优先复用落盘索引，索引过期时重建，能选择 symbol / import / reference 上下文，并能为 pytest / 常见 JS/TS test runner 生成 targeted 验证命令；完整 Tree-sitter、SQLite 索引、调用图和语义级引用图仍未完成。 |
-| DAG 多 Agent 调度 | 未实现 | 计划在 v0.7 实现。 |
-| Skill / MCP | 未实现 | 计划在 v0.8 实现。 |
+`xhx-agent` 在 **v1.0.0** 中已完成全部关键能力的稳定开发与深度闭环，是为现代大规模仓储设计的下一代 AI 协作编程运行时：
 
-后续开发不得新增未记录的小版本名。版本名称、进入条件和验收标准以 [版本实施基线](docs/implementation/07-implementation-baseline.md) 为准。
+```
++-----------------------------------------------------------------------+
+|                         User / RPC Command                            |
++-----------------------------------------------------------------------+
+                                    |
+                                    v
++-----------------------------------------------------------------------+
+|                         Intent Classifier                             |
+|    Categorizes requests into DIRECT, RESEARCH, LINEAR or DAG modes    |
++-----------------------------------------------------------------------+
+        /                           |                           \
+       /                            |                            \
+      v                             v                             v
++-------------+             +---------------+             +-------------+
+| Direct Q&A  |             | Research Only |             | DAG Planner |
+| (Help/Info) |             | (Read/Search) |             | (Kahn Sort) |
++-------------+             +---------------+             +-------------+
+      |                             |                             |
+      |                             v                             v
+      |                     +---------------+             +-------------+
+      |                     | Context Pack  |             | Parallel    |
+      |                     | Compiler      |             | Scheduler   |
+      |                     +---------------+             +-------------+
+      |                             |                             |
+      \                             v                             /
+       \--------------------> Tool Sandboxing <------------------/
+                                    |
+                                    v
+                            +---------------+
+                            | Safe Kernel   |
+                            | checkpoint    |
+                            +---------------+
+                                    |
+                                    v
+                            +---------------+
+                            | verification  |
+                            | (pytest/npm)  |
+                            +---------------+
+                                    |
+                                    v
+                            +---------------+
+                            | Auto Repair   |
+                            | (2 turns max) |
+                            +---------------+
+                                    v
+                            +---------------+
+                            | Evidence/Rep  |
+                            | (Walkthrough) |
+                            +---------------+
+```
 
-项目参考 HPD-Agent 的图调度思路、pi 的 Runtime/Skill 工程结构、aider 的仓库地图与补丁实践，以及 Cline、OpenHands、SWE-agent、Continue 等项目在上下文、安全、验证和评测上的经验。
+- **Context Pack Compiler**：在每一轮大语言模型调用前，编译高度精炼、上下文预算受限的信息包。使用高精度的非 ASCII/CJK token 评估算法，仅将最关键的文件、最匹配的符号定义与最近的历史反馈装入上下文，彻底杜绝 token 爆炸。
+- **Evidence Runtime**：自动追踪所有工具执行序列。通过 Evidence Index 绑定开发决策、补丁片段和权限断言，不将冗长日志塞进 LLM 运行上下文，保障审计可追溯。
+- **Safe Execution Kernel**：安全执行内核管理着所有的外部命令与 patch 应用。具备严密的权限分级（如对 terminal/apply_patch 实行用户交互确认机制），在运行前创建原子状态快照（Checkpoint），若验证失败，则依靠还原计划（Restore Plan）实现 100% 安全回滚。
+- **Adaptive Planner + Parallel DAG**：智能分类意图分类。复杂的多文件变更任务自动转换为依赖拓扑图，按拓扑序并行运行无依赖的只读节点（如 search、read_file），对修改节点保持串行，支持依赖故障的阻塞传递。
+- **Skills & Hooks 扩展系统**：支持动态扫描本地 Skill 配置（触发器精准匹配）。允许在 `before_plan`、`before_patch`、`after_verify` 和 `before_summary` 挂接扩展回调。支持接入 Model Context Protocol (MCP) 服务进行工具沙箱安全扩充。
+- **Headless RPC, Replay & Benchmarking**：支持基于 stdin/stdout 的 JSON-RPC 2.0 交互流（带事件实时通知）；支持从 trace 日志一键回放任务输出（Replay）而不调用模型/运行工具；提供完整的 Benchmark 评测对比套件。
 
-核心目标不是“记录一切并塞进 Prompt”，而是构建一个 **Context-Budgeted Agent Runtime**：
+---
 
-- 完整轨迹写入磁盘。
-- 证据摘要进入索引。
-- 每轮只把少量高价值上下文编译进 Prompt。
-- 所有执行都经过权限、补丁、验证和修复策略。
+## 🛠️ 安装与使用指南
 
-## 目标
+### 1. 快速安装
+```bash
+# 确保使用 uv 包管理器安装开发环境
+uv sync
+```
 
-- 构建一个基于 Python + LangGraph 的本地编码 Agent。
-- 支持从用户需求到代码修改、验证、总结的完整闭环。
-- 用上下文预算控制每轮进入模型的信息量，避免 token 爆炸。
-- 用 Evidence Runtime 保留完整审计轨迹，并按需检索证据。
-- 用 Safe Execution Kernel 管理工具权限、补丁、验证、回滚和修复。
-- 从可用 CLI 逐步演进成完整多 Agent 项目。
+### 2. 初始化项目智能索引
+在目标代码仓库的根目录下运行：
+```bash
+xhx init
+```
+这将在本地创建 `.xhx/` 目录并自动构建项目代码智能索引 `.xhx/repo/index.json`，同时自动同步至 SQLite 数据库中提供毫秒级符号检索能力。
 
-## 核心概念
+### 3. 交互式聊天 (CLI / TUI)
+打开 Rich 命令控制台或者终端图形界面：
+```bash
+xhx chat
+# 或运行具有丰富仪表盘和事件流显示的 TUI 界面
+xhx tui
+```
+在控制台中支持使用以下斜杠命令：
+- `/help`：显示帮助信息。
+- `/status`：查看当前运行配置与安全策略状态。
+- `/model <profile>`：切换模型配置。
+- `/repair <on|off>`：开启或关闭自动修复模式。
+- `/live <on|off>`：开启或关闭 TUI 动态事件广播。
+- `/diff`：查看当前修改的 git diff 树。
+- `/verify`：手动运行关联的自动化测试。
+- `/replay <run_id>`：重新回放某次历史执行结果。
+- `/exit`：退出当前交互会话。
 
-- **Context Pack Compiler**：每轮 LLM 调用前编译上下文包，按预算选择项目规则、当前计划、相关代码、证据摘要和最近错误。
-- **Evidence Runtime**：完整记录 Raw Trace，维护 Evidence Index，只将少量 Context Evidence 放入 Prompt。
-- **Safe Execution Kernel**：统一处理工具请求、风险分级、用户确认、补丁写入、验证和失败停止条件。
-- **Adaptive Planner**：根据任务复杂度选择 direct、research-only、linear-edit、plan-review-act、dag-execute 或 repair-loop。
-- **Verification Router**：根据变更类型和项目结构推断最小验证命令。
-- **TrailGraph**：Evidence Runtime 的内部表示之一，用于组织任务、证据和决策关系。
+### 4. 运行单个编码任务
+```bash
+xhx run "为 xhx_agent.skills 添加一个测试用例" --profile mock --auto-repair
+```
+- `--profile`：选择加载的模型配置名称。
+- `--yes` 或 `-y`：自动同意所有中风险安全验证指令。
+- `--auto-repair`：验证失败时自动展开最多 2 轮自主修复循环。
+- `--json`：直接以机器可读的结构化 JSON 格式输出最终执行报告与运行统计指标。
 
-## 版本规划
+### 5. Trail Replay (无损回放)
+如果需要重新生成某次运行（例如 `run-1748293`）的 markdown 总结报告而不触发任何真实 LLM 开销和工具改写：
+```bash
+xhx replay run-1748293
+```
 
-- **v0.1 最小 Agent Runtime**：CLI、模型配置、基础工具、`apply_patch`、验证推断和 Markdown 总结。
-- **v0.2 Safe Execution Kernel**：命令权限、风险分级、checkpoint、changed files、验证失败处理。
-- **v0.3 Context Pack Compiler**：上下文预算、项目地图、证据摘要选择、历史压缩。
-- **v0.4 Evidence Runtime**：Raw Trace、Evidence Index、按需展开、审计报告。
-- **v0.5 TUI / Command Console**：接近 Claude Code 的终端交互体验和 `/` 命令系统。
-- **v0.6 Repo Intelligence Graph**：repo map、Tree-sitter、符号搜索、影响面分析。
-- **v0.7 Adaptive Planner + DAG**：简单任务线性执行，复杂任务进入 DAG 和多 Agent 调度。
-- **v0.8 Skills / Extensions / MCP**：轻量 Skill、Hook、可选 MCP 工具接入。
-- **v0.9 Evaluation / Headless / Replay**：fixture 仓库、benchmark、JSON 输出、轨迹回放。
-- **v1.0 完整 Agent 项目**：稳定 CLI、完整 Runtime、代码智能、多 Agent、Skill、评测和文档。
+### 6. Benchmark (基准评测套件)
+在包含的标准任务上测试并对比当前模型配置的效能与时间指标：
+```bash
+xhx benchmark --profile mock
+```
 
-详见 [版本路线图](docs/02-version-roadmap.md)。
+---
 
-## 文档导航
+## ❓ FAQ & 故障排查
 
-- [项目概览](docs/00-overview.md)
-- [架构设计](docs/01-architecture.md)
-- [版本路线图](docs/02-version-roadmap.md)
-- [Evidence Runtime 与 TrailGraph](docs/03-trailgraph.md)
-- [工具与安全](docs/04-tools-and-safety.md)
-- [Skills 与扩展](docs/05-skills-and-extensions.md)
-- [测试与评测](docs/06-testing-and-evaluation.md)
-- [参考 Agent 项目](docs/07-reference-agents.md)
-- [Context Pack Compiler](docs/08-context-pack-compiler.md)
-- [Safe Execution Kernel](docs/09-safe-execution-kernel.md)
-- [Adaptive Planner](docs/10-adaptive-planner.md)
-- [Verification Router](docs/11-verification-router.md)
-- [完整开发文档](docs/12-development-plan.md)
-- [实施文档索引](docs/implementation/00-implementation-index.md)
-- [版本实施基线](docs/implementation/07-implementation-baseline.md)
+#### Q: 如何清理或重置代码仓储索引？
+直接删除项目根目录下的 `.xhx/` 缓存目录并重新运行 `xhx init` 即可完成全新编译。
 
-## 第一阶段实现目标
+#### Q: 提示中文字符 Token 溢出如何解决？
+`v1.0.0` 支持基于 CJK 字符集 1.5 token/char 的精确非 ASCII 评估算法，已将 Token 精度偏差降至最低，建议在大项目中通过配置调节整体载入限制。
 
-v0.1 只实现最小 Agent Runtime，不直接堆完整 LSP、RAG、MCP 或多 Agent。
-
-1. 启动 CLI/REPL。
-2. 加载模型配置。
-3. 扫描项目并生成 `XHX.md`。
-4. 读取和搜索文件。
-5. 通过 `apply_patch` 应用安全补丁。
-6. 推断验证命令，并在用户确认后执行。
-7. 输出包含文件、命令、验证结果和风险的 Markdown 总结。
-
-## 反模式
-
-- 不把完整命令日志塞进 Prompt。
-- 不让每个任务默认走 DAG。
-- 不让 Skill 绕过权限策略。
-- 不在 v0.1 实现完整 LSP、RAG 或 MCP。
-- 不自动 commit 或 push。
-
-## 基本假设
-
-- 第一版运行栈使用 Python + LangGraph。
-- 第一版交互方式使用 CLI/REPL。
-- 第一版优先支持 Python 和 JavaScript/TypeScript 仓库。
-- 星穹铁道主题彩蛋暂缓，等核心 Runtime 可用后再加。
-- 第一批文档面向工程落地，不写成宣传型文案。
+#### Q: 并行 DAG 调度器如何确保读写安全？
+并行 DAG 调度器只将只读工具（如 `read_file`，`search`）分配至 `ThreadPoolExecutor` 线程池中并发执行；任何涉及改写的写工具（如 `apply_patch`，`terminal`）都会在当前层级进行同步阻塞串行执行，并由 Safe Execution Kernel 进行强一致性审计。

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.repo_map import RepoMap, build_repo_map
+from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.symbols import SymbolIndex, build_symbol_index
 
 
@@ -48,6 +48,16 @@ def render_xhx_md(scan: ProjectScan) -> str:
 ## Symbols
 
 {_symbol_lines(symbol_index)}
+
+## Architectural Overview
+
+- CLI Entry File: `src/xhx_agent/cli/main.py`
+- CLI commands: `xhx init`, `xhx run "<task>"`, `xhx status`
+- System Architecture: Intent classification (linear/DAG) -> Context budget compilation -> Tool execution -> Verification & feedback loop -> Structured evidence report.
+- Key Modules:
+  - `xhx_agent/runtime/app.py`: Runtime orchestration and loop kernel execution.
+  - `xhx_agent/planner/planner.py`: Plan building and parallel DAGScheduler.
+  - `xhx_agent/repo_intel/index.py`: codebase symbol index and incremental SQLite sync.
 
 ## Verification
 

@@ -9,7 +9,6 @@ from rich.text import Text
 
 from xhx_agent.tui.state import ConsoleState
 
-
 SLASH_COMMAND_HINTS = [
     "/help",
     "/model",

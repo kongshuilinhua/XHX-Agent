@@ -73,9 +73,7 @@ def _is_python_project(workspace: Path, changed_files: list[str] | None) -> bool
         if any(Path(path).name in {"pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"} for path in normalized):
             return (workspace / "tests").exists() or (workspace / "pytest.ini").exists()
         return False
-    if (workspace / "tests").exists() or (workspace / "pytest.ini").exists():
-        return True
-    return False
+    return bool((workspace / "tests").exists() or (workspace / "pytest.ini").exists())
 
 
 def _python_test_files(changed_files: list[str] | None) -> list[str]:

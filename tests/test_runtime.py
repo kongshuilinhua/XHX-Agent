@@ -1,18 +1,18 @@
-from pathlib import Path
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
-from xhx_agent.runtime.app import RuntimeApp
-from xhx_agent.repo_intel.index import read_repo_intel_index
-from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
-from xhx_agent.models.types import ModelPlan, ToolStep
-from xhx_agent.tools.registry import ToolRegistry, ToolExecutionResult
 from xhx_agent.context.pack import ContextPack
-from xhx_agent.tools.terminal import TerminalResult
+from xhx_agent.models.types import ModelPlan, ToolStep
+from xhx_agent.repo_intel.index import read_repo_intel_index
+from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS
 from xhx_agent.safety.risk import RiskLevel
+from xhx_agent.tools.registry import ToolExecutionResult, ToolRegistry
+from xhx_agent.tools.terminal import TerminalResult
 
 
 def test_init_project_writes_expected_files(tmp_path: Path) -> None:
@@ -122,7 +122,7 @@ def test_runtime_refreshes_repo_index_after_patch_before_verification(tmp_path: 
     app = RuntimeApp(tmp_path)
     events = []
 
-    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+    app._build_plan = lambda _task, _profile, _context, *args, **kwargs: ModelPlan(  # type: ignore[method-assign]
         summary="add public api",
         steps=[
             ToolStep(
@@ -332,7 +332,7 @@ def test_runtime_auto_repair_attempts_second_patch(tmp_path: Path, monkeypatch) 
         ),
     ]
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
         return plans.pop(0)
 
     verification_results = [
@@ -388,7 +388,7 @@ def test_runtime_manual_repair_runs_one_attempt(tmp_path: Path, monkeypatch) -> 
     )
     app = RuntimeApp(tmp_path)
 
-    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+    app._build_plan = lambda _task, _profile, _context, *args, **kwargs: ModelPlan(  # type: ignore[method-assign]
         summary="repair value",
         steps=[
             ToolStep(
@@ -465,7 +465,7 @@ def test_runtime_manual_repair_loop_can_run_second_attempt(tmp_path: Path, monke
     app = RuntimeApp(tmp_path)
     values = [2, 3]
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
         next_value = values.pop(0)
         return ModelPlan(
             summary=f"set value to {next_value}",
@@ -572,7 +572,7 @@ def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch)
     app = RuntimeApp(tmp_path)
     values = [2, 3, 4]
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
         next_value = values.pop(0)
         previous_value = next_value - 1
         return ModelPlan(
@@ -674,7 +674,7 @@ def test_runtime_rejects_invalid_model_plan_before_tool_execution(tmp_path: Path
 
     registry.register("search", fake_runner)
     app = RuntimeApp(tmp_path, tool_registry=registry)
-    app._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+    app._build_plan = lambda _task, _profile, _context, *args, **kwargs: ModelPlan(  # type: ignore[method-assign]
         summary="bad model plan",
         steps=[ToolStep(tool="terminal", arguments={"command": "python -m pytest"})],
     )
@@ -709,7 +709,7 @@ def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None
     contexts: list[ContextPack] = []
     app = RuntimeApp(tmp_path)
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, context: ContextPack, *args, **kwargs) -> ModelPlan:
         contexts.append(context)
         if len(contexts) == 1:
             return ModelPlan(
@@ -793,7 +793,7 @@ def test_runtime_stops_when_real_model_exceeds_max_turns(tmp_path: Path) -> None
     )
     app = RuntimeApp(tmp_path)
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
         return ModelPlan(
             summary="keep searching",
             steps=[ToolStep(tool="search", arguments={"query": "never-done"})],
@@ -814,7 +814,7 @@ def test_preview_plan_does_not_execute_tools(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     app = RuntimeApp(tmp_path)
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack) -> ModelPlan:
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
         return ModelPlan(
             summary="would patch file",
             steps=[

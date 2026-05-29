@@ -1,5 +1,5 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.context.debug import write_context_debug_report
@@ -99,6 +99,28 @@ def test_context_pack_includes_import_context_for_changed_file(tmp_path: Path) -
     assert any("def add_public" in item.content for item in import_items)
     assert pack.debug is not None
     assert any(record.kind == "import_context" and record.selected for record in pack.debug.records)
+
+
+def test_context_pack_includes_call_context_for_changed_file(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "src" / "public_api.py").write_text("from calc import add\n\ndef add_public(a, b):\n    return add(a, b)\n", encoding="utf-8")
+    write_repo_intel_index(tmp_path)
+    scan = scan_project(tmp_path)
+
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="continue fixing add",
+        scan=scan,
+        changed_files=["src/calc.py"],
+        budget_tokens=2_000,
+    )
+
+    call_items = [item for item in pack.items if item.kind == "call_context"]
+    assert any(item.source == "src/public_api.py:3:add_public" for item in call_items)
+    assert any("def add_public" in item.content for item in call_items)
+    assert pack.debug is not None
+    assert any(record.kind == "call_context" and record.selected for record in pack.debug.records)
 
 
 def test_context_pack_includes_reference_context_for_task_query(tmp_path: Path) -> None:

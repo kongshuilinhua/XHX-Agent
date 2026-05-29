@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -7,10 +8,10 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
+from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.patch import PatchResult, apply_patch
 from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
-
 
 ToolName = Literal["search", "read_file", "apply_patch"]
 
@@ -148,7 +149,10 @@ def _run_read_file(context: ToolContext, arguments: dict[str, object]) -> ToolEx
 
 
 def _run_apply_patch(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+    with contextlib.suppress(Exception):
+        hooks_manager.trigger("before_patch", workspace=context.workspace, patch=str(arguments.get("patch", "")))
     result: PatchResult = apply_patch(context.workspace, str(arguments["patch"]))
+
     return ToolExecutionResult(
         tool="apply_patch",
         status=result.status,

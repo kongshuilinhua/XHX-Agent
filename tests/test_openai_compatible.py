@@ -3,8 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from xhx_agent.models.openai_compatible import OpenAICompatibleClient
-from xhx_agent.models.openai_compatible import _parse_plan_content
+from xhx_agent.models.openai_compatible import OpenAICompatibleClient, _parse_plan_content
 from xhx_agent.models.types import ModelClientError
 
 
@@ -32,7 +31,7 @@ def test_openai_compatible_parses_model_plan(monkeypatch: pytest.MonkeyPatch) ->
         body = request.read().decode("utf-8")
         captured_body = body
         assert "/chat/completions" in str(request.url)
-        assert "Bearer test-key" == request.headers["Authorization"]
+        assert request.headers["Authorization"] == "Bearer test-key"
         assert "demo-model" in body
         return httpx.Response(
             200,

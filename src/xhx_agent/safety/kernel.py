@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.events import EventCallback, emit_event
@@ -9,7 +9,6 @@ from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, creat
 from xhx_agent.safety.policy import PolicyDecision, decide_tool
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
-
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 

@@ -1,33 +1,46 @@
 from __future__ import annotations
 
-import inspect
+import contextlib
 import json
-import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from pydantic import BaseModel
 
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.context.debug import write_context_debug_report
 from xhx_agent.context.pack import ContextPack
-from xhx_agent.evidence.store import EvidenceEntry
-from xhx_agent.evidence.store import EvidenceStore
+from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
+from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
-from xhx_agent.repo_intel.scanner import scan_project
+from xhx_agent.planner.classifier import ModeClassifier
+from xhx_agent.planner.modes import ExecutionMode
 from xhx_agent.repo_intel.index import write_repo_intel_index
+from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
+from xhx_agent.runtime.dag_runner import DAGRunner
 from xhx_agent.runtime.events import EventCallback, emit_event
+from xhx_agent.runtime.git_ops import DiffSummary, GitOps
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
-from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, restore_plan_path
+from xhx_agent.runtime.verify_loop import (
+    ManualRepairResult,
+    ManualVerificationResult,
+    VerificationLoop,
+    _last_verification_error,
+    _refresh_repo_intel_index,
+    checkpoint_path_value,
+    restore_plan_path_value,
+)
+from xhx_agent.safety.checkpoint import Checkpoint
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
+from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
@@ -54,6 +67,8 @@ class RunResult(BaseModel):
     repair_attempts: int = 0
     summary_path: str
     risk_summary: list[str]
+    metrics: RunMetrics | None = None
+    mode: str = ""
 
 
 class PlanPreview(BaseModel):
@@ -67,40 +82,17 @@ class PlanPreview(BaseModel):
     risk_summary: list[str]
 
 
-class ManualVerificationResult(BaseModel):
-    run_id: str
-    status: str
-    changed_files: list[str]
-    commands: list[str]
-    verification_results: list[TerminalResult] = []
-    summary_path: str | None = None
-    risk_summary: list[str]
-
-
-class ManualRepairResult(BaseModel):
-    run_id: str
-    status: str
-    turns: int = 0
-    changed_files: list[str]
-    commands: list[str]
-    verification: str
-    verification_results: list[TerminalResult] = []
-    repair_attempts: int = 0
-    summary_path: str | None = None
-    restore_plan_path: str | None = None
-    risk_summary: list[str]
-
-
-class DiffSummary(BaseModel):
-    changed_files: list[str]
-    summary: str
-    diff_text: str = ""
-    truncated: bool = False
-    risk_summary: list[str] = []
-
-
 ConfirmationCallback = Callable[[str, object], bool]
 CancelCheck = Callable[[], bool]
+
+
+def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
+    if cancel_check is None:
+        return False
+    try:
+        return bool(cancel_check())
+    except Exception:
+        return False
 
 
 class RuntimeApp:
@@ -132,6 +124,8 @@ class RuntimeApp:
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> RunResult:
+        start_time = time.time()
+        metrics_tracker = {"tokens": 0}
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         run_id = f"run-{int(time.time())}"
@@ -193,6 +187,15 @@ class RuntimeApp:
                 changed_files=[],
                 summary_path=str(summary.relative_to(self.workspace)),
             )
+            metrics = RunMetrics(
+                duration_seconds=round(time.time() - start_time, 2),
+                turns=turns_completed,
+                tokens_estimate=metrics_tracker["tokens"],
+                files_changed_count=0,
+                commands_run_count=0,
+                repair_attempts=repair_attempts,
+                success=False,
+            )
             return RunResult(
                 run_id=run_id,
                 status=status,
@@ -203,8 +206,31 @@ class RuntimeApp:
                 verification_results=[],
                 summary_path=str(summary.relative_to(self.workspace)),
                 risk_summary=risks,
+                metrics=metrics,
+                mode="direct",
             )
 
+        mode = ModeClassifier().classify(task, scan)
+
+        if mode == ExecutionMode.DAG_EXECUTE:
+            runner = DAGRunner(self)
+            res = runner.run_dag(
+                task=task,
+                run_id=run_id,
+                evidence=evidence,
+                kernel=kernel,
+                tool_context=tool_context,
+                assume_yes=assume_yes,
+                confirm_callback=confirm_callback,
+                event_callback=event_callback,
+                cancel_check=cancel_check,
+                start_time=start_time,
+                metrics_tracker=metrics_tracker,
+            )
+            res.mode = "dag-execute"
+            return res
+
+        # Linear Edit Mode
         status, turns_completed, recent_error = self._run_model_tool_loop(
             task=task,
             profile=profile,
@@ -221,6 +247,7 @@ class RuntimeApp:
             starting_turn=1,
             event_callback=event_callback,
             cancel_check=cancel_check,
+            metrics_tracker=metrics_tracker,
         )
         if changed_files and status not in {"failed", "cancelled"}:
             _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
@@ -240,145 +267,54 @@ class RuntimeApp:
             verification_status = "skipped_no_changes"
             evidence.write_trace("verification_skipped", {"reason": "No changed files."})
 
-        while status not in {"failed", "cancelled"} and changed_files:
-            if _cancel_requested(cancel_check):
-                status = "cancelled"
-                verification_status = "cancelled"
-                risks.append("Run cancelled by user before verification.")
-                evidence.write_trace("cancel_requested", {"stage": "before_verification"})
-                emit_event(event_callback, "run_cancelled", "Run cancelled before verification.", run_id=run_id)
-                break
-            verification_plan = infer_verification(self.workspace, changed_files)
-            commands = [item.command for item in verification_plan.commands]
-            checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
-            emit_event(
-                event_callback,
-                "checkpoint",
-                "Checkpoint created.",
-                checkpoint_id=checkpoint.id,
-                changed_files=sorted(set(changed_files)),
+        # Run verification and repair loop in modular method
+        (
+            status,
+            verification_status,
+            repair_attempts,
+            turns_completed,
+            recent_error,
+            checkpoint,
+            repair_decision,
+            restore_plan_created,
+        ) = self._execute_verification_and_repair_loop(
+            status=status,
+            verification_status=verification_status,
+            changed_files=changed_files,
+            cancel_check=cancel_check,
+            risks=risks,
+            evidence=evidence,
+            run_id=run_id,
+            event_callback=event_callback,
+            kernel=kernel,
+            assume_yes=assume_yes,
+            confirm_callback=confirm_callback,
+            auto_repair=auto_repair,
+            repair_attempts=repair_attempts,
+            tool_summaries=tool_summaries,
+            evidence_entries=evidence_entries,
+            plan_summaries=plan_summaries,
+            recent_error=recent_error,
+            profile=profile,
+            scan=scan,
+            tool_context=tool_context,
+            metrics_tracker=metrics_tracker,
+            turns_completed=turns_completed,
+            commands_run=commands_run,
+            verification_results=verification_results,
+            task=task,
+        )
+
+        with contextlib.suppress(Exception):
+            hooks_manager.trigger(
+                "before_summary",
+                workspace=self.workspace,
+                run_id=run_id,
+                task=task,
+                status=status,
+                changed_files=changed_files
             )
-            verification_results.clear()
-            commands_run.clear()
-            verification_status = verification_plan.skip_reason if verification_plan else "not_executed"
-            for command in commands:
-                if _cancel_requested(cancel_check):
-                    status = "cancelled"
-                    verification_status = "cancelled"
-                    risks.append("Run cancelled by user before verification command.")
-                    evidence.write_trace("cancel_requested", {"stage": "before_verification_command", "command": command})
-                    emit_event(
-                        event_callback,
-                        "run_cancelled",
-                        "Run cancelled before verification command.",
-                        run_id=run_id,
-                        command=command,
-                    )
-                    break
-                emit_event(event_callback, "verification_start", "Verification started.", command=command)
-                result = kernel.run_verification(
-                    command,
-                    assume_yes=assume_yes,
-                    confirm_callback=confirm_callback,
-                    event_callback=event_callback,
-                )
-                emit_event(
-                    event_callback,
-                    "verification_result",
-                    "Verification finished.",
-                    command=command,
-                    status=result.status,
-                    exit_code=result.exit_code,
-                )
-                commands_run.append(command)
-                verification_results.append(result)
-                if result.status == "confirm":
-                    verification_status = "requires_confirmation"
-                    risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
-                    break
-                if result.status != "success":
-                    status = "failed"
-                    verification_status = "failed"
-                    risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
-                    break
-                verification_status = "passed"
-            if status == "cancelled":
-                break
-            repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
-            evidence.write_trace("repair_decision", repair_decision.model_dump())
-            emit_event(
-                event_callback,
-                "repair_decision",
-                repair_decision.reason,
-                should_repair=repair_decision.should_repair,
-                attempts_used=repair_decision.attempts_used,
-                max_attempts=repair_decision.max_attempts,
-            )
-            if verification_status != "failed":
-                break
-            if not repair_decision.should_repair:
-                evidence.write_evidence(
-                    "error",
-                    "repair",
-                    repair_decision.reason,
-                    f"trace://{run_id}/repair_decision",
-                    confidence=0.8,
-                )
-                risks.append(f"Repair not attempted: {repair_decision.reason}")
-                break
-            repair_attempts += 1
-            emit_event(
-                event_callback,
-                "repair_start",
-                "Repair attempt started.",
-                attempt=repair_attempts,
-                max_attempts=MAX_REPAIR_ATTEMPTS,
-            )
-            evidence.write_evidence(
-                "decision",
-                "repair",
-                f"Repair attempt {repair_attempts}/{MAX_REPAIR_ATTEMPTS}: {repair_decision.reason}",
-                f"trace://{run_id}/repair/{repair_attempts}",
-                confidence=0.7,
-            )
-            recent_error = _last_verification_error(verification_results)
-            tool_summaries.append(f"verification failed: {recent_error}")
-            before_repair_changed = len(changed_files)
-            status = "success"
-            status, turns_completed, recent_error = self._run_model_tool_loop(
-                task=f"Repair after failed verification: {task}",
-                profile=profile,
-                scan=scan,
-                evidence=evidence,
-                kernel=kernel,
-                tool_context=tool_context,
-                changed_files=changed_files,
-                tool_summaries=tool_summaries,
-                evidence_entries=evidence_entries,
-                plan_summaries=plan_summaries,
-                risks=risks,
-                recent_error=recent_error,
-                starting_turn=turns_completed + 1,
-                max_turns=1,
-                event_callback=event_callback,
-                cancel_check=cancel_check,
-            )
-            if status == "cancelled":
-                break
-            if status == "failed":
-                break
-            if len(changed_files) == before_repair_changed:
-                status = "failed"
-                message = "Repair loop produced no additional changes."
-                risks.append(message)
-                evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
-                break
-            _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
-            continue
-        if status == "failed" and checkpoint is not None:
-            kernel.create_restore_plan(checkpoint)
-            restore_plan_created = True
-            emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
+
         summary = write_report(
             workspace=self.workspace,
             run_id=run_id,
@@ -405,6 +341,15 @@ class RuntimeApp:
             changed_files=sorted(set(changed_files)),
             summary_path=str(summary.relative_to(self.workspace)),
         )
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - start_time, 2),
+            turns=turns_completed,
+            tokens_estimate=metrics_tracker["tokens"],
+            files_changed_count=len(changed_files),
+            commands_run_count=len(commands_run or commands),
+            repair_attempts=repair_attempts,
+            success=(status == "success"),
+        )
         return RunResult(
             run_id=run_id,
             status=status,
@@ -419,7 +364,163 @@ class RuntimeApp:
             repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(self.workspace)),
             risk_summary=risks,
+            metrics=metrics,
+            mode=mode.value,
         )
+
+    def _execute_verification_and_repair_loop(
+        self,
+        *,
+        status: str,
+        verification_status: str,
+        changed_files: list[str],
+        cancel_check: CancelCheck | None,
+        risks: list[str],
+        evidence: EvidenceStore,
+        run_id: str,
+        event_callback: EventCallback | None,
+        kernel: SafeExecutionKernel,
+        assume_yes: bool,
+        confirm_callback: ConfirmationCallback | None,
+        auto_repair: bool,
+        repair_attempts: int,
+        tool_summaries: list[str],
+        evidence_entries: list[EvidenceEntry],
+        plan_summaries: list[str],
+        recent_error: str | None,
+        profile: ModelProfile,
+        scan,
+        tool_context: ToolContext,
+        metrics_tracker: dict[str, int],
+        turns_completed: int,
+        commands_run: list[str],
+        verification_results: list[TerminalResult],
+        task: str,
+    ) -> tuple[str, str, int, int, str | None, Checkpoint | None, RepairDecision | None, bool]:
+        checkpoint: Checkpoint | None = None
+        restore_plan_created = False
+        repair_decision: RepairDecision | None = None
+        verify_loop = VerificationLoop(self)
+
+        while status not in {"failed", "cancelled"} and changed_files:
+            if _cancel_requested(cancel_check):
+                status = "cancelled"
+                verification_status = "cancelled"
+                risks.append("Run cancelled by user before verification.")
+                evidence.write_trace("cancel_requested", {"stage": "before_verification"})
+                emit_event(event_callback, "run_cancelled", "Run cancelled before verification.", run_id=run_id)
+                break
+
+            verification_plan = infer_verification(self.workspace, changed_files)
+            commands = [item.command for item in verification_plan.commands]
+            checkpoint = kernel.create_checkpoint(sorted(set(changed_files)))
+            emit_event(
+                event_callback,
+                "checkpoint",
+                "Checkpoint created.",
+                checkpoint_id=checkpoint.id,
+                changed_files=sorted(set(changed_files)),
+            )
+            verification_results.clear()
+            commands_run.clear()
+
+            status, verification_status = verify_loop.execute_verification_loop(
+                kernel=kernel,
+                commands=commands,
+                assume_yes=assume_yes,
+                confirm_callback=confirm_callback,
+                event_callback=event_callback,
+                cancel_check=cancel_check,
+                run_id=run_id,
+                evidence=evidence,
+                risks=risks,
+                commands_run_accumulated=commands_run,
+                results_accumulated=verification_results,
+            )
+            if status == "cancelled":
+                break
+
+            with contextlib.suppress(Exception):
+                hooks_manager.trigger("after_verify", workspace=self.workspace, results=verification_results)
+
+            repair_decision = decide_repair(verification_status, attempts_used=repair_attempts, auto_repair_enabled=auto_repair)
+            evidence.write_trace("repair_decision", repair_decision.model_dump())
+            emit_event(
+                event_callback,
+                "repair_decision",
+                repair_decision.reason,
+                should_repair=repair_decision.should_repair,
+                attempts_used=repair_attempts,
+                max_attempts=repair_decision.max_attempts,
+            )
+            if verification_status != "failed":
+                break
+            if not repair_decision.should_repair:
+                evidence.write_evidence(
+                    "error",
+                    "repair",
+                    repair_decision.reason,
+                    f"trace://{run_id}/repair_decision",
+                    confidence=0.8,
+                )
+                risks.append(f"Repair not attempted: {repair_decision.reason}")
+                break
+
+            repair_attempts += 1
+            emit_event(
+                event_callback,
+                "repair_start",
+                "Repair attempt started.",
+                attempt=repair_attempts,
+                max_attempts=MAX_REPAIR_ATTEMPTS,
+            )
+            evidence.write_evidence(
+                "decision",
+                "repair",
+                f"Repair attempt {repair_attempts}/{MAX_REPAIR_ATTEMPTS}: {repair_decision.reason}",
+                f"trace://{run_id}/repair/{repair_attempts}",
+                confidence=0.7,
+            )
+            recent_error = _last_verification_error(verification_results)
+            tool_summaries.append(f"verification failed: {recent_error}")
+            before_repair_changed = len(changed_files)
+            status = "success"
+
+            status, turns_completed, recent_error = self._run_model_tool_loop(
+                task=f"Repair after failed verification: {task}",
+                profile=profile,
+                scan=scan,
+                evidence=evidence,
+                kernel=kernel,
+                tool_context=tool_context,
+                changed_files=changed_files,
+                tool_summaries=tool_summaries,
+                evidence_entries=evidence_entries,
+                plan_summaries=plan_summaries,
+                risks=risks,
+                recent_error=recent_error,
+                starting_turn=turns_completed + 1,
+                max_turns=1,
+                event_callback=event_callback,
+                cancel_check=cancel_check,
+                metrics_tracker=metrics_tracker,
+            )
+            if status == "cancelled" or status == "failed":
+                break
+            if len(changed_files) == before_repair_changed:
+                status = "failed"
+                message = "Repair loop produced no additional changes."
+                risks.append(message)
+                evidence.write_trace("repair_decision", {"should_repair": False, "reason": message, "attempts_used": repair_attempts})
+                break
+            _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
+
+        if status == "failed" and checkpoint is not None:
+            kernel.create_restore_plan(checkpoint)
+            restore_plan_created = True
+            emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
+
+        return (status, verification_status, repair_attempts, turns_completed, recent_error, checkpoint, repair_decision, restore_plan_created)
 
     def run_task_json(
         self,
@@ -472,70 +573,7 @@ class RuntimeApp:
         )
 
     def diff_changed_files(self, changed_files: list[str], max_chars: int = 12_000) -> DiffSummary:
-        normalized_changed_files = sorted({item for item in changed_files if item})
-        if not normalized_changed_files:
-            return DiffSummary(
-                changed_files=[],
-                summary="No changed files.",
-                diff_text="",
-                truncated=False,
-                risk_summary=[],
-            )
-        risks: list[str] = []
-        diff_text = ""
-        summary = f"{len(normalized_changed_files)} changed file(s)."
-        if max_chars < 0:
-            max_chars = 0
-        if not _is_git_worktree(self.workspace):
-            return DiffSummary(
-                changed_files=normalized_changed_files,
-                summary=f"{summary} Git diff unavailable outside a git worktree.",
-                diff_text="",
-                truncated=False,
-                risk_summary=["Git diff unavailable outside a git worktree."],
-            )
-        try:
-            completed = subprocess.run(
-                ["git", "diff", "--", *normalized_changed_files],
-                cwd=self.workspace,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            risks.append(f"Git diff unavailable: {exc}")
-            return DiffSummary(
-                changed_files=normalized_changed_files,
-                summary=f"{summary} Git diff unavailable.",
-                diff_text="",
-                truncated=False,
-                risk_summary=risks,
-            )
-        if completed.returncode != 0:
-            message = completed.stderr.strip() or f"git diff exited with code {completed.returncode}"
-            risks.append(message)
-            return DiffSummary(
-                changed_files=normalized_changed_files,
-                summary=f"{summary} Git diff unavailable.",
-                diff_text="",
-                truncated=False,
-                risk_summary=risks,
-            )
-        diff_text = completed.stdout
-        truncated = len(diff_text) > max_chars
-        if truncated:
-            diff_text = diff_text[:max_chars]
-            risks.append(f"Diff output truncated to {max_chars} characters.")
-        if not diff_text:
-            risks.append("No git diff output for the selected changed files.")
-        return DiffSummary(
-            changed_files=normalized_changed_files,
-            summary=summary,
-            diff_text=diff_text,
-            truncated=truncated,
-            risk_summary=risks,
-        )
+        return GitOps(self.workspace).diff_changed_files(changed_files, max_chars)
 
     def verify_changed_files(
         self,
@@ -545,426 +583,67 @@ class RuntimeApp:
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> ManualVerificationResult:
-        run_id = f"verify-{int(time.time())}"
-        normalized_changed_files = sorted(set(changed_files))
-        evidence = EvidenceStore(self.workspace, run_id)
-        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
-        evidence.write_trace("run_start", {"task": "manual verification", "changed_files": normalized_changed_files})
-        emit_event(
-            event_callback,
-            "run_start",
-            "Manual verification started.",
-            run_id=run_id,
-            task="manual verification",
-            profile="manual",
-        )
-        if not normalized_changed_files:
-            status = "skipped_no_changes"
-            evidence.write_trace("verification_skipped", {"reason": "No changed files."})
-            summary = write_report(
-                workspace=self.workspace,
-                run_id=run_id,
-                task="manual verification",
-                plan=["Infer verification commands from changed files."],
-                changed_files=[],
-                commands=[],
-                verification=status,
-                risks=[],
-            )
-            evidence.write_trace("run_end", {"status": "success", "summary_path": str(summary)})
-            emit_event(
-                event_callback,
-                "run_end",
-                "Manual verification finished.",
-                run_id=run_id,
-                status="success",
-                verification=status,
-                changed_files=[],
-                summary_path=str(summary.relative_to(self.workspace)),
-            )
-            return ManualVerificationResult(
-                run_id=run_id,
-                status=status,
-                changed_files=[],
-                commands=[],
-                summary_path=str(summary.relative_to(self.workspace)),
-                risk_summary=[],
-            )
-
-        plan = infer_verification(self.workspace, normalized_changed_files)
-        commands = [item.command for item in plan.commands]
-        risks: list[str] = []
-        results: list[TerminalResult] = []
-        verification_status = plan.skip_reason or "not_executed"
-        if not commands:
-            risks.append(plan.skip_reason or "No verification command inferred.")
-        for command in commands:
-            if _cancel_requested(cancel_check):
-                verification_status = "cancelled"
-                risks.append("Manual verification cancelled by user before command execution.")
-                evidence.write_trace("cancel_requested", {"stage": "manual_verification", "command": command})
-                emit_event(
-                    event_callback,
-                    "run_cancelled",
-                    "Manual verification cancelled before command execution.",
-                    run_id=run_id,
-                    command=command,
-                )
-                break
-            emit_event(event_callback, "verification_start", "Manual verification started.", command=command)
-            result = kernel.run_verification(
-                command,
-                assume_yes=assume_yes,
-                confirm_callback=confirm_callback,
-                event_callback=event_callback,
-            )
-            emit_event(
-                event_callback,
-                "verification_result",
-                "Manual verification finished.",
-                command=command,
-                status=result.status,
-                exit_code=result.exit_code,
-            )
-            results.append(result)
-            if result.status == "confirm":
-                verification_status = "requires_confirmation"
-                risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
-                break
-            if result.status != "success":
-                verification_status = "failed"
-                risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
-                break
-            verification_status = "passed"
-        summary = write_report(
-            workspace=self.workspace,
-            run_id=run_id,
-            task="manual verification",
-            plan=["Infer verification commands from changed files.", "Run selected verification commands."],
-            changed_files=normalized_changed_files,
-            commands=commands,
-            verification=verification_status,
-            risks=risks,
-            verification_results=results,
-        )
-        evidence.write_trace("run_end", {"status": verification_status, "summary_path": str(summary)})
-        emit_event(
-            event_callback,
-            "run_end",
-            "Manual verification finished.",
-            run_id=run_id,
-            status="success" if verification_status in {"passed", "skipped_no_changes"} else verification_status,
-            verification=verification_status,
-            changed_files=normalized_changed_files,
-            summary_path=str(summary.relative_to(self.workspace)),
-        )
-        return ManualVerificationResult(
-            run_id=run_id,
-            status=verification_status,
-            changed_files=normalized_changed_files,
-            commands=commands,
-            verification_results=results,
-            summary_path=str(summary.relative_to(self.workspace)),
-            risk_summary=risks,
+        return VerificationLoop(self).verify_changed_files(
+            changed_files=changed_files,
+            assume_yes=assume_yes,
+            confirm_callback=confirm_callback,
+            event_callback=event_callback,
+            cancel_check=cancel_check,
         )
 
     def repair_after_failed_verification(
         self,
         task: str,
-        changed_files: list[str],
         failed_verification_results: list[TerminalResult],
+        changed_files: list[str],
         profile_name: str | None = None,
         assume_yes: bool = False,
         confirm_callback: ConfirmationCallback | None = None,
+        max_attempts: int = 1,
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
-        max_attempts: int = 1,
     ) -> ManualRepairResult:
-        config = load_config(self.workspace)
-        profile = get_profile(self.workspace, profile_name or config.default_profile)
-        run_id = f"repair-{int(time.time())}"
-        normalized_changed_files = sorted(set(changed_files))
-        attempt_limit = _manual_repair_attempt_limit(max_attempts)
-        evidence = EvidenceStore(self.workspace, run_id)
-        kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
-        risks: list[str] = []
-        verification_results: list[TerminalResult] = []
-        commands_run: list[str] = []
-        checkpoint: Checkpoint | None = None
-        restore_plan_created = False
-        repair_attempts = 0
-        verification_status = "not_executed"
-        status = "success"
-        turns_completed = 0
-        evidence.write_trace(
-            "run_start",
-            {
-                "task": task,
-                "mode": "manual_repair",
-                "changed_files": normalized_changed_files,
-                "profile": profile.name,
-                "max_attempts": attempt_limit,
-            },
-        )
-        emit_event(
-            event_callback,
-            "run_start",
-            "Manual repair started.",
-            run_id=run_id,
+        return VerificationLoop(self).repair_after_failed_verification(
             task=task,
-            profile=profile.name,
+            failed_verification_results=failed_verification_results,
+            changed_files=changed_files,
+            profile_name=profile_name,
+            assume_yes=assume_yes,
+            confirm_callback=confirm_callback,
+            max_attempts=max_attempts,
+            event_callback=event_callback,
+            cancel_check=cancel_check,
         )
-        failed_results = [result for result in failed_verification_results if result.status == "failed"]
-        if not failed_results:
-            verification_status = "skipped_no_failed_verification"
-            risks.append("Manual repair requires a failed verification result.")
-            summary = write_report(
-                workspace=self.workspace,
-                run_id=run_id,
-                task=f"manual repair: {task}",
-                plan=["Check failed verification state."],
-                changed_files=normalized_changed_files,
-                commands=[],
-                verification=verification_status,
-                risks=risks,
-                verification_results=failed_verification_results,
-            )
-            evidence.write_trace("run_end", {"status": verification_status, "summary_path": str(summary)})
-            emit_event(
-                event_callback,
-                "run_end",
-                "Manual repair skipped.",
-                run_id=run_id,
-                status=verification_status,
-                verification=verification_status,
-                changed_files=normalized_changed_files,
-                summary_path=str(summary.relative_to(self.workspace)),
-            )
-            return ManualRepairResult(
-                run_id=run_id,
-                status=verification_status,
-                turns=turns_completed,
-                changed_files=normalized_changed_files,
-                commands=[],
-                verification=verification_status,
-                verification_results=failed_verification_results,
-                summary_path=str(summary.relative_to(self.workspace)),
-                risk_summary=risks,
-            )
 
-        scan = scan_project(self.workspace)
-        emit_event(
-            event_callback,
-            "scan",
-            "Project scan completed.",
-            detected_languages=scan.detected_languages,
-            file_count=scan.file_count,
-        )
-        current_failed_results = list(failed_results)
-        plan_summaries = [
-            "Manual repair requested after failed verification.",
-            f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
-        ]
-        evidence_entries: list[EvidenceEntry] = []
-        recent_error = _last_verification_error(current_failed_results)
-        while repair_attempts < attempt_limit:
-            repair_decision = decide_repair("failed", attempts_used=repair_attempts, auto_repair_enabled=True)
-            evidence.write_trace("repair_decision", repair_decision.model_dump())
-            emit_event(
-                event_callback,
-                "repair_decision",
-                repair_decision.reason,
-                should_repair=repair_decision.should_repair,
-                attempts_used=repair_decision.attempts_used,
-                max_attempts=attempt_limit,
-            )
-            if not repair_decision.should_repair:
-                risks.append(f"Manual repair not attempted: {repair_decision.reason}")
-                status = "failed"
-                break
-            if _cancel_requested(cancel_check):
-                verification_status = "cancelled"
-                status = "cancelled"
-                risks.append("Manual repair cancelled by user before repair attempt.")
-                evidence.write_trace("cancel_requested", {"stage": "before_manual_repair_attempt"})
-                emit_event(event_callback, "run_cancelled", "Manual repair cancelled before repair attempt.", run_id=run_id)
-                break
-
-            repair_attempts += 1
-            emit_event(
-                event_callback,
-                "repair_start",
-                "Manual repair attempt started.",
-                attempt=repair_attempts,
-                max_attempts=attempt_limit,
-            )
-            evidence.write_evidence(
-                "decision",
-                "manual-repair",
-                f"Manual repair attempt {repair_attempts}/{attempt_limit}: {repair_decision.reason}",
-                f"trace://{run_id}/repair/{repair_attempts}",
-                confidence=0.75,
-            )
-            mutable_changed_files = list(normalized_changed_files)
-            tool_summaries = [f"verification failed: {_last_verification_error(current_failed_results)}"]
-            status, turns_completed, recent_error = self._run_model_tool_loop(
-                task=f"Manual repair attempt {repair_attempts}/{attempt_limit} after failed verification: {task}",
-                profile=profile,
-                scan=scan,
-                evidence=evidence,
-                kernel=kernel,
-                tool_context=ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes),
-                changed_files=mutable_changed_files,
-                tool_summaries=tool_summaries,
-                evidence_entries=evidence_entries,
-                plan_summaries=plan_summaries,
-                risks=risks,
-                recent_error=recent_error,
-                starting_turn=1,
-                max_turns=1,
-                event_callback=event_callback,
-                cancel_check=cancel_check,
-            )
-            normalized_changed_files = sorted(set(mutable_changed_files))
-            if status not in {"failed", "cancelled"}:
-                _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
-                checkpoint = kernel.create_checkpoint(normalized_changed_files)
-                emit_event(
-                    event_callback,
-                    "checkpoint",
-                    "Checkpoint created.",
-                    checkpoint_id=checkpoint.id,
-                    changed_files=normalized_changed_files,
-                )
-                plan = infer_verification(self.workspace, normalized_changed_files)
-                commands_run = [item.command for item in plan.commands]
-                verification_status = plan.skip_reason or "not_executed"
-                if not commands_run:
-                    risks.append(plan.skip_reason or "No verification command inferred.")
-                for command in commands_run:
-                    if _cancel_requested(cancel_check):
-                        status = "cancelled"
-                        verification_status = "cancelled"
-                        risks.append("Manual repair cancelled by user before verification command.")
-                        evidence.write_trace(
-                            "cancel_requested",
-                            {"stage": "before_manual_repair_verification_command", "command": command},
-                        )
-                        emit_event(
-                            event_callback,
-                            "run_cancelled",
-                            "Manual repair cancelled before verification command.",
-                            run_id=run_id,
-                            command=command,
-                        )
-                        break
-                    emit_event(event_callback, "verification_start", "Manual repair verification started.", command=command)
-                    result = kernel.run_verification(
-                        command,
-                        assume_yes=assume_yes,
-                        confirm_callback=confirm_callback,
-                        event_callback=event_callback,
-                    )
-                    emit_event(
-                        event_callback,
-                        "verification_result",
-                        "Manual repair verification finished.",
-                        command=command,
-                        status=result.status,
-                        exit_code=result.exit_code,
-                    )
-                    verification_results.append(result)
-                    if result.status == "confirm":
-                        verification_status = "requires_confirmation"
-                        risks.append(f"Verification requires confirmation: {command}. {result.summary or result.policy.reason}")
-                        break
-                    if result.status != "success":
-                        status = "failed"
-                        verification_status = "failed"
-                        risks.append(f"Verification failed: {command}. exit_code={result.exit_code}")
-                        current_failed_results = [result]
-                        break
-                    verification_status = "passed"
-                if verification_status == "passed":
-                    status = "success"
-                    break
-                if verification_status in {"requires_confirmation", "cancelled"}:
-                    break
-            else:
-                verification_status = "not_executed"
-                if recent_error:
-                    risks.append(recent_error)
-                break
-            if verification_status != "failed":
-                break
-        if status == "failed" and verification_status == "failed" and repair_attempts >= attempt_limit:
-            repair_decision = RepairDecision(
-                should_repair=False,
-                attempts_used=repair_attempts,
-                max_attempts=attempt_limit,
-                reason="Manual repair attempt limit reached.",
-            )
-            evidence.write_trace("repair_decision", repair_decision.model_dump())
-            emit_event(
-                event_callback,
-                "repair_decision",
-                repair_decision.reason,
-                should_repair=False,
-                attempts_used=repair_attempts,
-                max_attempts=attempt_limit,
-            )
-            risks.append(repair_decision.reason)
-        if status == "failed" and checkpoint is not None:
-            kernel.create_restore_plan(checkpoint)
-            restore_plan_created = True
-            emit_event(event_callback, "restore_plan", "Restore plan created.", run_id=run_id)
-        summary = write_report(
-            workspace=self.workspace,
+    def _execute_verification_loop(
+        self,
+        *,
+        kernel: SafeExecutionKernel,
+        commands: list[str],
+        assume_yes: bool,
+        confirm_callback: ConfirmationCallback | None,
+        event_callback: EventCallback | None,
+        cancel_check: CancelCheck | None,
+        run_id: str,
+        evidence: EvidenceStore,
+        risks: list[str],
+        commands_run_accumulated: list[str],
+        results_accumulated: list[TerminalResult],
+        manual: bool = False,
+    ) -> tuple[str, str]:
+        return VerificationLoop(self).execute_verification_loop(
+            kernel=kernel,
+            commands=commands,
+            assume_yes=assume_yes,
+            confirm_callback=confirm_callback,
+            event_callback=event_callback,
+            cancel_check=cancel_check,
             run_id=run_id,
-            task=f"manual repair: {task}",
-            plan=[
-                "Check failed verification state.",
-                f"Run up to {attempt_limit} manual repair attempt(s).",
-                "Verify repaired changed files.",
-            ],
-            changed_files=normalized_changed_files,
-            commands=commands_run,
-            verification=verification_status,
+            evidence=evidence,
             risks=risks,
-            verification_results=verification_results or failed_verification_results,
-            checkpoint_path=str(checkpoint_path_value(self.workspace, run_id)) if checkpoint else None,
-            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
-            repair=RepairDecision(
-                should_repair=False,
-                attempts_used=repair_attempts,
-                max_attempts=attempt_limit,
-                reason=f"Manual repair performs at most {attempt_limit} attempt(s) in v0.5.",
-            ),
-            repair_attempts=repair_attempts,
-        )
-        evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-        emit_event(
-            event_callback,
-            "run_end",
-            "Manual repair finished.",
-            run_id=run_id,
-            status=status,
-            verification=verification_status,
-            changed_files=normalized_changed_files,
-            summary_path=str(summary.relative_to(self.workspace)),
-        )
-        return ManualRepairResult(
-            run_id=run_id,
-            status=status,
-            turns=turns_completed,
-            changed_files=normalized_changed_files,
-            commands=commands_run,
-            verification=verification_status,
-            verification_results=verification_results,
-            repair_attempts=repair_attempts,
-            summary_path=str(summary.relative_to(self.workspace)),
-            restore_plan_path=str(restore_plan_path_value(self.workspace, run_id)) if restore_plan_created else None,
-            risk_summary=risks,
+            commands_run_accumulated=commands_run_accumulated,
+            results_accumulated=results_accumulated,
+            manual=manual,
         )
 
     def _build_plan(
@@ -1009,20 +688,13 @@ class RuntimeApp:
         event_callback: EventCallback | None,
         turn: int,
     ) -> ModelPlan:
-        build_plan = self._build_plan
-        parameters = inspect.signature(build_plan).parameters
-        accepts_runtime_events = "event_callback" in parameters or any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+        return self._build_plan(
+            task,
+            profile,
+            context_pack,
+            event_callback=event_callback,
+            turn=turn,
         )
-        if accepts_runtime_events:
-            return build_plan(
-                task,
-                profile,
-                context_pack,
-                event_callback=event_callback,
-                turn=turn,
-            )
-        return build_plan(task, profile, context_pack)
 
     def _run_model_tool_loop(
         self,
@@ -1043,6 +715,7 @@ class RuntimeApp:
         max_turns: int | None = None,
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
+        metrics_tracker: dict[str, int] | None = None,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
@@ -1059,103 +732,76 @@ class RuntimeApp:
                 workspace=self.workspace,
                 task=task,
                 scan=scan,
-                changed_files=changed_files,
+                changed_files=sorted(set(changed_files)),
                 tool_summaries=tool_summaries,
                 evidence_entries=evidence_entries,
                 recent_error=recent_error,
             )
             context_debug = write_context_debug_report(self.workspace, evidence.run_id, turn, context_pack)
-            evidence.write_trace("context_pack", context_pack.model_dump())
-            evidence.write_trace("context_debug_report", {"turn": turn, "path": str(context_debug.relative_to(self.workspace))})
+            evidence.write_trace("context_pack", {"turn": turn, **context_pack.model_dump()})
+            evidence.write_trace(
+                "context_debug_report", {"turn": turn, "path": str(context_debug.relative_to(self.workspace))}
+            )
+            if metrics_tracker is not None:
+                metrics_tracker["tokens"] += context_pack.used_tokens_estimate
             emit_event(
                 event_callback,
                 "context_pack",
-                "Context pack compiled.",
+                "Context compiled.",
                 turn=turn,
-                selected=len(context_pack.items),
-                omitted=len(context_pack.omitted),
-                used_tokens_estimate=context_pack.used_tokens_estimate,
                 budget_tokens=context_pack.budget_tokens,
+                used_tokens_estimate=context_pack.used_tokens_estimate,
             )
-            try:
-                if _cancel_requested(cancel_check):
-                    message = "Run cancelled by user before model planning."
-                    risks.append(message)
-                    evidence.write_trace("cancel_requested", {"stage": "before_model_plan", "turn": turn})
-                    emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
-                    return "cancelled", turns_completed, message
-                emit_event(event_callback, "model_plan_start", "Building model plan.", turn=turn, profile=profile.name)
-                plan = self._build_plan_for_turn(
-                    task,
-                    profile,
-                    context_pack,
-                    event_callback=event_callback,
-                    turn=turn,
-                )
-            except ModelClientError as exc:
-                evidence.write_trace("model_error", exc.to_trace_payload())
-                risks.append(exc.message)
-                return "failed", turns_completed, exc.message
-
-            plan_trace_type = "mock_plan" if profile.provider == "mock" else "model_plan"
-            evidence.write_trace(plan_trace_type, {"turn": turn, **plan.model_dump()})
-            emit_event(
-                event_callback,
-                "model_plan",
-                plan.summary,
-                turn=turn,
-                step_count=len(plan.steps),
-                status=plan.status,
-            )
-            turns_completed = turn
-            plan_summaries.append(f"Turn {turn}: {plan.summary}")
-            evidence_entries.append(
-                evidence.write_evidence(
-                    kind="decision",
-                    source=profile.provider,
-                    summary=plan.summary,
-                    artifact_ref=f"trace://{evidence.run_id}/{plan_trace_type}/{turn}",
-                    confidence=0.7 if profile.provider == "mock" else 0.6,
-                )
-            )
-
             if _cancel_requested(cancel_check):
-                message = "Run cancelled by user before tool execution."
+                message = "Run cancelled by user before model planning."
                 risks.append(message)
-                evidence.write_trace("cancel_requested", {"stage": "before_tool_execution", "turn": turn})
+                evidence.write_trace("cancel_requested", {"stage": "before_model_plan", "turn": turn})
                 emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
                 return "cancelled", turns_completed, message
-
-            if plan.status == "done":
-                return status, turns_completed, recent_error
-
             try:
+                from xhx_agent.skills.hooks import hooks_manager
+                hooks_manager.trigger("before_plan", task=task, turn=turn, profile=profile, context_pack=context_pack)
+            except Exception:
+                pass
+            try:
+                plan = self._build_plan_for_turn(task, profile, context_pack, event_callback, turn)
+                evidence.write_trace("model_plan", {"turn": turn, **plan.model_dump()})
+                emit_event(
+                    event_callback,
+                    "model_plan",
+                    f"Model Plan [turn {turn}]: {plan.summary}",
+                    turn=turn,
+                    step_count=len(plan.steps),
+                    status="planned",
+                )
                 self.tool_registry.validate_plan(plan)
             except ModelClientError as exc:
                 risks.append(exc.message)
-                evidence.write_trace("model_error", exc.to_trace_payload())
+                evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
+                emit_event(event_callback, "model_error", exc.message, turn=turn, code=exc.code)
                 return "failed", turns_completed, exc.message
-
+            turns_completed = turn
+            plan_summaries.append(f"Plan [turn {turn}]: {plan.summary}")
+            if not plan.steps:
+                return status, turns_completed, recent_error
             for step in plan.steps:
                 if _cancel_requested(cancel_check):
-                    message = f"Run cancelled by user before tool execution: {step.tool}."
+                    message = f"Run cancelled by user before execution of tool: {step.tool}"
                     risks.append(message)
-                    evidence.write_trace(
-                        "cancel_requested",
-                        {"stage": "before_tool", "turn": turn, "tool": step.tool},
-                    )
-                    emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn, tool=step.tool)
+                    evidence.write_trace("cancel_requested", {"stage": "before_tool", "turn": turn, "tool": step.tool})
+                    emit_event(event_callback, "run_cancelled", message, run_id=evidence.run_id, turn=turn)
                     return "cancelled", turns_completed, message
+                emit_event(event_callback, "tool_start", f"Tool execution started: {step.tool}", turn=turn, tool=step.tool)
                 try:
-                    emit_event(event_callback, "tool_start", f"Tool started: {step.tool}", turn=turn, tool=step.tool)
                     result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
                     if result is None or trace is None:
-                        risks.append(policy.reason)
-                        return "failed", turns_completed, policy.reason
+                        recent_error = policy.reason
+                        risks.append(recent_error)
+                        return "failed", turns_completed, recent_error
                     emit_event(
                         event_callback,
                         "tool_result",
-                        f"Tool finished: {step.tool}",
+                        "Tool execution completed.",
                         turn=turn,
                         tool=step.tool,
                         status=result.status,
@@ -1186,10 +832,15 @@ class RuntimeApp:
                                     "changed_files": result.changed_files,
                                 },
                             )
-                except Exception as exc:  # noqa: BLE001 - convert tool failures into run result
-                    recent_error = str(exc)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    recent_error = f"Tool execution error: {exc}"
                     risks.append(recent_error)
-                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc)})
+                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": False})
+                    return "failed", turns_completed, recent_error
+                except Exception as exc:  # noqa: BLE001
+                    recent_error = f"Fatal unexpected error: {exc}"
+                    risks.append(recent_error)
+                    evidence.write_trace("tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": True})
                     return "failed", turns_completed, recent_error
             if _should_stop_after_turn(profile, changed_files, plan.steps):
                 return status, turns_completed, recent_error
@@ -1209,66 +860,3 @@ def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], ste
     if changed_files:
         return True
     return not steps
-
-
-def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
-    if cancel_check is None:
-        return False
-    try:
-        return bool(cancel_check())
-    except Exception:
-        return False
-
-
-def _is_git_worktree(workspace: Path) -> bool:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=workspace,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return completed.returncode == 0 and completed.stdout.strip() == "true"
-
-
-def _manual_repair_attempt_limit(max_attempts: int) -> int:
-    return max(1, min(max_attempts, MAX_REPAIR_ATTEMPTS))
-
-
-def _refresh_repo_intel_index(
-    workspace: Path,
-    evidence: EvidenceStore,
-    event_callback: EventCallback | None,
-    risks: list[str],
-) -> None:
-    try:
-        path = write_repo_intel_index(workspace)
-    except Exception as exc:  # noqa: BLE001 - repo index refresh should not discard a successful patch
-        message = f"Repo intelligence index refresh failed: {exc}"
-        risks.append(message)
-        evidence.write_trace("repo_index_refresh", {"status": "failed", "error": str(exc)})
-        emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refresh failed.", status="failed", error=str(exc))
-        return
-    relative_path = path.relative_to(workspace).as_posix()
-    evidence.write_trace("repo_index_refresh", {"status": "success", "path": relative_path})
-    emit_event(event_callback, "repo_index_refresh", "Repo intelligence index refreshed.", status="success", path=relative_path)
-
-
-def checkpoint_path_value(workspace: Path, run_id: str) -> Path:
-    return checkpoint_path(workspace, run_id).relative_to(workspace)
-
-
-def restore_plan_path_value(workspace: Path, run_id: str) -> Path:
-    return restore_plan_path(workspace, run_id).relative_to(workspace)
-
-
-def _last_verification_error(results: list[TerminalResult]) -> str:
-    if not results:
-        return "Verification failed."
-    last = results[-1]
-    exit_code = "none" if last.exit_code is None else str(last.exit_code)
-    return f"{last.command} failed with exit_code={exit_code}: {last.summary or last.policy.reason}"

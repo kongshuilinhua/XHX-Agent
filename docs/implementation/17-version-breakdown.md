@@ -10,7 +10,7 @@ v0.1 只能拆成三个固定子阶段：
 - v0.1-B：Tool-call loop。
 - v0.1-C：验证闭环。
 
-不得新增 `v0.1-D`、`v0.1-E` 等临时版本。具体进入条件、当前状态和纠偏记录见 [版本实施基线](07-implementation-baseline.md)。
+不得新增 `v0.1-D`、`v0.1-E` 等临时版本。具体进入条件、当前状态和纠偏记录见 [版本实施基线](20-implementation-baseline.md)。
 
 功能任务：
 

@@ -1,5 +1,5 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from rich.console import Console
 
@@ -8,9 +8,9 @@ from xhx_agent.models.types import ModelPlan, ToolStep
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile, profiles_path
-from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
+from xhx_agent.tools.terminal import TerminalResult
 
 
 def _console() -> Console:
@@ -215,7 +215,7 @@ def test_command_console_repair_runs_manual_repair(tmp_path: Path, monkeypatch) 
     command_console = CommandConsole(tmp_path, console=console)
     command_console.profile_name = "real"
     command_console.assume_yes = True
-    command_console.runtime._build_plan = lambda _task, _profile, _context: ModelPlan(  # type: ignore[method-assign]
+    command_console.runtime._build_plan = lambda _task, _profile, _context, *args, **kwargs: ModelPlan(  # type: ignore[method-assign]
         summary="repair demo",
         steps=[
             ToolStep(
@@ -278,7 +278,7 @@ def test_command_console_repair_loop_uses_two_attempts(tmp_path: Path, monkeypat
     )
     values = [2, 3]
 
-    def fake_build_plan(_task, _profile, _context):
+    def fake_build_plan(_task, _profile, _context, *args, **kwargs):
         next_value = values.pop(0)
         return ModelPlan(
             summary=f"set value to {next_value}",

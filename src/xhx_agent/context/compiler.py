@@ -11,7 +11,6 @@ from xhx_agent.repo_intel.references import Reference, search_references
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.symbols import Symbol, search_symbols
 
-
 DEFAULT_CONTEXT_BUDGET_TOKENS = 6_000
 DEFAULT_TOP_K_EVIDENCE = 8
 MAX_CHANGED_FILES = 8
@@ -23,6 +22,8 @@ MAX_SYMBOL_CONTEXT_CHARS = 2_500
 MAX_SYMBOL_QUERY_TERMS = 6
 MAX_IMPORT_CONTEXT_FILES = 4
 MAX_IMPORT_CONTEXT_SYMBOLS = 6
+MAX_CALL_CONTEXTS = 5
+MAX_CALL_CONTEXT_SYMBOLS = 6
 MAX_REFERENCE_CONTEXTS = 6
 MAX_REFERENCE_CONTEXT_CHARS = 1_200
 SYMBOL_QUERY_STOPWORDS = {
@@ -49,6 +50,7 @@ def compile_context_pack(
     scan: ProjectScan,
     changed_files: list[str] | None = None,
     tool_summaries: list[str] | None = None,
+    plan_summaries: list[str] | None = None,
     evidence_entries: list[EvidenceEntry] | None = None,
     recent_error: str | None = None,
     budget_tokens: int = DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -68,12 +70,36 @@ def compile_context_pack(
             )
         )
 
+    # Dynamic local Skill matching and lazy loading for v0.8
+    try:
+        from xhx_agent.skills.loader import SkillLoader
+        skill_loader = SkillLoader(workspace)
+        matched_skills = skill_loader.match_skills(task)
+        for skill in matched_skills:
+            if skill.content:
+                candidates.append(
+                    ContextItem(
+                        kind="skill",
+                        source=skill.name,
+                        content=skill.content,
+                        priority=92,
+                        reason=f"Dynamic skill '{skill.name}' triggered by task matching rules.",
+                    )
+                )
+    except Exception:
+        # Gracefully handle any issues with dynamic loading
+        pass
+
+
     repo_index = _load_repo_index(workspace)
 
     for item in _symbol_context_items(workspace, task, recent_error, repo_index):
         candidates.append(item)
 
     for item in _reference_context_items(workspace, task, recent_error, repo_index):
+        candidates.append(item)
+
+    for item in _call_context_items(workspace, task, changed_files or [], recent_error, repo_index):
         candidates.append(item)
 
     for item in _import_context_items(workspace, changed_files or [], recent_error, repo_index):
@@ -111,6 +137,17 @@ def compile_context_pack(
                 content="\n".join(f"- {summary}" for summary in tool_summaries[-MAX_TOOL_SUMMARIES:]),
                 priority=80,
                 reason="Recent tool outputs summarize the current loop without loading Raw Trace.",
+            )
+        )
+
+    if plan_summaries:
+        candidates.append(
+            ContextItem(
+                kind="plan_summaries",
+                source="previous_turns",
+                content="\n".join(f"- {summary}" for summary in plan_summaries),
+                priority=65,
+                reason="Summary of previous turns plans provides history context.",
             )
         )
 
@@ -251,10 +288,7 @@ def _import_context_items(
     if not anchor_files:
         return []
     related_files = _related_import_files(repo_index, anchor_files)
-    if changed_anchors:
-        related_files = [*error_anchors, *related_files]
-    else:
-        related_files = [*anchor_files, *related_files]
+    related_files = [*error_anchors, *related_files] if changed_anchors else [*anchor_files, *related_files]
     related_files = _unique_limited(related_files, MAX_IMPORT_CONTEXT_FILES)
     if not related_files:
         return []
@@ -320,6 +354,78 @@ def _reference_context_items(
         )
         for reference in selected
     ]
+
+
+def _call_context_items(
+    workspace: Path,
+    task: str,
+    changed_files: list[str],
+    recent_error: str | None,
+    repo_index: RepoIntelIndex | None,
+) -> list[ContextItem]:
+    if repo_index is None or not repo_index.call_graph.root:
+        return []
+    queries = _symbol_query_terms(" ".join(part for part in [task, recent_error or ""] if part))
+    known_files = {item.path for item in repo_index.repo_map.files}
+    anchor_files = _context_anchor_files(changed_files, recent_error, known_files)
+    selected_symbols: list[Symbol] = []
+    seen: set[tuple[str, str, int]] = set()
+    for edge in repo_index.call_graph.edges:
+        if not _call_edge_matches(edge.caller, edge.callee, edge.caller_path, edge.callee_path, queries, anchor_files):
+            continue
+        for path, name, line in [
+            (edge.caller_path, edge.caller.split(".")[-1], edge.caller_line),
+            (edge.callee_path or "", edge.callee, edge.callee_line or 0),
+        ]:
+            if not path or not line:
+                continue
+            symbol = _find_symbol(repo_index.symbol_index.symbols, path, name, line)
+            if symbol is None:
+                continue
+            key = (symbol.path, symbol.name, symbol.line)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected_symbols.append(symbol)
+            if len(selected_symbols) >= MAX_CALL_CONTEXT_SYMBOLS:
+                break
+        if len(selected_symbols) >= MAX_CALL_CONTEXT_SYMBOLS:
+            break
+    contexts = build_context_for_symbols(workspace, selected_symbols)
+    return [
+        ContextItem(
+            kind="call_context",
+            source=f"{context.symbol.path}:{context.symbol.line}:{context.symbol.name}",
+            content=_limit_text(context.excerpt, MAX_SYMBOL_CONTEXT_CHARS),
+            priority=87,
+            reason="Selected from Repo Intelligence lightweight call graph.",
+        )
+        for context in contexts[:MAX_CALL_CONTEXTS]
+    ]
+
+
+def _call_edge_matches(
+    caller: str,
+    callee: str,
+    caller_path: str,
+    callee_path: str | None,
+    queries: list[str],
+    anchor_files: list[str],
+) -> bool:
+    if anchor_files and (caller_path in anchor_files or callee_path in anchor_files):
+        return True
+    lowered = f"{caller} {callee}".lower()
+    return any(query in lowered for query in queries)
+
+
+def _find_symbol(symbols: list[Symbol], path: str, name: str, line: int) -> Symbol | None:
+    for symbol in symbols:
+        if symbol.path == path and symbol.name == name and symbol.line == line:
+            return symbol
+    for symbol in symbols:
+        if symbol.path == path and symbol.name == name:
+            return symbol
+    return None
 
 
 def _load_repo_index(workspace: Path) -> RepoIntelIndex | None:
@@ -502,7 +608,13 @@ def _limit_text(text: str, max_chars: int) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    tokens = 0.0
+    for char in text:
+        if ord(char) > 127:
+            tokens += 1.5
+        else:
+            tokens += 0.25
+    return max(1, int(tokens))
 
 
 def _is_inside(workspace: Path, target: Path) -> bool:
