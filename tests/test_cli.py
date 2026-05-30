@@ -7,7 +7,13 @@ from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 
+import re
+
 runner = CliRunner()
+
+
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[mK]", "", text)
 
 
 def test_cli_confirmation_decline_returns_false(monkeypatch) -> None:
@@ -26,7 +32,7 @@ def test_tui_help_exposes_fullscreen_option() -> None:
     result = runner.invoke(app, ["tui", "--help"])
 
     assert result.exit_code == 0
-    assert "--fullscreen" in result.output
+    assert "--fullscreen" in strip_ansi(result.output)
 
 
 def test_repo_index_command_reports_missing_index() -> None:
