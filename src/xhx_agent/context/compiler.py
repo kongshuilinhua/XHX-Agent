@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ from xhx_agent.repo_intel.index import RepoIntelIndex, load_repo_intel_index
 from xhx_agent.repo_intel.references import Reference, search_references
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.repo_intel.symbols import Symbol, search_symbols
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONTEXT_BUDGET_TOKENS = 6_000
 DEFAULT_TOP_K_EVIDENCE = 8
@@ -87,9 +90,9 @@ def compile_context_pack(
                         reason=f"Dynamic skill '{skill.name}' triggered by task matching rules.",
                     )
                 )
-    except Exception:
+    except Exception as e:
         # Gracefully handle any issues with dynamic loading
-        pass
+        logger.warning("Failed to match and load skills: %s", e)
 
     repo_index = _load_repo_index(workspace)
 
@@ -168,20 +171,36 @@ def compile_context_pack(
     try:
         evidence_dir = workspace / ".xhx" / "evidence"
         if evidence_dir.exists():
-            for path in evidence_dir.glob("*.jsonl"):
+            # Sort files by modification time descending (newest first)
+            jsonl_files = sorted(
+                evidence_dir.glob("*.jsonl"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            # Limit loading to the latest 3 historical run files
+            latest_files = jsonl_files[:3]
+            entry_count = 0
+            max_entries = 100  # Cap total history entries processed
+            
+            for path in latest_files:
+                if entry_count >= max_entries:
+                    break
                 try:
                     for line in path.read_text(encoding="utf-8").splitlines():
+                        if entry_count >= max_entries:
+                            break
                         if line.strip():
                             try:
                                 data = json.loads(line)
                                 entry = EvidenceEntry(**data)
                                 all_evidence.append(entry)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                                entry_count += 1
+                            except Exception as e:
+                                logger.warning("Failed to parse evidence entry in file %s: %s", path.name, e)
+                except Exception as e:
+                    logger.warning("Failed to read evidence file %s: %s", path.name, e)
+    except Exception as e:
+        logger.warning("Failed to process evidence directory: %s", e)
 
     for evidence in _select_top_evidence(all_evidence, limit=top_k_evidence):
         candidates.append(
@@ -628,18 +647,23 @@ def _limit_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n...<truncated>"
 
 
+import threading
+
 _tiktoken_encoding: Any = None
+_tiktoken_lock = threading.Lock()
 
 
 def _estimate_tokens(text: str) -> int:
     global _tiktoken_encoding
     if _tiktoken_encoding is None:
-        try:
-            import tiktoken
+        with _tiktoken_lock:
+            if _tiktoken_encoding is None:
+                try:
+                    import tiktoken
 
-            _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
-        except Exception:
-            _tiktoken_encoding = False
+                    _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+                except Exception:
+                    _tiktoken_encoding = False
 
     if _tiktoken_encoding:
         try:
