@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from xhx_agent.evidence.report import write_report
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
-from xhx_agent.repo_intel.scanner import scan_project
+from xhx_agent.repo_intel.scanner import scan_project, ProjectScan
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import EventCallback, emit_event
-from xhx_agent.runtime.profiles import get_profile
+from xhx_agent.runtime.profiles import get_profile, ModelProfile
 from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, restore_plan_path
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
@@ -27,6 +28,37 @@ from xhx_agent.safety.policy import PolicyDecision
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
+
+
+@dataclass
+class VerificationLoopContext:
+    task: str
+    run_id: str
+    profile: ModelProfile
+    scan: ProjectScan
+    evidence: EvidenceStore
+    kernel: SafeExecutionKernel
+    tool_context: ToolContext
+    metrics_tracker: dict[str, int]
+    assume_yes: bool = False
+    confirm_callback: ConfirmationCallback | None = None
+    auto_repair: bool = False
+    cancel_check: CancelCheck | None = None
+    event_callback: EventCallback | None = None
+
+    # Mutable state fields tracking execution progress:
+    status: str = "success"
+    verification_status: str = "not_executed"
+    changed_files: list[str] = field(default_factory=list)
+    commands_run: list[str] = field(default_factory=list)
+    verification_results: list[TerminalResult] = field(default_factory=list)
+    repair_attempts: int = 0
+    turns_completed: int = 0
+    recent_error: str | None = None
+    tool_summaries: list[str] = field(default_factory=list)
+    evidence_entries: list[EvidenceEntry] = field(default_factory=list)
+    plan_summaries: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
 
 
 class ManualVerificationResult(BaseModel):
@@ -53,13 +85,7 @@ class ManualRepairResult(BaseModel):
     risk_summary: list[str]
 
 
-def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
-    if cancel_check is None:
-        return False
-    try:
-        return bool(cancel_check())
-    except Exception:
-        return False
+from xhx_agent.runtime.utils import cancel_requested
 
 
 def _manual_repair_attempt_limit(max_attempts: int) -> int:
@@ -137,7 +163,7 @@ class VerificationLoop:
         verification_status = "passed" if commands else "not_executed"
 
         for command in commands:
-            if _cancel_requested(cancel_check):
+            if cancel_requested(cancel_check):
                 run_status = "cancelled"
                 verification_status = "cancelled"
                 stage = "manual_verification" if manual else "before_verification_command"
@@ -408,7 +434,7 @@ class VerificationLoop:
                 risks.append(f"Manual repair not attempted: {repair_decision.reason}")
                 status = "failed"
                 break
-            if _cancel_requested(cancel_check):
+            if cancel_requested(cancel_check):
                 verification_status = "cancelled"
                 status = "cancelled"
                 risks.append("Manual repair cancelled by user before repair attempt.")

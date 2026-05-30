@@ -22,13 +22,7 @@ ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
 
-def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
-    if cancel_check is None:
-        return False
-    try:
-        return bool(cancel_check())
-    except Exception:
-        return False
+from xhx_agent.runtime.utils import cancel_requested
 
 
 class DAGRunner:
@@ -70,7 +64,7 @@ class DAGRunner:
         risks: list[str] = []
 
         def execute_node(node):
-            if _cancel_requested(cancel_check):
+            if cancel_requested(cancel_check):
                 return False, "Cancelled by user"
 
             if node.tool == "terminal":
