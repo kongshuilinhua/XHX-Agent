@@ -688,3 +688,46 @@ def test_incremental_index_updates_add_modify_delete(tmp_path: Path) -> None:
     index4 = load_repo_intel_index(tmp_path)
     assert not any(symbol.name == "multiply" for symbol in index4.symbol_index.symbols)
     assert any(symbol.name == "add" for symbol in index4.symbol_index.symbols)
+
+
+def test_search_symbols_via_sqlite(tmp_path: Path) -> None:
+    # 1. Setup mock symbol index
+    from xhx_agent.repo_intel.symbols import SymbolIndex, Symbol, search_symbols
+    from xhx_agent.repo_intel.db import sync_index_to_sqlite
+    from xhx_agent.repo_intel.types import RepoIntelIndex, ImportGraph, ReferenceIndex, CallGraph
+    from xhx_agent.repo_intel.repo_map import build_repo_map
+    
+    mock_symbols = [
+        Symbol(name="my_test_func", kind="function", path="demo.py", line=10, end_line=15, language="python", parent=None),
+        Symbol(name="another_func", kind="function", path="demo.py", line=20, end_line=25, language="python", parent=None),
+    ]
+    index = SymbolIndex(root=str(tmp_path), symbols=mock_symbols)
+    
+    # SQLite Database does not exist yet; should fallback to memory search
+    results_fallback = search_symbols(index, "my_test_func")
+    assert len(results_fallback) == 1
+    assert results_fallback[0].name == "my_test_func"
+    
+    # 2. Sync index to SQLite to create the DB index
+    repo_map = build_repo_map(tmp_path)
+    repo_intel = RepoIntelIndex(
+        created_at="2026-05-30T00:00:00Z",
+        content_fingerprint="dummy",
+        repo_map=repo_map,
+        symbol_index=index,
+        import_graph=ImportGraph(root=str(tmp_path), edges=[]),
+        reference_index=ReferenceIndex(root=str(tmp_path), references=[]),
+        call_graph=CallGraph(root=str(tmp_path), edges=[])
+    )
+    sync_index_to_sqlite(tmp_path, repo_intel)
+    
+    # Clear memory symbols to force it to use SQLite
+    index.symbols = []
+    
+    # 3. Query using active SQLite path
+    results_sqlite = search_symbols(index, "my_test_func")
+    assert len(results_sqlite) == 1
+    assert results_sqlite[0].name == "my_test_func"
+    assert results_sqlite[0].path == "demo.py"
+
+
