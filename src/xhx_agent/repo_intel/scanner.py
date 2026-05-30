@@ -14,7 +14,26 @@ class ProjectScan(BaseModel):
     file_count: int = 0
 
 
-IGNORED_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".xhx"}
+IGNORED_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "build",
+    "dist",
+    "node_modules",
+    "__pycache__",
+    ".xhx",
+    # Cache / tool directories that should never be indexed
+    ".tmp",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    # IDE / editor directories
+    ".idea",
+    ".gemini",
+    ".vscode",
+}
 
 
 def scan_project(workspace: Path) -> ProjectScan:
