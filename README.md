@@ -18,7 +18,7 @@
 
 ## 🏛️ System Architecture
 
-`xhx-agent` operates on an structured execution loop that minimizes token pollution while maximizing code intelligence and safety:
+`xhx-agent` operates on a structured execution loop that minimizes token pollution while maximizing code intelligence and safety:
 
 ### 1. The v1.0.0 Execution Loop
 ```text
@@ -122,7 +122,7 @@ graph TD
 ### 🧠 1. Context Pack Compiler
 To prevent context inflation and token-drift, `xhx-agent` compiles a highly concentrated **Context Pack** prior to every LLM turn.
 * **Precise Tokenization**: Implements precise `cl100k_base` tiktoken-based count validation.
-* **Priority Budgeting**: Allots context tokens deterministically (e.g., 20% Project Maps, 25% Task Specs, 35% Source Code Snippets, 15% Evidence, 5% Error logs). When budgets overflow, lower-priority context is dynamically pruned.
+* **Priority Budgeting**: Allocates context tokens deterministically (e.g., 20% Project Maps, 25% Task Specs, 35% Source Code Snippets, 15% Evidence, 5% Error logs). When budgets overflow, lower-priority context is dynamically pruned.
 * **Double-Speed Estimator**: Features a robust fallback algorithm for complex locales with a standard ratio of **0.25 tokens/char for ASCII** and **1.5 tokens/char for Non-ASCII/CJK**.
 
 ### 📅 2. Adaptive Planner + Parallel DAG
@@ -133,15 +133,15 @@ Automatically partitions large, unstructured engineering requirements into logic
 
 ### 🛡️ 3. Safe Execution Kernel
 Provides comprehensive system isolation and state-recovery guarantees.
-* **Multi-Tier Authorization**: Classifies tools into risk tiers. High-risk commands (e.g., terminal runs, patch applications) prompt interactive user-approvals in REPL, or verify cryptographic pre-approvals (`-y`/`--yes`).
+* **Multi-Tier Authorization**: Classifies tools into risk tiers. High-risk commands (e.g., terminal runs, patch applications) prompt interactive user approvals in the REPL, or verify cryptographic pre-approvals (`-y`/`--yes`).
 * **Atomic Checkpoints**: Commits micro-snapshots (Git/Worktree/State) prior to executing code modifications.
 * **Restore Rollback Plan**: If verification fails or execution is aborted, `xhx-agent` automatically runs a zero-risk rollback plan, restoring the repository to its baseline state.
 * **2-Turn Auto-Repair**: Upon targeted test failures, the runtime initiates up to 2 self-correction cycles, feeding compiler test failures and evidence traces directly back into the planner.
 
 ### 💻 4. Smart Console & Full-Screen TUI
 Crafted for an exceptional local development experience.
-* **REPL Console**: Powered by `prompt-toolkit` with full multi-line input support, immediate syntax highlighting, command history, and a dynamic **dropdown autocompletion drop-down**.
-* **Dashboard TUI**: Powered by `Textual` providing a beautiful, state-of-the-art terminal dashboard with real-time token trackers, live event broadcasts, inline **grey suggetion autocompleters**, and a split-screen git diff inspector.
+* **REPL Console**: Powered by `prompt-toolkit` with full multi-line input support, immediate syntax highlighting, command history, and a dynamic **autocompletion drop-down**.
+* **Dashboard TUI**: Powered by `Textual` providing a beautiful, state-of-the-art terminal dashboard with real-time token trackers, live event broadcasts, inline **grey suggestion autocompleters**, and a split-screen git diff inspector.
 
 ### 🔌 5. Skills & MCP Plugin System
 Extensible hooks that dynamically augment the agent's actions.
@@ -208,7 +208,7 @@ Inside the REPL, type `/` to trigger the interactive completion menu. `xhx-agent
 | 🚪 **`/exit`** | `/exit` | Securely closes the interactive console session and gracefully shuts down. |
 
 ### 2. CLI Command Flags
-Execute individual tasks headlessly directly from your terminal:
+Execute individual tasks headlessly from your terminal:
 ```bash
 uv run xhx run "Fix the typo in main.py and run pytest" --profile mock --auto-repair
 ```
