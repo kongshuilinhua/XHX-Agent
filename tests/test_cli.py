@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -6,8 +7,6 @@ from xhx_agent.cli.main import _confirm_terminal_command, app
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
-
-import re
 
 runner = CliRunner()
 
