@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
 from xhx_agent.skills.metadata import Skill
+
+logger = logging.getLogger(__name__)
 
 
 class SkillLoader:
@@ -40,8 +43,8 @@ class SkillLoader:
                 data = yaml.safe_load(yaml_text)
                 if isinstance(data, dict):
                     return data
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse YAML frontmatter: %s", e)
             return {}
 
         for path in self.skills_dir.iterdir():
@@ -63,8 +66,8 @@ class SkillLoader:
                             )
                             skills.append(skill)
                             skill_loaded = True
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.warning("Failed to read skill markdown file %s: %s", md_path, e)
 
                 if not skill_loaded:
                     json_path = path / "SKILL.json"
@@ -81,7 +84,8 @@ class SkillLoader:
                                 content=None,
                             )
                             skills.append(skill)
-                        except (json.JSONDecodeError, OSError):
+                        except (json.JSONDecodeError, OSError) as e:
+                            logger.warning("Failed to load skill JSON file %s: %s", json_path, e)
                             continue
         return skills
 
@@ -105,10 +109,12 @@ class SkillLoader:
                     try:
                         with open(md_path, encoding="utf-8") as f:
                             skill.content = f.read()
-                    except OSError:
+                    except OSError as e:
+                        logger.warning("Failed to read SKILL.md file %s: %s", md_path, e)
                         skill.content = f"Error reading SKILL.md for {skill.name}"
                 else:
                     skill.content = f"No SKILL.md found for {skill.name}"
                 matched_skills.append(skill)
 
         return matched_skills
+
