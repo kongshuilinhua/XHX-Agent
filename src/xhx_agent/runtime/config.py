@@ -14,6 +14,7 @@ class ProjectConfig(BaseModel):
     default_profile: str = "mock"
     workspace_root: str = "."
     max_file_bytes: int = 200_000
+    max_loop_turns: int = 20
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"
 

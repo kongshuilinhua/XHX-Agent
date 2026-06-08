@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from xhx_agent.runtime.config import load_config, write_default_config
+from xhx_agent.runtime.config import default_config, load_config, write_default_config
 from xhx_agent.runtime.profiles import get_profile, write_default_profiles
 
 
@@ -13,3 +13,7 @@ def test_default_config_and_profile(tmp_path: Path) -> None:
     assert config.default_profile == "mock"
     assert profile.provider == "mock"
     assert get_profile(tmp_path, "default").provider == "openai-compatible"
+
+
+def test_default_config_has_max_loop_turns() -> None:
+    assert default_config().max_loop_turns == 20
