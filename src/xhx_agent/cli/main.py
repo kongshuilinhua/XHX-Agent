@@ -11,7 +11,13 @@ from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_int
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
-from xhx_agent.runtime.session import format_follow_up, load_latest_session, record_session
+from xhx_agent.runtime.session import (
+    format_follow_up,
+    list_sessions,
+    load_latest_session,
+    load_session,
+    record_session,
+)
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
 
@@ -80,6 +86,10 @@ def run(
         bool,
         typer.Option("--continue", help="Resume from the most recent session, injecting its summary as context."),
     ] = False,
+    resume: Annotated[
+        str | None,
+        typer.Option("--resume", help="Resume from a specific session by run id (see `xhx sessions`)."),
+    ] = None,
 ) -> None:
     runtime = RuntimeApp()
     if dry_run:
@@ -99,17 +109,21 @@ def run(
             for risk in preview_result.risk_summary:
                 console.print(f"  - {risk}")
         return
-    if json_output:
-        console.print(runtime.run_task_json(task, profile, assume_yes=yes, auto_repair=auto_repair))
-        return
     effective_task = task
-    if cont:
-        previous = load_latest_session(runtime.workspace)
+    if cont or resume:
+        previous = load_latest_session(runtime.workspace) if cont else load_session(runtime.workspace, resume or "")
         if previous is not None:
             effective_task = format_follow_up(previous) + "\n\n" + task
-            console.print(f"Continuing from run {previous.run_id} ({previous.status}).")
+            verb = "Continuing" if cont else "Resuming"
+            console.print(f"{verb} from run {previous.run_id} ({previous.status}).")
         else:
-            console.print("No previous session found; starting fresh.")
+            target = "most recent session" if cont else f"session '{resume}'"
+            console.print(f"No {target} found; starting fresh.")
+    if json_output:
+        json_result = runtime.run_task(effective_task, profile, assume_yes=yes, auto_repair=auto_repair)
+        record_session(runtime.workspace, task, json_result)
+        console.print(json_result.model_dump_json(indent=2))
+        return
     result = runtime.run_task(
         effective_task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair
     )
@@ -124,6 +138,25 @@ def run(
         console.print("risks:")
         for risk in result.risk_summary:
             console.print(f"  - {risk}")
+
+
+@app.command("sessions")
+def sessions() -> None:
+    from rich.table import Table
+
+    runtime = RuntimeApp()
+    entries = list_sessions(runtime.workspace)
+    if not entries:
+        console.print("No sessions recorded yet.")
+        return
+    table = Table(title="Sessions")
+    table.add_column("run_id")
+    table.add_column("status")
+    table.add_column("verification")
+    table.add_column("task")
+    for entry in entries[-20:]:
+        table.add_row(entry.run_id, entry.status, entry.verification, entry.task[:60])
+    console.print(table)
 
 
 @app.command("chat")

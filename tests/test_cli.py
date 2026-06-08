@@ -102,3 +102,28 @@ def test_run_continue_records_and_resumes_session() -> None:
 
         lines = [line for line in session_history_path(root).read_text(encoding="utf-8").splitlines() if line.strip()]
         assert len(lines) == 2
+
+
+def test_sessions_command_and_resume_by_id() -> None:
+    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.session import list_sessions
+
+    with runner.isolated_filesystem() as workspace:
+        root = Path(workspace)
+        RuntimeApp(root).init_project()
+
+        empty = runner.invoke(app, ["sessions"])
+        assert empty.exit_code == 0
+        assert "No sessions recorded" in empty.output
+
+        first = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock"])
+        assert first.exit_code == 0, first.output
+
+        listed = runner.invoke(app, ["sessions"])
+        assert listed.exit_code == 0
+        assert "Sessions" in strip_ansi(listed.output)
+
+        run_id = list_sessions(root)[-1].run_id
+        resumed = runner.invoke(app, ["run", "keep going", "--profile", "mock", "--resume", run_id])
+        assert resumed.exit_code == 0, resumed.output
+        assert "Resuming from run" in strip_ansi(resumed.output)
