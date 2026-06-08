@@ -533,8 +533,8 @@ v0.9：Evaluation / Headless / Replay。
 
 当前实现状态（更新至 M2，2026-06-08）：
 
-- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 薄实现；**`loop` 自主统一循环**——`config.max_loop_turns`（默认 20）+ `_run_model_tool_loop` 的 `stop_on_first_change` 自主停止策略 + 独立 `LoopOrchestrator(autonomous=True)`。显式 `mode="loop"` 走自主多轮（改→验证→继续，直到模型自报完成或达上限）；自动分类兜底仍走 `LinearOrchestrator`（改动后即停，零回归）。测试 226 passed。
+- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 薄实现；**`loop` 自主统一循环**——`config.max_loop_turns`（默认 20）+ `_run_model_tool_loop` 的 `stop_on_first_change` 自主停止策略 + 独立 `LoopOrchestrator(autonomous=True)`；**上下文压缩 compaction**——`_compact_tool_summaries` 把溢出的旧工具摘要启发式聚合成一条统计行（工具次数 + 失败计数）保留，而非直接丢弃（接入 `compile_context_pack`，纯启发式无额外 LLM 调用）。显式 `mode="loop"` 走自主多轮；自动分类兜底仍走 `LinearOrchestrator`（改动后即停，零回归）。测试 229 passed。
 - 部分实现：`graph` 目前等价于现有 DAG（尚未接 LangGraph）。
-- 未实现：`loop` 的进阶能力（上下文自动压缩 compaction、会话 `--continue/--resume` 恢复、按需 subagent——均为后续独立里程碑）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
+- 未实现：`loop` 的进阶能力（会话 `--continue/--resume` 恢复、按需 subagent；compaction 当前为启发式，LLM 摘要版待定——均为后续独立里程碑）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
 
 路线：M2 LoopOrchestrator 做深（**已完成**）→ M3 GraphOrchestrator（LangGraph，轻量对比）→ M4 集成与文档对比。
