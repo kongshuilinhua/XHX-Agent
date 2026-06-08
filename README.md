@@ -221,6 +221,7 @@ uv run xhx run "Fix the typo in main.py and run pytest" --profile mock --auto-re
 * `-y`, `--yes`: Automatically bypass confirm-level prompts for medium-risk verification commands.
 * `--dry-run`: Previews the initial execution plan, budget analysis, and risks, then exits.
 * `--continue`: Resumes from the most recent session, injecting its summary (run id, status, changed files) as context for the new task. Each run is recorded to `.xhx/sessions/history.jsonl`.
+* `--resume <run-id>`: Resumes from a specific past session by run id. Use `xhx sessions` to list recorded sessions.
 
 ---
 
