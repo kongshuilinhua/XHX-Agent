@@ -8,6 +8,12 @@ from xhx_agent.models.types import MockPlan, ToolStep
 class MockModelClient:
     """Deterministic v0.1 planner for fixtures and local smoke tests."""
 
+    def summarize(self, text: str) -> str:
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return "No earlier work to summarize."
+        return f"Earlier work covered {len(lines)} tool step(s); most recent: '{lines[-1][:60]}'."
+
     def plan(self, task: str, workspace: Path) -> MockPlan:
         lower_task = task.lower()
         if self._looks_like_python_fixture(workspace, lower_task):

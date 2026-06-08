@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -647,21 +648,9 @@ def _limit_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n...<truncated>"
 
 
-def _compact_tool_summaries(summaries: list[str], keep_recent: int) -> tuple[str | None, list[str]]:
-    """Heuristically compact overflowing tool summaries into one stat line.
+def _heuristic_compaction(older: list[str]) -> str:
+    """Aggregate older tool summaries by tool name with a success/failure tally."""
 
-    Older summaries beyond ``keep_recent`` are aggregated by tool name with a
-    success/failure tally, so a long autonomous loop keeps a trace of earlier
-    work instead of silently dropping it. Pure function; no LLM call. Each
-    summary is expected in the form ``"tool: status: detail"``.
-    """
-
-    keep_recent = max(0, keep_recent)
-    if len(summaries) <= keep_recent:
-        return None, list(summaries)
-    split = len(summaries) - keep_recent
-    older = summaries[:split]
-    recent = summaries[split:]
     tool_counts: dict[str, int] = {}
     failed = 0
     for summary in older:
@@ -674,8 +663,32 @@ def _compact_tool_summaries(summaries: list[str], keep_recent: int) -> tuple[str
         f"{tool}×{count}" for tool, count in sorted(tool_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     )
     fail_note = f", {failed} failed" if failed else ""
-    line = f"[compacted {len(older)} earlier tool results — {breakdown}{fail_note}]"
-    return line, list(recent)
+    return f"[compacted {len(older)} earlier tool results — {breakdown}{fail_note}]"
+
+
+def _compact_tool_summaries(
+    summaries: list[str], keep_recent: int, summarizer: Callable[[list[str]], str] | None = None
+) -> tuple[str | None, list[str]]:
+    """Compact overflowing tool summaries so a long loop keeps a trace of earlier work.
+
+    Older summaries beyond ``keep_recent`` are condensed into one line. With no
+    ``summarizer`` this is a pure heuristic tally (tool counts + failures). When a
+    ``summarizer`` is supplied (e.g. an LLM-backed callback) it produces a
+    semantic summary instead; any error falls back to the heuristic tally.
+    """
+
+    keep_recent = max(0, keep_recent)
+    if len(summaries) <= keep_recent:
+        return None, list(summaries)
+    split = len(summaries) - keep_recent
+    older = summaries[:split]
+    recent = summaries[split:]
+    if summarizer is not None:
+        try:
+            return f"[summary] {summarizer(older)}", list(recent)
+        except Exception:
+            logger.warning("History summarizer failed; falling back to heuristic compaction.")
+    return _heuristic_compaction(older), list(recent)
 
 
 _tiktoken_encoding: Any = None
