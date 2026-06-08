@@ -20,6 +20,7 @@ def test_orchestrator_context_is_constructible_with_minimal_fields() -> None:
     )
     assert ctx.assume_yes is False
     assert ctx.auto_repair is False
+    assert ctx.autonomous is False
     assert ctx.metrics_tracker == {"tokens": 0}
 
 

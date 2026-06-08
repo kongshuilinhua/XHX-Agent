@@ -276,6 +276,8 @@ class RuntimeApp:
             event_callback=ctx.event_callback,
             cancel_check=ctx.cancel_check,
             metrics_tracker=ctx.metrics_tracker,
+            max_turns=load_config(self.workspace).max_loop_turns if ctx.autonomous else None,
+            stop_on_first_change=not ctx.autonomous,
         )
         if changed_files and status not in {"failed", "cancelled"}:
             _refresh_repo_intel_index(self.workspace, ctx.evidence, ctx.event_callback, risks)

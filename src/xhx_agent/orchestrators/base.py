@@ -53,6 +53,7 @@ class OrchestratorContext:
     start_time: float = field(default_factory=time.time)
     isolated: bool = True
     mode: str = ""
+    autonomous: bool = False
     assume_yes: bool = False
     confirm_callback: ConfirmationCallback | None = None
     auto_repair: bool = False
