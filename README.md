@@ -124,7 +124,7 @@ To prevent context inflation and token-drift, `xhx-agent` compiles a highly conc
 * **Precise Tokenization**: Implements precise `cl100k_base` tiktoken-based count validation.
 * **Priority Budgeting**: Allocates context tokens deterministically (e.g., 20% Project Maps, 25% Task Specs, 35% Source Code Snippets, 15% Evidence, 5% Error logs). When budgets overflow, lower-priority context is dynamically pruned.
 * **Double-Speed Estimator**: Features a robust fallback algorithm for complex locales with a standard ratio of **0.25 tokens/char for ASCII** and **1.5 tokens/char for Non-ASCII/CJK**.
-* **History Compaction**: In long autonomous loops, tool summaries that overflow the recent window are heuristically compacted into a single stat line (tool counts + failures) instead of being dropped, so the loop keeps a trace of earlier work.
+* **History Compaction**: In long autonomous loops, tool summaries that overflow the recent window are compacted into a single line instead of being dropped — a heuristic tally (tool counts + failures) by default, or a semantic LLM summary (via the active profile) in autonomous mode, with automatic fallback to the heuristic on error.
 
 ### 📅 2. Adaptive Planner + Parallel DAG
 Routes each request to an execution mode based on its intent and complexity.
