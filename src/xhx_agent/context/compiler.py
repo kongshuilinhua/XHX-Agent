@@ -134,13 +134,16 @@ def compile_context_pack(
         )
 
     if tool_summaries:
+        compacted_summary, recent_summaries = _compact_tool_summaries(tool_summaries, MAX_TOOL_SUMMARIES)
+        summary_lines = [compacted_summary] if compacted_summary else []
+        summary_lines.extend(f"- {summary}" for summary in recent_summaries)
         candidates.append(
             ContextItem(
                 kind="tool_results",
                 source="current_run",
-                content="\n".join(f"- {summary}" for summary in tool_summaries[-MAX_TOOL_SUMMARIES:]),
+                content="\n".join(summary_lines),
                 priority=80,
-                reason="Recent tool outputs summarize the current loop without loading Raw Trace.",
+                reason="Recent tool outputs (older ones compacted) summarize the current loop without loading Raw Trace.",
             )
         )
 
