@@ -35,12 +35,15 @@ class OrchestratorContext:
     task: str
     run_id: str
     workspace: Path
+    original_workspace: Path
     profile: ModelProfile
     scan: ProjectScan
     evidence: EvidenceStore
     kernel: SafeExecutionKernel
     tool_context: ToolContext
     start_time: float = field(default_factory=time.time)
+    isolated: bool = True
+    mode: str = ""
     assume_yes: bool = False
     confirm_callback: ConfirmationCallback | None = None
     auto_repair: bool = False
