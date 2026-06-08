@@ -510,3 +510,31 @@ v0.9：Evaluation / Headless / Replay。
 
 - 不改写历史 Git 提交。
 - README 和实施文档改为使用本基线版本名。
+
+### 2026-06-08：引入可插拔 Orchestrator（双执行范式）
+
+原计划：
+
+- 顶层控制流内联在 `RuntimeApp.run_task`，按 `ExecutionMode` 在 linear 与 DAG 之间硬分支。
+
+新计划：
+
+- 抽出 `Orchestrator` 协议与 `OrchestratorContext` 共享上下文（`src/xhx_agent/orchestrators/`），把"顶层大脑"与工具 / 安全 / 上下文 / 证据底座解耦。
+- `run_task` 新增 `mode` 参数（`loop` / `graph` / `linear` / `dag`），显式优先，否则由 `ModeClassifier` 兜底；`select_orchestrator` 统一分派。
+- 目标双范式：`loop`（统一自主 agent loop，类 Claude Code）与 `graph`（多 agent 工作流编排，计划基于 LangGraph，类 HPD），用户可自行选择。
+
+原因：
+
+- 产品定位明确为"类 Claude Code 的本地交互式编码助手"，主线需要统一自主 loop；同时保留 DAG / 多 agent 编排作为可选第二范式，便于对比与扩展。
+
+影响：
+
+- 行为零回归：M1 仅做抽象，`loop` ≈ 现有 linear、`graph` ≈ 现有 DAG，现有测试全绿（223 passed）。
+
+当前实现状态（M1，2026-06-08）：
+
+- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 两个薄实现（复用现有底座）。
+- 部分实现：`loop` 目前等价于现有 linear 循环（尚未深化）；`graph` 目前等价于现有 DAG（尚未接 LangGraph）。
+- 未实现：`loop` 深化（放宽自主轮次、工具确认贯通、上下文压缩、会话恢复——M2）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
+
+路线：M2 LoopOrchestrator 做深（主力）→ M3 GraphOrchestrator（LangGraph，轻量对比）→ M4 集成与文档对比。

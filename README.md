@@ -130,6 +130,7 @@ Routes each request to an execution mode based on its intent and complexity.
 * **Intent Routing**: Classifies inputs into `direct`, `research-only`, `linear-edit`, `plan-review-act`, or `dag-execute`.
 * **Kahn Parallel DAG**: The `dag-execute` scheduler builds a topological graph using Kahn's algorithm with deterministic ordering and cycle detection. *Note (v1.0):* the DAG node generator is currently a heuristic baseline; LLM-driven DAG decomposition of arbitrary requests is on the roadmap. Open-ended edit tasks are best run in `linear-edit` mode.
 * **Concurrent Execution**: Spawns multiple threads for concurrent execution of read-only dependencies (e.g., searches, file readings), while enforcing a strict **serialization lock** on edit tasks targeting the same file paths.
+* **Pluggable Orchestrator** *(v1.x, in progress)*: A unified `Orchestrator` abstraction lets the runtime drive a task with either a single autonomous **`loop`** (Claude-Code-style) or a multi-agent **`graph`**, selectable via the `run_task(mode=...)` API over one shared tool/safety/context base. As of M1 the abstraction is in place and behaviour-equivalent to the existing linear/DAG paths; deepening the loop (M2), a LangGraph-backed graph (M3), and `--mode` CLI/TUI wiring (M4) are on the roadmap. See `docs/implementation/20-implementation-baseline.md`.
 
 ### 🛡️ 3. Safe Execution Kernel
 Provides comprehensive system isolation and state-recovery guarantees.
