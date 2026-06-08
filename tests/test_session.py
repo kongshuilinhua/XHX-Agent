@@ -1,4 +1,11 @@
-from xhx_agent.runtime.session import SessionEntry, format_follow_up, load_latest_session, record_session
+from xhx_agent.runtime.session import (
+    SessionEntry,
+    format_follow_up,
+    list_sessions,
+    load_latest_session,
+    load_session,
+    record_session,
+)
 
 
 class _ResultStub:
@@ -26,6 +33,20 @@ def test_record_and_load_latest_session(tmp_path) -> None:
     assert latest.task == "add feature"
     assert latest.status == "failed"
     assert latest.changed_files == ["b.py"]
+
+
+def test_list_and_load_session_by_id(tmp_path) -> None:
+    assert list_sessions(tmp_path) == []
+    record_session(tmp_path, "t1", _ResultStub("run-1", "success", "passed", [], None))
+    record_session(tmp_path, "t2", _ResultStub("run-2", "failed", "failed", ["b.py"], None))
+
+    entries = list_sessions(tmp_path)
+    assert [e.run_id for e in entries] == ["run-1", "run-2"]
+
+    found = load_session(tmp_path, "run-1")
+    assert found is not None
+    assert found.task == "t1"
+    assert load_session(tmp_path, "missing") is None
 
 
 def test_format_follow_up_includes_key_fields() -> None:

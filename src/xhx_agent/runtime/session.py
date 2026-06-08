@@ -45,16 +45,33 @@ def record_session(workspace: Path, task: str, result: RunResult) -> SessionEntr
     return entry
 
 
-def load_latest_session(workspace: Path) -> SessionEntry | None:
-    """Return the most recently recorded session entry, or None if there is none."""
+def list_sessions(workspace: Path) -> list[SessionEntry]:
+    """Return all recorded session entries in chronological order."""
 
     path = session_history_path(workspace)
     if not path.exists():
-        return None
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not lines:
-        return None
-    return SessionEntry.model_validate_json(lines[-1])
+        return []
+    return [
+        SessionEntry.model_validate_json(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def load_latest_session(workspace: Path) -> SessionEntry | None:
+    """Return the most recently recorded session entry, or None if there is none."""
+
+    entries = list_sessions(workspace)
+    return entries[-1] if entries else None
+
+
+def load_session(workspace: Path, run_id: str) -> SessionEntry | None:
+    """Return the most recent recorded session with ``run_id``, or None."""
+
+    for entry in reversed(list_sessions(workspace)):
+        if entry.run_id == run_id:
+            return entry
+    return None
 
 
 def format_follow_up(entry: SessionEntry) -> str:
