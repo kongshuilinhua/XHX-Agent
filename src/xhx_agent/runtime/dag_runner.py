@@ -15,20 +15,12 @@ from xhx_agent.tools.terminal import TerminalResult
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RunResult, RuntimeApp
 
+from xhx_agent.runtime.utils import cancel_requested
 from xhx_agent.runtime.verify_loop import _refresh_repo_intel_index
 from xhx_agent.safety.policy import PolicyDecision
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
-
-
-def _cancel_requested(cancel_check: CancelCheck | None) -> bool:
-    if cancel_check is None:
-        return False
-    try:
-        return bool(cancel_check())
-    except Exception:
-        return False
 
 
 class DAGRunner:
@@ -70,7 +62,7 @@ class DAGRunner:
         risks: list[str] = []
 
         def execute_node(node):
-            if _cancel_requested(cancel_check):
+            if cancel_requested(cancel_check):
                 return False, "Cancelled by user"
 
             if node.tool == "terminal":

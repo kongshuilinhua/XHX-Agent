@@ -124,3 +124,8 @@ __marimo__/
 
 # xhx-agent local runtime state
 .xhx/
+
+# ==========================================
+# Private Study & Architecture Deep Dives
+# ==========================================
+docs/deep_dive/

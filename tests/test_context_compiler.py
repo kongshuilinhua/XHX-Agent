@@ -358,3 +358,40 @@ def test_context_debug_report_is_written(tmp_path: Path) -> None:
     assert data["run_id"] == "run-test"
     assert data["turn"] == 1
     assert data["debug"]["budget_tokens"] == pack.budget_tokens
+
+
+def test_selective_evidence_loading(tmp_path: Path) -> None:
+    # 1. Setup mock evidence directory with 5 different jsonl files
+    evidence_dir = tmp_path / ".xhx" / "evidence"
+    evidence_dir.mkdir(parents=True)
+
+    import json
+    import time
+
+    for i in range(1, 6):
+        file_path = evidence_dir / f"run_{i}.jsonl"
+        entry_data = {
+            "kind": "error",
+            "source": f"file_{i}.py",
+            "summary": f"error summary {i}",
+            "confidence": 0.9,
+            "artifact_ref": f"trace://{i}",
+            "created_at": str(time.time()),
+        }
+        file_path.write_text(json.dumps(entry_data) + "\n", encoding="utf-8")
+        # Ensure distinct modification times by setting stat mtime explicitly
+        import os
+
+        os.utime(str(file_path), (time.time() + i, time.time() + i))
+
+    # 2. Call compile_context_pack which glob-loads evidence files
+    from xhx_agent.context.compiler import compile_context_pack
+
+    scan = scan_project(tmp_path)
+    pack = compile_context_pack(workspace=tmp_path, task="fix errors", scan=scan, top_k_evidence=10)
+
+    # Assert that only the latest 3 files (run_3, run_4, run_5) are packed as evidence
+    packed_sources = {item.source for item in pack.items if item.kind.startswith("evidence:")}
+    assert len(packed_sources) <= 3
+    assert "file_1.py" not in packed_sources
+    assert "file_2.py" not in packed_sources
