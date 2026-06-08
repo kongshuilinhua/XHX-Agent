@@ -278,6 +278,7 @@ class RuntimeApp:
             metrics_tracker=ctx.metrics_tracker,
             max_turns=load_config(self.workspace).max_loop_turns if ctx.autonomous else None,
             stop_on_first_change=not ctx.autonomous,
+            history_summarizer=self._make_history_summarizer(ctx.profile) if ctx.autonomous else None,
         )
         if changed_files and status not in {"failed", "cancelled"}:
             _refresh_repo_intel_index(self.workspace, ctx.evidence, ctx.event_callback, risks)
@@ -716,6 +717,29 @@ class RuntimeApp:
             details={"provider": profile.provider},
         )
 
+    def _make_history_summarizer(self, profile: ModelProfile) -> Callable[[list[str]], str]:
+        provider = profile.provider
+
+        def summarize(older: list[str]) -> str:
+            text = "\n".join(older)
+            if provider == "mock":
+                return MockModelClient().summarize(text)
+            if provider == "openai-compatible":
+                return OpenAICompatibleClient(
+                    base_url=profile.base_url,
+                    api_key_env=profile.api_key_env,
+                    model=profile.model,
+                    temperature=profile.temperature,
+                    stream=False,
+                ).summarize(text)
+            raise ModelClientError(
+                code="unsupported_provider",
+                message=f"Unsupported model provider: {provider}",
+                details={"provider": provider},
+            )
+
+        return summarize
+
     def _build_plan_for_turn(
         self,
         task: str,
@@ -753,6 +777,7 @@ class RuntimeApp:
         cancel_check: CancelCheck | None = None,
         metrics_tracker: dict[str, int] | None = None,
         stop_on_first_change: bool = True,
+        history_summarizer: Callable[[list[str]], str] | None = None,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
@@ -774,6 +799,7 @@ class RuntimeApp:
                 plan_summaries=plan_summaries,
                 evidence_entries=evidence_entries,
                 recent_error=recent_error,
+                history_summarizer=history_summarizer,
             )
             context_debug = write_context_debug_report(self.workspace, evidence.run_id, turn, context_pack)
             evidence.write_trace("context_pack", {"turn": turn, **context_pack.model_dump()})

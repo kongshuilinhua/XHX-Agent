@@ -66,3 +66,29 @@ def test_mock_summarize_is_deterministic() -> None:
     text = "apply_patch: success: x\nsearch: failed: y"
     out = MockModelClient().summarize(text)
     assert "2 tool step" in out
+
+
+def test_compile_context_pack_uses_history_summarizer(tmp_path) -> None:
+    from xhx_agent.context.compiler import MAX_TOOL_SUMMARIES, compile_context_pack
+    from xhx_agent.repo_intel.scanner import scan_project
+
+    summaries = [f"apply_patch: success: {i}" for i in range(MAX_TOOL_SUMMARIES + 2)]
+    scan = scan_project(tmp_path)
+    pack = compile_context_pack(
+        workspace=tmp_path,
+        task="t",
+        scan=scan,
+        tool_summaries=summaries,
+        history_summarizer=lambda older: f"semantic of {len(older)}",
+    )
+    tool_item = next(item for item in pack.items if item.kind == "tool_results")
+    assert tool_item.content.startswith("[summary] semantic of 2")
+
+
+def test_make_history_summarizer_for_mock_profile(tmp_path) -> None:
+    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.profiles import ModelProfile
+
+    summarizer = RuntimeApp(tmp_path)._make_history_summarizer(ModelProfile(provider="mock"))
+    out = summarizer(["a: success: x", "b: failed: y"])
+    assert "2 tool step" in out

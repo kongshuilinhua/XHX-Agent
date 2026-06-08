@@ -99,6 +99,41 @@ class OpenAICompatibleClient:
             return self._stream_plan(payload, api_key, delta_callback)
         return self._non_stream_plan(payload, api_key)
 
+    def summarize(self, text: str) -> str:
+        api_key = os.getenv(self.api_key_env)
+        if not api_key:
+            raise ModelClientError(
+                code="missing_api_key",
+                message=f"Missing API key environment variable: {self.api_key_env}",
+                details={"api_key_env": self.api_key_env},
+            )
+        payload = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize the tool-call history below in 1-2 concise sentences for an "
+                        "engineering assistant. State what was done and note any failures."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        }
+        response = self.http_client.post(
+            f"{self.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        if response.status_code >= 400:
+            raise ModelClientError(
+                code="http_error",
+                message=f"Summarize request returned HTTP {response.status_code}.",
+                details={"status_code": response.status_code},
+            )
+        return _extract_chat_content(response.json()).strip()
+
     def _non_stream_plan(self, payload: dict[str, Any], api_key: str) -> ModelPlan:
         try:
             response = self.http_client.post(

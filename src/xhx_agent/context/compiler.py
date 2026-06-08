@@ -60,6 +60,7 @@ def compile_context_pack(
     recent_error: str | None = None,
     budget_tokens: int = DEFAULT_CONTEXT_BUDGET_TOKENS,
     top_k_evidence: int = DEFAULT_TOP_K_EVIDENCE,
+    history_summarizer: Callable[[list[str]], str] | None = None,
 ) -> ContextPack:
     candidates: list[ContextItem] = []
 
@@ -135,7 +136,9 @@ def compile_context_pack(
         )
 
     if tool_summaries:
-        compacted_summary, recent_summaries = _compact_tool_summaries(tool_summaries, MAX_TOOL_SUMMARIES)
+        compacted_summary, recent_summaries = _compact_tool_summaries(
+            tool_summaries, MAX_TOOL_SUMMARIES, history_summarizer
+        )
         summary_lines = [compacted_summary] if compacted_summary else []
         summary_lines.extend(f"- {summary}" for summary in recent_summaries)
         candidates.append(
