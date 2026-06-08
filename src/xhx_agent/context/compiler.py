@@ -644,6 +644,37 @@ def _limit_text(text: str, max_chars: int) -> str:
     return text[:max_chars] + "\n...<truncated>"
 
 
+def _compact_tool_summaries(summaries: list[str], keep_recent: int) -> tuple[str | None, list[str]]:
+    """Heuristically compact overflowing tool summaries into one stat line.
+
+    Older summaries beyond ``keep_recent`` are aggregated by tool name with a
+    success/failure tally, so a long autonomous loop keeps a trace of earlier
+    work instead of silently dropping it. Pure function; no LLM call. Each
+    summary is expected in the form ``"tool: status: detail"``.
+    """
+
+    keep_recent = max(0, keep_recent)
+    if len(summaries) <= keep_recent:
+        return None, list(summaries)
+    split = len(summaries) - keep_recent
+    older = summaries[:split]
+    recent = summaries[split:]
+    tool_counts: dict[str, int] = {}
+    failed = 0
+    for summary in older:
+        parts = summary.split(":", 2)
+        tool = parts[0].strip() or "other"
+        tool_counts[tool] = tool_counts.get(tool, 0) + 1
+        if len(parts) >= 2 and "fail" in parts[1].lower():
+            failed += 1
+    breakdown = ", ".join(
+        f"{tool}×{count}" for tool, count in sorted(tool_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    fail_note = f", {failed} failed" if failed else ""
+    line = f"[compacted {len(older)} earlier tool results — {breakdown}{fail_note}]"
+    return line, list(recent)
+
+
 _tiktoken_encoding: Any = None
 _tiktoken_lock = threading.Lock()
 
