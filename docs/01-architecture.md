@@ -108,7 +108,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 
 在五大内核与代码智能底座之上，XHX-Agent 把"顶层控制流大脑"抽象为可插拔的 `Orchestrator`（`src/xhx_agent/orchestrators/`）。同一套工具、安全执行内核、Context Pack 与 Evidence 底座被不同范式共享，仅顶层控制流可替换：
 
-- **`loop`（统一自主 agent loop，类 Claude Code）**：单一循环，模型每一步自主决定下一个工具调用，配合人在回路的确认 / 打断 / steering。**默认主力范式。**
+- **`loop`（统一自主 agent loop，类 Claude Code）**：单一循环，模型每一步自主决定下一个工具调用，配合人在回路的确认 / 打断 / steering。已支持自主多轮（`max_loop_turns`）、上下文压缩（启发式 + 可选 LLM 摘要）、会话恢复（`--continue`/`--resume`）与并发只读 subagent 探索。**默认主力范式。**
 - **`graph`（多 agent 工作流编排，类 HPD）**：评估 → 分解 → 并行 → 评审 → 综合的状态图，带条件分支与循环回边；计划基于 LangGraph 实现。
 
 `run_task(mode=...)` 显式选择范式（`loop` / `graph`），未指定时由 `ModeClassifier` 兜底，`select_orchestrator` 统一分派；`OrchestratorContext` 携带共享底座句柄与运行参数。

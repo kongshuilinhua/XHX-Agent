@@ -533,8 +533,9 @@ v0.9：Evaluation / Headless / Replay。
 
 当前实现状态（更新至 M2，2026-06-08）：
 
-- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 薄实现；**`loop` 自主统一循环**——`config.max_loop_turns`（默认 20）+ `_run_model_tool_loop` 的 `stop_on_first_change` 自主停止策略 + 独立 `LoopOrchestrator(autonomous=True)`；**上下文压缩 compaction**——`_compact_tool_summaries` 把溢出的旧工具摘要压缩成一条保留（默认启发式统计：工具次数 + 失败计数；autonomous loop 下注入当前 profile 的 `summarizer` 生成 LLM 语义摘要，失败自动回退启发式），接入 `compile_context_pack`；**会话恢复**——`SessionStore` 把每次 run 摘要落盘 `.xhx/sessions/history.jsonl`，`xhx run --continue` 续接最近会话、`--resume <id>` 续接指定会话，把摘要(run_id/任务/状态/改动文件)注入新任务上下文实现跨进程续接；`xhx sessions` 列出历史会话；`--json` 路径同样落盘 record。显式 `mode="loop"` 走自主多轮；自动分类兜底仍走 `LinearOrchestrator`（改动后即停，零回归）。测试 240 passed。
+- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 薄实现；**`loop` 自主统一循环**——`config.max_loop_turns`（默认 20）+ `_run_model_tool_loop` 的 `stop_on_first_change` 自主停止策略 + 独立 `LoopOrchestrator(autonomous=True)`；**上下文压缩 compaction**——`_compact_tool_summaries` 把溢出的旧工具摘要压缩成一条保留（默认启发式统计：工具次数 + 失败计数；autonomous loop 下注入当前 profile 的 `summarizer` 生成 LLM 语义摘要，失败自动回退启发式），接入 `compile_context_pack`；**会话恢复**——`SessionStore` 把每次 run 摘要落盘 `.xhx/sessions/history.jsonl`，`xhx run --continue` 续接最近会话、`--resume <id>` 续接指定会话，把摘要(run_id/任务/状态/改动文件)注入新任务上下文实现跨进程续接；`xhx sessions` 列出历史会话；`--json` 路径同样落盘 record；**并发只读 subagent**——autonomous loop 某轮计划全为只读步骤（≥2）时并发探索（`ThreadPoolExecutor`，evidence 加锁保证线程安全），结果按序串行处理（非并发路径零回归）。显式 `mode="loop"` 走自主多轮；自动分类兜底仍走 `LinearOrchestrator`（改动后即停，零回归）。测试 241 passed。
 - 部分实现：`graph` 目前等价于现有 DAG（尚未接 LangGraph）。
-- 未实现：`loop` 的进阶能力（按需 subagent；会话恢复的 console/TUI 入口接入待后续——均为后续独立里程碑）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
+- `loop` 深化全部完成：自主循环 + 上下文压缩（启发式 + 可选 LLM 语义摘要）+ 会话恢复（`--continue`/`--resume`/`sessions`）+ 并发只读 subagent。
+- 未实现：会话恢复的 console/TUI 入口接入（CLI `xhx run` 已支持）——后续；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
 
 路线：M2 LoopOrchestrator 做深（**已完成**）→ M3 GraphOrchestrator（LangGraph，轻量对比）→ M4 集成与文档对比。
