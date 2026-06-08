@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,7 @@ class OrchestratorContext:
     evidence: EvidenceStore
     kernel: SafeExecutionKernel
     tool_context: ToolContext
+    start_time: float = field(default_factory=time.time)
     assume_yes: bool = False
     confirm_callback: ConfirmationCallback | None = None
     auto_repair: bool = False
