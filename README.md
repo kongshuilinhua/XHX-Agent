@@ -220,6 +220,7 @@ uv run xhx run "Fix the typo in main.py and run pytest" --profile mock --auto-re
 * `--json`: Outputs the final run results as a machine-readable structured JSON.
 * `-y`, `--yes`: Automatically bypass confirm-level prompts for medium-risk verification commands.
 * `--dry-run`: Previews the initial execution plan, budget analysis, and risks, then exits.
+* `--continue`: Resumes from the most recent session, injecting its summary (run id, status, changed files) as context for the new task. Each run is recorded to `.xhx/sessions/history.jsonl`.
 
 ---
 

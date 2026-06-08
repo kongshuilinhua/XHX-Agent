@@ -151,7 +151,7 @@ XHX-Agent 在运行时严格分离用户可见的对话状态、LangGraph 图控
   index.db             # 核心底座: SQLite 高性能 B-Tree 符号索引数据库
   repo/
     index.json         # 双轨底座: 结构化冷启动仓库指纹与索引 JSON
-  sessions/            # 对话会话历史
+  sessions/            # 对话会话历史（history.jsonl；xhx run --continue 跨进程续接最近会话）
   traces/              # 100% 落盘的智能体物理运行事件 Raw Trace
   evidence/            # 100% 结构化的证据数据与 TrailGraph 拓扑
   logbook/             # 人类可读的可审计 Markdown 报告 (每次运行生成)
