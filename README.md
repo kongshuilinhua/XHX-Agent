@@ -3,9 +3,9 @@
 <div align="center">
 
 [![Version](https://img.shields.io/badge/version-v1.0.0-blueviolet?style=for-the-badge&logo=git)](https://github.com/kongshuilinhua/XHX-Agent)
-[![Python](https://img.shields.io/badge/python-3.10+-blue?style=for-the-badge&logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.13-blue?style=for-the-badge&logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Build](https://img.shields.io/badge/build-passing-success?style=for-the-badge&logo=github-actions)](tests)
+[![CI](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml)
 [![TUI](https://img.shields.io/badge/UI-TUI%20%7C%20REPL-orange?style=for-the-badge&logo=gnubash)](src/xhx_agent/tui)
 
 </div>
@@ -109,7 +109,7 @@ graph TD
     I -->|Passed| J["Evidence Runtime<br/>(Trace Logbook & GFM Reports)"] ::: main
     I -->|Failed| K["Auto-Repair Loop<br/>(Self-Correction - Max 2 turns)"] ::: router
     K -->|Retry| D
-    K -->|Exceeded / Aborted| L["Restore Rollback Plan<br/>(100% Worktree Revert)"] ::: safe
+    K -->|Exceeded / Aborted| L["Discard Worktree (git) /<br/>Restore Plan (in-place)"] ::: safe
     L --> J
 
     C1 --> J
@@ -126,16 +126,16 @@ To prevent context inflation and token-drift, `xhx-agent` compiles a highly conc
 * **Double-Speed Estimator**: Features a robust fallback algorithm for complex locales with a standard ratio of **0.25 tokens/char for ASCII** and **1.5 tokens/char for Non-ASCII/CJK**.
 
 ### 📅 2. Adaptive Planner + Parallel DAG
-Automatically partitions large, unstructured engineering requirements into logical steps.
+Routes each request to an execution mode based on its intent and complexity.
 * **Intent Routing**: Classifies inputs into `direct`, `research-only`, `linear-edit`, `plan-review-act`, or `dag-execute`.
-* **Kahn Parallel DAG**: In complex `dag-execute` mode, `xhx-agent` builds a topological graph using Kahn's algorithm. 
+* **Kahn Parallel DAG**: The `dag-execute` scheduler builds a topological graph using Kahn's algorithm with deterministic ordering and cycle detection. *Note (v1.0):* the DAG node generator is currently a heuristic baseline; LLM-driven DAG decomposition of arbitrary requests is on the roadmap. Open-ended edit tasks are best run in `linear-edit` mode.
 * **Concurrent Execution**: Spawns multiple threads for concurrent execution of read-only dependencies (e.g., searches, file readings), while enforcing a strict **serialization lock** on edit tasks targeting the same file paths.
 
 ### 🛡️ 3. Safe Execution Kernel
 Provides comprehensive system isolation and state-recovery guarantees.
-* **Multi-Tier Authorization**: Classifies tools into risk tiers. High-risk commands (e.g., terminal runs, patch applications) prompt interactive user approvals in the REPL, or verify cryptographic pre-approvals (`-y`/`--yes`).
-* **Atomic Checkpoints**: Commits micro-snapshots (Git/Worktree/State) prior to executing code modifications.
-* **Restore Rollback Plan**: If verification fails or execution is aborted, `xhx-agent` automatically runs a zero-risk rollback plan, restoring the repository to its baseline state.
+* **Multi-Tier Authorization**: Classifies commands into `safe` / `confirm` / `deny` risk tiers (allowlist-driven, with denylisted executables, shell-metacharacter blocking, and inline-interpreter detection as defense-in-depth). Terminal `confirm` commands prompt for approval in the REPL or honor pre-approval (`-y`/`--yes`); `deny` commands are always blocked. Structured `apply_patch` writes are auto-applied within worktree isolation (they do not prompt per-patch).
+* **Worktree Isolation**: When run inside a git repository, edits execute in an isolated git worktree; changes are synced back only on success and the worktree is discarded on failure — an effective baseline rollback.
+* **Restore Plan**: Outside a git repository (or if worktree creation fails), changes apply in place and the runtime emits an explicit warning plus a read-only Restore Plan that records what changed for manual recovery. There is no automatic in-place revert.
 * **2-Turn Auto-Repair**: Upon targeted test failures, the runtime initiates up to 2 self-correction cycles, feeding compiler test failures and evidence traces directly back into the planner.
 
 ### 💻 4. Smart Console & Full-Screen TUI
@@ -255,5 +255,5 @@ If you are using `xhx-agent` for deep academic research or private learning, we 
 ---
 
 <div align="center">
-Designed and built with passion by Google DeepMind Advanced Agentic Coding Team.
+Designed and built with passion by the xhx-agent author (<a href="https://github.com/kongshuilinhua/XHX-Agent">kongshuilinhua</a>).
 </div>

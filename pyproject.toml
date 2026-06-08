@@ -44,6 +44,8 @@ norecursedirs = ["tests/fixtures", ".tmp"]
 [tool.ruff]
 target-version = "py313"
 line-length = 120
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "SIM", "B", "C4"]
 ignore = ["E501", "B904", "SIM105"]
 

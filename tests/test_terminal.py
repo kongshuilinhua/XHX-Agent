@@ -12,9 +12,11 @@ def test_terminal_confirm_without_callback_does_not_execute(tmp_path: Path) -> N
 
 
 def test_terminal_callback_accepts_confirm_command(tmp_path: Path) -> None:
+    # Running a script file is allowed (CONFIRM); inline `python -c` is denied by policy.
+    (tmp_path / "say.py").write_text("print('ok')\n", encoding="utf-8")
     result = run_terminal(
         tmp_path,
-        "python -c \"print('ok')\"",
+        "python say.py",
         confirm_callback=lambda _command, _decision: True,
     )
 
@@ -24,9 +26,10 @@ def test_terminal_callback_accepts_confirm_command(tmp_path: Path) -> None:
 
 
 def test_terminal_callback_declines_confirm_command(tmp_path: Path) -> None:
+    (tmp_path / "say.py").write_text("print('ok')\n", encoding="utf-8")
     result = run_terminal(
         tmp_path,
-        "python -c \"print('ok')\"",
+        "python say.py",
         confirm_callback=lambda _command, _decision: False,
     )
 
@@ -36,9 +39,10 @@ def test_terminal_callback_declines_confirm_command(tmp_path: Path) -> None:
 
 
 def test_terminal_summary_is_truncated(tmp_path: Path) -> None:
+    (tmp_path / "gen.py").write_text("print('x' * 5000)\n", encoding="utf-8")
     result = run_terminal(
         tmp_path,
-        "python -c \"print('x' * 5000)\"",
+        "python gen.py",
         assume_yes=True,
     )
 

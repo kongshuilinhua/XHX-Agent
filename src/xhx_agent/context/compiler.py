@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -172,16 +173,12 @@ def compile_context_pack(
         evidence_dir = workspace / ".xhx" / "evidence"
         if evidence_dir.exists():
             # Sort files by modification time descending (newest first)
-            jsonl_files = sorted(
-                evidence_dir.glob("*.jsonl"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True
-            )
+            jsonl_files = sorted(evidence_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
             # Limit loading to the latest 3 historical run files
             latest_files = jsonl_files[:3]
             entry_count = 0
             max_entries = 100  # Cap total history entries processed
-            
+
             for path in latest_files:
                 if entry_count >= max_entries:
                     break
@@ -646,8 +643,6 @@ def _limit_text(text: str, max_chars: int) -> str:
         return text
     return text[:max_chars] + "\n...<truncated>"
 
-
-import threading
 
 _tiktoken_encoding: Any = None
 _tiktoken_lock = threading.Lock()

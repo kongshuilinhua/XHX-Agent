@@ -49,6 +49,7 @@ def search_symbols(index: SymbolIndex, query: str, *, limit: int = 20) -> list[S
     if db_path.exists():
         try:
             import sqlite3
+
             conn = sqlite3.connect(str(db_path))
             try:
                 cursor = conn.cursor()
@@ -56,7 +57,7 @@ def search_symbols(index: SymbolIndex, query: str, *, limit: int = 20) -> list[S
                 if not lowered:
                     cursor.execute(
                         "SELECT name, kind, path, line, end_line, language, parent FROM symbols ORDER BY path, line, name LIMIT ?",
-                        (limit,)
+                        (limit,),
                     )
                     rows = cursor.fetchall()
                     return [
@@ -71,11 +72,11 @@ def search_symbols(index: SymbolIndex, query: str, *, limit: int = 20) -> list[S
                         )
                         for row in rows
                     ]
-                
+
                 # 1. Exact matches
                 cursor.execute(
                     "SELECT name, kind, path, line, end_line, language, parent FROM symbols WHERE LOWER(name) = ? LIMIT ?",
-                    (lowered, limit)
+                    (lowered, limit),
                 )
                 exact_rows = cursor.fetchall()
                 results = [
@@ -90,47 +91,51 @@ def search_symbols(index: SymbolIndex, query: str, *, limit: int = 20) -> list[S
                     )
                     for row in exact_rows
                 ]
-                
+
                 # 2. Prefix matches
                 if len(results) < limit:
                     cursor.execute(
                         "SELECT name, kind, path, line, end_line, language, parent FROM symbols WHERE LOWER(name) LIKE ? AND LOWER(name) != ? LIMIT ?",
-                        (lowered + "%", lowered, limit - len(results))
+                        (lowered + "%", lowered, limit - len(results)),
                     )
                     prefix_rows = cursor.fetchall()
-                    results.extend([
-                        Symbol(
-                            name=row[0],
-                            kind=row[1],
-                            path=row[2],
-                            line=row[3],
-                            end_line=row[4],
-                            language=row[5],
-                            parent=row[6],
-                        )
-                        for row in prefix_rows
-                    ])
-                
+                    results.extend(
+                        [
+                            Symbol(
+                                name=row[0],
+                                kind=row[1],
+                                path=row[2],
+                                line=row[3],
+                                end_line=row[4],
+                                language=row[5],
+                                parent=row[6],
+                            )
+                            for row in prefix_rows
+                        ]
+                    )
+
                 # 3. Contains matches
                 if len(results) < limit:
                     cursor.execute(
                         "SELECT name, kind, path, line, end_line, language, parent FROM symbols WHERE LOWER(name) LIKE ? AND LOWER(name) NOT LIKE ? LIMIT ?",
-                        ("%" + lowered + "%", lowered + "%", limit - len(results))
+                        ("%" + lowered + "%", lowered + "%", limit - len(results)),
                     )
                     contains_rows = cursor.fetchall()
-                    results.extend([
-                        Symbol(
-                            name=row[0],
-                            kind=row[1],
-                            path=row[2],
-                            line=row[3],
-                            end_line=row[4],
-                            language=row[5],
-                            parent=row[6],
-                        )
-                        for row in contains_rows
-                    ])
-                
+                    results.extend(
+                        [
+                            Symbol(
+                                name=row[0],
+                                kind=row[1],
+                                path=row[2],
+                                line=row[3],
+                                end_line=row[4],
+                                language=row[5],
+                                parent=row[6],
+                            )
+                            for row in contains_rows
+                        ]
+                    )
+
                 return results
             finally:
                 conn.close()

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from xhx_agent.evidence.report import write_report
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
-from xhx_agent.repo_intel.scanner import scan_project, ProjectScan
+from xhx_agent.repo_intel.scanner import ProjectScan, scan_project
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import EventCallback, emit_event
-from xhx_agent.runtime.profiles import get_profile, ModelProfile
+from xhx_agent.runtime.profiles import ModelProfile, get_profile
 from xhx_agent.safety.checkpoint import Checkpoint, checkpoint_path, restore_plan_path
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
@@ -24,6 +23,7 @@ from xhx_agent.verification.router import infer_verification
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RuntimeApp
 
+from xhx_agent.runtime.utils import cancel_requested, new_run_id
 from xhx_agent.safety.policy import PolicyDecision
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
@@ -83,9 +83,6 @@ class ManualRepairResult(BaseModel):
     summary_path: str | None = None
     restore_plan_path: str | None = None
     risk_summary: list[str]
-
-
-from xhx_agent.runtime.utils import cancel_requested
 
 
 def _manual_repair_attempt_limit(max_attempts: int) -> int:
@@ -222,7 +219,7 @@ class VerificationLoop:
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> ManualVerificationResult:
-        run_id = f"verify-{int(time.time())}"
+        run_id = new_run_id("verify")
         normalized_changed_files = sorted(set(changed_files))
         evidence = EvidenceStore(self.workspace, run_id)
         kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
@@ -336,7 +333,7 @@ class VerificationLoop:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
         attempt_limit = _manual_repair_attempt_limit(max_attempts)
-        run_id = f"repair-{int(time.time())}"
+        run_id = new_run_id("repair")
         normalized_changed_files = sorted(set(changed_files))
         evidence = EvidenceStore(self.workspace, run_id)
         kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)

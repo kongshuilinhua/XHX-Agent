@@ -28,6 +28,7 @@ from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.runtime.git_ops import DiffSummary, GitOps
 from xhx_agent.runtime.paths import ensure_xhx_dirs
 from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
+from xhx_agent.runtime.utils import cancel_requested, new_run_id
 from xhx_agent.runtime.verify_loop import (
     ManualRepairResult,
     ManualVerificationResult,
@@ -47,6 +48,15 @@ from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
+
+# Surfaced when a run executes directly in the user's workspace because git worktree
+# isolation was unavailable (not a git repo, or worktree creation failed). In that mode a
+# failed run leaves its file changes in place; there is no automatic baseline rollback.
+_IN_PLACE_WARNING = (
+    "No git worktree isolation: changes were applied directly to the workspace and are NOT "
+    "automatically rolled back on failure. Review the diff manually, or run inside a git "
+    "repository for isolated execution."
+)
 
 
 class InitResult(BaseModel):
@@ -89,9 +99,6 @@ ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
 
-from xhx_agent.runtime.utils import cancel_requested
-
-
 class RuntimeApp:
     def __init__(self, workspace: Path | None = None, tool_registry: ToolRegistry | None = None) -> None:
         self.workspace = (workspace or Path.cwd()).resolve()
@@ -125,7 +132,7 @@ class RuntimeApp:
         metrics_tracker = {"tokens": 0}
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
-        run_id = f"run-{int(time.time())}"
+        run_id = new_run_id("run")
 
         original_workspace = self.workspace.resolve()
         with WorktreeContext(original_workspace, run_id) as wt_ctx:
@@ -136,6 +143,14 @@ class RuntimeApp:
                 kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
                 emit_event(event_callback, "run_start", "Run started.", run_id=run_id, task=task, profile=profile.name)
                 evidence.write_trace("run_start", {"task": task, "profile": profile.name})
+                if not wt_ctx.is_active:
+                    evidence.write_trace("isolation_degraded", {"reason": "no_git_worktree"})
+                    emit_event(
+                        event_callback,
+                        "isolation_degraded",
+                        "Running in place without git worktree isolation; failed changes are not auto-reverted.",
+                        run_id=run_id,
+                    )
                 scan = scan_project(self.workspace)
                 emit_event(
                     event_callback,
@@ -233,6 +248,8 @@ class RuntimeApp:
                     res.mode = "dag-execute"
                     if res.status == "success":
                         wt_ctx.sync_to_workspace(res.changed_files)
+                    elif not wt_ctx.is_active and res.changed_files:
+                        res.risk_summary.append(_IN_PLACE_WARNING)
                     return res
 
                 # Linear Edit Mode
@@ -312,6 +329,8 @@ class RuntimeApp:
 
                 if status == "success":
                     wt_ctx.sync_to_workspace(changed_files)
+                elif not wt_ctx.is_active and changed_files:
+                    risks.append(_IN_PLACE_WARNING)
 
                 with contextlib.suppress(Exception):
                     hooks_manager.trigger(
@@ -548,7 +567,7 @@ class RuntimeApp:
     def preview_plan(self, task: str, profile_name: str | None = None) -> PlanPreview:
         config = load_config(self.workspace)
         profile = get_profile(self.workspace, profile_name or config.default_profile)
-        run_id = f"dry-run-{int(time.time())}"
+        run_id = new_run_id("dry-run")
         evidence = EvidenceStore(self.workspace, run_id)
         evidence.write_trace("run_start", {"task": task, "profile": profile.name, "dry_run": True})
         scan = scan_project(self.workspace)
