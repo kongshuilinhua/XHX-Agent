@@ -52,9 +52,7 @@ def list_sessions(workspace: Path) -> list[SessionEntry]:
     if not path.exists():
         return []
     return [
-        SessionEntry.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        SessionEntry.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
