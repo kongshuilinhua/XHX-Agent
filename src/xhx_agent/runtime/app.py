@@ -750,6 +750,7 @@ class RuntimeApp:
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
         metrics_tracker: dict[str, int] | None = None,
+        stop_on_first_change: bool = True,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
@@ -885,7 +886,7 @@ class RuntimeApp:
                         "tool_error", {"turn": turn, "tool": step.tool, "error": str(exc), "fatal": True}
                     )
                     return "failed", turns_completed, recent_error
-            if _should_stop_after_turn(profile, changed_files, plan.steps):
+            if _should_stop_after_turn(profile, changed_files, plan.steps, stop_on_first_change):
                 return status, turns_completed, recent_error
         message = f"Model did not finish within {turn_limit} turn(s)."
         risks.append(message)
@@ -897,9 +898,11 @@ def _max_model_turns(profile: ModelProfile) -> int:
     return 2 if profile.provider == "mock" else 4
 
 
-def _should_stop_after_turn(profile: ModelProfile, changed_files: list[str], steps: Sequence[object]) -> bool:
+def _should_stop_after_turn(
+    profile: ModelProfile, changed_files: list[str], steps: Sequence[object], stop_on_first_change: bool = True
+) -> bool:
     if profile.provider == "mock":
         return True
-    if changed_files:
+    if stop_on_first_change and changed_files:
         return True
     return not steps

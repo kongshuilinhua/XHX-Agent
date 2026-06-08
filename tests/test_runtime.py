@@ -876,3 +876,18 @@ def test_runtime_diff_changed_files_truncates_large_diff(tmp_path: Path) -> None
     assert len(result.diff_text) == 80
     assert result.truncated is True
     assert any("truncated" in risk for risk in result.risk_summary)
+
+
+def test_should_stop_after_turn_respects_autonomous_flag() -> None:
+    from xhx_agent.runtime.app import _should_stop_after_turn
+
+    real = ModelProfile(provider="openai-compatible")
+    # default (stop_on_first_change=True): a change ends the turn loop
+    assert _should_stop_after_turn(real, ["a.py"], [object()]) is True
+    # autonomous (stop_on_first_change=False): keep going while the model still has steps
+    assert _should_stop_after_turn(real, ["a.py"], [object()], stop_on_first_change=False) is False
+    # no steps means the model reported done -> always stop
+    assert _should_stop_after_turn(real, ["a.py"], [], stop_on_first_change=False) is True
+    # mock profile always stops after one turn
+    mock = ModelProfile(provider="mock")
+    assert _should_stop_after_turn(mock, [], [object()], stop_on_first_change=False) is True
