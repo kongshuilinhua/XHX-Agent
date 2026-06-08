@@ -17,15 +17,13 @@ from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
-from xhx_agent.orchestrators.base import OrchestratorContext
-from xhx_agent.orchestrators.linear import LinearOrchestrator
+from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext
+from xhx_agent.orchestrators.registry import execution_mode_to_key, select_orchestrator
 from xhx_agent.planner.classifier import ModeClassifier
-from xhx_agent.planner.modes import ExecutionMode
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
-from xhx_agent.runtime.dag_runner import DAGRunner
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.runtime.git_ops import DiffSummary, GitOps
 from xhx_agent.runtime.paths import ensure_xhx_dirs
@@ -50,15 +48,6 @@ from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
-
-# Surfaced when a run executes directly in the user's workspace because git worktree
-# isolation was unavailable (not a git repo, or worktree creation failed). In that mode a
-# failed run leaves its file changes in place; there is no automatic baseline rollback.
-_IN_PLACE_WARNING = (
-    "No git worktree isolation: changes were applied directly to the workspace and are NOT "
-    "automatically rolled back on failure. Review the diff manually, or run inside a git "
-    "repository for isolated execution."
-)
 
 
 class InitResult(BaseModel):
@@ -129,6 +118,7 @@ class RuntimeApp:
         auto_repair: bool = False,
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
+        mode: str | None = None,
     ) -> RunResult:
         start_time = time.time()
         metrics_tracker = {"tokens": 0}
@@ -220,30 +210,7 @@ class RuntimeApp:
                         mode="direct",
                     )
 
-                mode = ModeClassifier().classify(task, scan)
-
-                if mode == ExecutionMode.DAG_EXECUTE:
-                    runner = DAGRunner(self)
-                    res = runner.run_dag(
-                        task=task,
-                        run_id=run_id,
-                        evidence=evidence,
-                        kernel=kernel,
-                        tool_context=tool_context,
-                        assume_yes=assume_yes,
-                        confirm_callback=confirm_callback,
-                        event_callback=event_callback,
-                        cancel_check=cancel_check,
-                        start_time=start_time,
-                        metrics_tracker=metrics_tracker,
-                    )
-                    res.mode = "dag-execute"
-                    if res.status == "success":
-                        wt_ctx.sync_to_workspace(res.changed_files)
-                    elif not wt_ctx.is_active and res.changed_files:
-                        res.risk_summary.append(_IN_PLACE_WARNING)
-                    return res
-
+                execution_mode = ModeClassifier().classify(task, scan)
                 ctx = OrchestratorContext(
                     app=self,
                     task=task,
@@ -257,7 +224,7 @@ class RuntimeApp:
                     tool_context=tool_context,
                     start_time=start_time,
                     isolated=wt_ctx.is_active,
-                    mode=mode.value,
+                    mode=mode or execution_mode.value,
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
                     auto_repair=auto_repair,
@@ -265,7 +232,8 @@ class RuntimeApp:
                     event_callback=event_callback,
                     metrics_tracker=metrics_tracker,
                 )
-                result = LinearOrchestrator().run(ctx)
+                orchestrator = select_orchestrator(mode or execution_mode_to_key(execution_mode))
+                result = orchestrator.run(ctx)
                 if result.status == "success":
                     wt_ctx.sync_to_workspace(result.changed_files)
                 return result
@@ -366,7 +334,7 @@ class RuntimeApp:
         ) = self._execute_verification_and_repair_loop(loop_ctx)
 
         if status != "success" and not ctx.isolated and changed_files:
-            risks.append(_IN_PLACE_WARNING)
+            risks.append(IN_PLACE_WARNING)
 
         with contextlib.suppress(Exception):
             hooks_manager.trigger(

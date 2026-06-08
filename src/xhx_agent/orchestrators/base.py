@@ -20,6 +20,15 @@ if TYPE_CHECKING:
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
+# Surfaced when a run executes directly in the user's workspace because git worktree
+# isolation was unavailable (not a git repo, or worktree creation failed). In that mode a
+# failed run leaves its file changes in place; there is no automatic baseline rollback.
+IN_PLACE_WARNING = (
+    "No git worktree isolation: changes were applied directly to the workspace and are NOT "
+    "automatically rolled back on failure. Review the diff manually, or run inside a git "
+    "repository for isolated execution."
+)
+
 
 @dataclass
 class OrchestratorContext:

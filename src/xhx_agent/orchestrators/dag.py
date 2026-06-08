@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from xhx_agent.orchestrators.base import OrchestratorContext
+from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext
 from xhx_agent.runtime.dag_runner import DAGRunner
 
 if TYPE_CHECKING:
@@ -19,8 +19,7 @@ class DagOrchestrator:
     name = "dag"
 
     def run(self, ctx: OrchestratorContext) -> RunResult:
-        runner = DAGRunner(ctx.app)
-        return runner.run_dag(
+        result = DAGRunner(ctx.app).run_dag(
             task=ctx.task,
             run_id=ctx.run_id,
             evidence=ctx.evidence,
@@ -33,3 +32,7 @@ class DagOrchestrator:
             start_time=ctx.start_time,
             metrics_tracker=ctx.metrics_tracker,
         )
+        result.mode = ctx.mode
+        if result.status != "success" and not ctx.isolated and result.changed_files:
+            result.risk_summary.append(IN_PLACE_WARNING)
+        return result
