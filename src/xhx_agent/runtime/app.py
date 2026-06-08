@@ -17,13 +17,13 @@ from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
+from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext
+from xhx_agent.orchestrators.registry import execution_mode_to_key, select_orchestrator
 from xhx_agent.planner.classifier import ModeClassifier
-from xhx_agent.planner.modes import ExecutionMode
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
 from xhx_agent.runtime.config import load_config, write_default_config
-from xhx_agent.runtime.dag_runner import DAGRunner
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.runtime.git_ops import DiffSummary, GitOps
 from xhx_agent.runtime.paths import ensure_xhx_dirs
@@ -48,15 +48,6 @@ from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
-
-# Surfaced when a run executes directly in the user's workspace because git worktree
-# isolation was unavailable (not a git repo, or worktree creation failed). In that mode a
-# failed run leaves its file changes in place; there is no automatic baseline rollback.
-_IN_PLACE_WARNING = (
-    "No git worktree isolation: changes were applied directly to the workspace and are NOT "
-    "automatically rolled back on failure. Review the diff manually, or run inside a git "
-    "repository for isolated execution."
-)
 
 
 class InitResult(BaseModel):
@@ -127,6 +118,7 @@ class RuntimeApp:
         auto_repair: bool = False,
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
+        mode: str | None = None,
     ) -> RunResult:
         start_time = time.time()
         metrics_tracker = {"tokens": 0}
@@ -159,23 +151,13 @@ class RuntimeApp:
                     detected_languages=scan.detected_languages,
                     file_count=scan.file_count,
                 )
-                changed_files: list[str] = []
-                commands_run: list[str] = []
-                verification_results: list[TerminalResult] = []
-                checkpoint: Checkpoint | None = None
-                restore_plan_created = False
-                repair_decision: RepairDecision | None = None
                 repair_attempts = 0
                 risks: list[str] = []
-                status = "success"
                 turns_completed = 0
                 plan_summaries: list[str] = [
                     "Load project configuration.",
                     f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
                 ]
-                tool_summaries: list[str] = []
-                evidence_entries: list[EvidenceEntry] = []
-                recent_error: str | None = None
                 tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
                 if cancel_requested(cancel_check):
@@ -228,178 +210,198 @@ class RuntimeApp:
                         mode="direct",
                     )
 
-                mode = ModeClassifier().classify(task, scan)
-
-                if mode == ExecutionMode.DAG_EXECUTE:
-                    runner = DAGRunner(self)
-                    res = runner.run_dag(
-                        task=task,
-                        run_id=run_id,
-                        evidence=evidence,
-                        kernel=kernel,
-                        tool_context=tool_context,
-                        assume_yes=assume_yes,
-                        confirm_callback=confirm_callback,
-                        event_callback=event_callback,
-                        cancel_check=cancel_check,
-                        start_time=start_time,
-                        metrics_tracker=metrics_tracker,
-                    )
-                    res.mode = "dag-execute"
-                    if res.status == "success":
-                        wt_ctx.sync_to_workspace(res.changed_files)
-                    elif not wt_ctx.is_active and res.changed_files:
-                        res.risk_summary.append(_IN_PLACE_WARNING)
-                    return res
-
-                # Linear Edit Mode
-                status, turns_completed, recent_error = self._run_model_tool_loop(
-                    task=task,
-                    profile=profile,
-                    scan=scan,
-                    evidence=evidence,
-                    kernel=kernel,
-                    tool_context=tool_context,
-                    changed_files=changed_files,
-                    tool_summaries=tool_summaries,
-                    evidence_entries=evidence_entries,
-                    plan_summaries=plan_summaries,
-                    risks=risks,
-                    recent_error=recent_error,
-                    starting_turn=1,
-                    event_callback=event_callback,
-                    cancel_check=cancel_check,
-                    metrics_tracker=metrics_tracker,
-                )
-                if changed_files and status not in {"failed", "cancelled"}:
-                    _refresh_repo_intel_index(self.workspace, evidence, event_callback, risks)
-
-                verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
-                commands = [item.command for item in verification_plan.commands] if verification_plan else []
-                verification_status = (
-                    "cancelled"
-                    if status == "cancelled"
-                    else "not_executed"
-                    if status == "failed"
-                    else (verification_plan.skip_reason or "not_executed")
-                    if verification_plan
-                    else "skipped_no_changes"
-                )
-                if status not in {"failed", "cancelled"} and not changed_files:
-                    verification_status = "skipped_no_changes"
-                    evidence.write_trace("verification_skipped", {"reason": "No changed files."})
-
-                loop_ctx = VerificationLoopContext(
+                execution_mode = ModeClassifier().classify(task, scan)
+                ctx = OrchestratorContext(
+                    app=self,
                     task=task,
                     run_id=run_id,
+                    workspace=self.workspace,
+                    original_workspace=original_workspace,
                     profile=profile,
                     scan=scan,
                     evidence=evidence,
                     kernel=kernel,
                     tool_context=tool_context,
-                    metrics_tracker=metrics_tracker,
+                    start_time=start_time,
+                    isolated=wt_ctx.is_active,
+                    mode=mode or execution_mode.value,
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
                     auto_repair=auto_repair,
                     cancel_check=cancel_check,
                     event_callback=event_callback,
-                    status=status,
-                    verification_status=verification_status,
-                    changed_files=changed_files,
-                    commands_run=commands_run,
-                    verification_results=verification_results,
-                    repair_attempts=repair_attempts,
-                    turns_completed=turns_completed,
-                    recent_error=recent_error,
-                    tool_summaries=tool_summaries,
-                    evidence_entries=evidence_entries,
-                    plan_summaries=plan_summaries,
-                    risks=risks,
+                    metrics_tracker=metrics_tracker,
                 )
-                (
-                    status,
-                    verification_status,
-                    repair_attempts,
-                    turns_completed,
-                    recent_error,
-                    checkpoint,
-                    repair_decision,
-                    restore_plan_created,
-                ) = self._execute_verification_and_repair_loop(loop_ctx)
-
-                if status == "success":
-                    wt_ctx.sync_to_workspace(changed_files)
-                elif not wt_ctx.is_active and changed_files:
-                    risks.append(_IN_PLACE_WARNING)
-
-                with contextlib.suppress(Exception):
-                    hooks_manager.trigger(
-                        "before_summary",
-                        workspace=self.workspace,
-                        run_id=run_id,
-                        task=task,
-                        status=status,
-                        changed_files=changed_files,
-                    )
-
-                summary = write_report(
-                    workspace=original_workspace,
-                    run_id=run_id,
-                    task=task,
-                    plan=plan_summaries + ["Write run summary."],
-                    changed_files=sorted(set(changed_files)),
-                    commands=commands_run or commands,
-                    verification=verification_status,
-                    risks=risks,
-                    verification_results=verification_results,
-                    checkpoint_path=str(checkpoint_path_value(original_workspace, run_id)) if checkpoint else None,
-                    restore_plan_path=str(restore_plan_path_value(original_workspace, run_id))
-                    if restore_plan_created
-                    else None,
-                    repair=repair_decision,
-                    repair_attempts=repair_attempts,
-                )
-                evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-                emit_event(
-                    event_callback,
-                    "run_end",
-                    "Run finished.",
-                    run_id=run_id,
-                    status=status,
-                    verification=verification_status,
-                    changed_files=sorted(set(changed_files)),
-                    summary_path=str(summary.relative_to(original_workspace)),
-                )
-                metrics = RunMetrics(
-                    duration_seconds=round(time.time() - start_time, 2),
-                    turns=turns_completed,
-                    tokens_estimate=metrics_tracker["tokens"],
-                    files_changed_count=len(changed_files),
-                    commands_run_count=len(commands_run or commands),
-                    repair_attempts=repair_attempts,
-                    success=(status == "success"),
-                )
-                return RunResult(
-                    run_id=run_id,
-                    status=status,
-                    turns=turns_completed,
-                    changed_files=sorted(set(changed_files)),
-                    commands=commands_run or commands,
-                    verification=verification_status,
-                    verification_results=verification_results,
-                    checkpoint_path=str(checkpoint_path_value(original_workspace, run_id)) if checkpoint else None,
-                    restore_plan_path=str(restore_plan_path_value(original_workspace, run_id))
-                    if restore_plan_created
-                    else None,
-                    repair=repair_decision,
-                    repair_attempts=repair_attempts,
-                    summary_path=str(summary.relative_to(original_workspace)),
-                    risk_summary=risks,
-                    metrics=metrics,
-                    mode=mode.value,
-                )
+                orchestrator = select_orchestrator(mode or execution_mode_to_key(execution_mode))
+                result = orchestrator.run(ctx)
+                if result.status == "success":
+                    wt_ctx.sync_to_workspace(result.changed_files)
+                return result
             finally:
                 self.workspace = original_workspace
+
+    def _run_linear(self, ctx: OrchestratorContext) -> RunResult:
+        changed_files: list[str] = []
+        commands_run: list[str] = []
+        verification_results: list[TerminalResult] = []
+        checkpoint: Checkpoint | None = None
+        restore_plan_created = False
+        repair_decision: RepairDecision | None = None
+        repair_attempts = 0
+        risks: list[str] = []
+        status = "success"
+        turns_completed = 0
+        plan_summaries: list[str] = [
+            "Load project configuration.",
+            f"Scan project languages: {', '.join(ctx.scan.detected_languages) or 'unknown'}.",
+        ]
+        tool_summaries: list[str] = []
+        evidence_entries: list[EvidenceEntry] = []
+        recent_error: str | None = None
+
+        status, turns_completed, recent_error = self._run_model_tool_loop(
+            task=ctx.task,
+            profile=ctx.profile,
+            scan=ctx.scan,
+            evidence=ctx.evidence,
+            kernel=ctx.kernel,
+            tool_context=ctx.tool_context,
+            changed_files=changed_files,
+            tool_summaries=tool_summaries,
+            evidence_entries=evidence_entries,
+            plan_summaries=plan_summaries,
+            risks=risks,
+            recent_error=recent_error,
+            starting_turn=1,
+            event_callback=ctx.event_callback,
+            cancel_check=ctx.cancel_check,
+            metrics_tracker=ctx.metrics_tracker,
+        )
+        if changed_files and status not in {"failed", "cancelled"}:
+            _refresh_repo_intel_index(self.workspace, ctx.evidence, ctx.event_callback, risks)
+
+        verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
+        commands = [item.command for item in verification_plan.commands] if verification_plan else []
+        verification_status = (
+            "cancelled"
+            if status == "cancelled"
+            else "not_executed"
+            if status == "failed"
+            else (verification_plan.skip_reason or "not_executed")
+            if verification_plan
+            else "skipped_no_changes"
+        )
+        if status not in {"failed", "cancelled"} and not changed_files:
+            verification_status = "skipped_no_changes"
+            ctx.evidence.write_trace("verification_skipped", {"reason": "No changed files."})
+
+        loop_ctx = VerificationLoopContext(
+            task=ctx.task,
+            run_id=ctx.run_id,
+            profile=ctx.profile,
+            scan=ctx.scan,
+            evidence=ctx.evidence,
+            kernel=ctx.kernel,
+            tool_context=ctx.tool_context,
+            metrics_tracker=ctx.metrics_tracker,
+            assume_yes=ctx.assume_yes,
+            confirm_callback=ctx.confirm_callback,
+            auto_repair=ctx.auto_repair,
+            cancel_check=ctx.cancel_check,
+            event_callback=ctx.event_callback,
+            status=status,
+            verification_status=verification_status,
+            changed_files=changed_files,
+            commands_run=commands_run,
+            verification_results=verification_results,
+            repair_attempts=repair_attempts,
+            turns_completed=turns_completed,
+            recent_error=recent_error,
+            tool_summaries=tool_summaries,
+            evidence_entries=evidence_entries,
+            plan_summaries=plan_summaries,
+            risks=risks,
+        )
+        (
+            status,
+            verification_status,
+            repair_attempts,
+            turns_completed,
+            recent_error,
+            checkpoint,
+            repair_decision,
+            restore_plan_created,
+        ) = self._execute_verification_and_repair_loop(loop_ctx)
+
+        if status != "success" and not ctx.isolated and changed_files:
+            risks.append(IN_PLACE_WARNING)
+
+        with contextlib.suppress(Exception):
+            hooks_manager.trigger(
+                "before_summary",
+                workspace=self.workspace,
+                run_id=ctx.run_id,
+                task=ctx.task,
+                status=status,
+                changed_files=changed_files,
+            )
+
+        summary = write_report(
+            workspace=ctx.original_workspace,
+            run_id=ctx.run_id,
+            task=ctx.task,
+            plan=plan_summaries + ["Write run summary."],
+            changed_files=sorted(set(changed_files)),
+            commands=commands_run or commands,
+            verification=verification_status,
+            risks=risks,
+            verification_results=verification_results,
+            checkpoint_path=str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None,
+            restore_plan_path=str(restore_plan_path_value(ctx.original_workspace, ctx.run_id))
+            if restore_plan_created
+            else None,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
+        )
+        ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        emit_event(
+            ctx.event_callback,
+            "run_end",
+            "Run finished.",
+            run_id=ctx.run_id,
+            status=status,
+            verification=verification_status,
+            changed_files=sorted(set(changed_files)),
+            summary_path=str(summary.relative_to(ctx.original_workspace)),
+        )
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - ctx.start_time, 2),
+            turns=turns_completed,
+            tokens_estimate=ctx.metrics_tracker["tokens"],
+            files_changed_count=len(changed_files),
+            commands_run_count=len(commands_run or commands),
+            repair_attempts=repair_attempts,
+            success=(status == "success"),
+        )
+        return RunResult(
+            run_id=ctx.run_id,
+            status=status,
+            turns=turns_completed,
+            changed_files=sorted(set(changed_files)),
+            commands=commands_run or commands,
+            verification=verification_status,
+            verification_results=verification_results,
+            checkpoint_path=str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None,
+            restore_plan_path=str(restore_plan_path_value(ctx.original_workspace, ctx.run_id))
+            if restore_plan_created
+            else None,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
+            summary_path=str(summary.relative_to(ctx.original_workspace)),
+            risk_summary=risks,
+            metrics=metrics,
+            mode=ctx.mode,
+        )
 
     def _execute_verification_and_repair_loop(
         self,
