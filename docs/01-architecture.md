@@ -112,7 +112,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 
 `run_task(mode=...)` 显式选择范式（`loop` / `graph`），未指定时由 `ModeClassifier` 兜底，`select_orchestrator` 统一分派；`OrchestratorContext` 携带共享底座句柄与运行参数。
 
-> **实现现状（M1，2026-06-08）**：抽象层、registry 选择、`run_task(mode=...)` API、`linear` / `dag` 两个薄实现已就位，行为与既有路径等价（零回归）。`loop` 的深化（M2）、`graph` 的 LangGraph 实现（M3）、`--mode` CLI/TUI 接入（M4）见 `docs/implementation/20-implementation-baseline.md`。
+> **实现现状（M2，2026-06-08）**：抽象层、registry 选择、`run_task(mode=...)` API 已就位。`loop` 已实现为**自主统一循环**——模型持续多轮 read→edit→verify，直到自报完成或达 `max_loop_turns`（默认 20），而非改一个文件就停；自动分类兜底仍走 `linear`（改动后即停，向后兼容）。路线：`graph` 的 LangGraph 实现（M3）、`--mode` CLI/TUI 接入（M4），见 `docs/implementation/20-implementation-baseline.md`。
 
 ---
 

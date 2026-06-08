@@ -531,10 +531,10 @@ v0.9：Evaluation / Headless / Replay。
 
 - 行为零回归：M1 仅做抽象，`loop` ≈ 现有 linear、`graph` ≈ 现有 DAG，现有测试全绿（223 passed）。
 
-当前实现状态（M1，2026-06-08）：
+当前实现状态（更新至 M2，2026-06-08）：
 
-- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 两个薄实现（复用现有底座）。
-- 部分实现：`loop` 目前等价于现有 linear 循环（尚未深化）；`graph` 目前等价于现有 DAG（尚未接 LangGraph）。
-- 未实现：`loop` 深化（放宽自主轮次、工具确认贯通、上下文压缩、会话恢复——M2）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
+- 已实现：`Orchestrator` 抽象层、`registry` 选择器、`run_task(mode=...)` API、`linear` / `dag` 薄实现；**`loop` 自主统一循环**——`config.max_loop_turns`（默认 20）+ `_run_model_tool_loop` 的 `stop_on_first_change` 自主停止策略 + 独立 `LoopOrchestrator(autonomous=True)`。显式 `mode="loop"` 走自主多轮（改→验证→继续，直到模型自报完成或达上限）；自动分类兜底仍走 `LinearOrchestrator`（改动后即停，零回归）。测试 226 passed。
+- 部分实现：`graph` 目前等价于现有 DAG（尚未接 LangGraph）。
+- 未实现：`loop` 的进阶能力（上下文自动压缩 compaction、会话 `--continue/--resume` 恢复、按需 subagent——均为后续独立里程碑）；`graph` 的 LangGraph 实现（M3）；`--mode` CLI / TUI 接入（M4）。
 
-路线：M2 LoopOrchestrator 做深（主力）→ M3 GraphOrchestrator（LangGraph，轻量对比）→ M4 集成与文档对比。
+路线：M2 LoopOrchestrator 做深（**已完成**）→ M3 GraphOrchestrator（LangGraph，轻量对比）→ M4 集成与文档对比。
