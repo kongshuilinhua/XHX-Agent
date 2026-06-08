@@ -82,3 +82,23 @@ def test_repo_index_refresh_json_reports_current_index() -> None:
     assert result.exit_code == 0
     assert '"status": "current"' in result.output
     assert '"symbol_count": 1' in result.output
+
+
+def test_run_continue_records_and_resumes_session() -> None:
+    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.session import session_history_path
+
+    with runner.isolated_filesystem() as workspace:
+        root = Path(workspace)
+        RuntimeApp(root).init_project()
+
+        first = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock"])
+        assert first.exit_code == 0, first.output
+        assert session_history_path(root).exists()
+
+        second = runner.invoke(app, ["run", "keep going", "--profile", "mock", "--continue"])
+        assert second.exit_code == 0, second.output
+        assert "Continuing from run" in strip_ansi(second.output)
+
+        lines = [line for line in session_history_path(root).read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(lines) == 2

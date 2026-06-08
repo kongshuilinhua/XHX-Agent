@@ -11,6 +11,7 @@ from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_int
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
+from xhx_agent.runtime.session import format_follow_up, load_latest_session, record_session
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
 
@@ -75,6 +76,10 @@ def run(
     auto_repair: Annotated[
         bool, typer.Option("--auto-repair", help="Allow up to two repair attempts after failed verification.")
     ] = False,
+    cont: Annotated[
+        bool,
+        typer.Option("--continue", help="Resume from the most recent session, injecting its summary as context."),
+    ] = False,
 ) -> None:
     runtime = RuntimeApp()
     if dry_run:
@@ -97,9 +102,18 @@ def run(
     if json_output:
         console.print(runtime.run_task_json(task, profile, assume_yes=yes, auto_repair=auto_repair))
         return
+    effective_task = task
+    if cont:
+        previous = load_latest_session(runtime.workspace)
+        if previous is not None:
+            effective_task = format_follow_up(previous) + "\n\n" + task
+            console.print(f"Continuing from run {previous.run_id} ({previous.status}).")
+        else:
+            console.print("No previous session found; starting fresh.")
     result = runtime.run_task(
-        task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair
+        effective_task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair
     )
+    record_session(runtime.workspace, task, result)
     console.print(f"status: {result.status}")
     console.print(f"summary: {result.summary_path}")
     if result.commands:
