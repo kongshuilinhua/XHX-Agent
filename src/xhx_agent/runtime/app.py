@@ -279,6 +279,7 @@ class RuntimeApp:
             max_turns=load_config(self.workspace).max_loop_turns if ctx.autonomous else None,
             stop_on_first_change=not ctx.autonomous,
             history_summarizer=self._make_history_summarizer(ctx.profile) if ctx.autonomous else None,
+            concurrent_readonly=ctx.autonomous,
         )
         if changed_files and status not in {"failed", "cancelled"}:
             _refresh_repo_intel_index(self.workspace, ctx.evidence, ctx.event_callback, risks)
@@ -778,6 +779,7 @@ class RuntimeApp:
         metrics_tracker: dict[str, int] | None = None,
         stop_on_first_change: bool = True,
         history_summarizer: Callable[[list[str]], str] | None = None,
+        concurrent_readonly: bool = False,
     ) -> tuple[str, int, str | None]:
         status = "success"
         turns_completed = starting_turn - 1
@@ -850,7 +852,10 @@ class RuntimeApp:
             plan_summaries.append(f"Plan [turn {turn}]: {plan.summary}")
             if not plan.steps:
                 return status, turns_completed, recent_error
-            for step in plan.steps:
+            preexecuted = _maybe_concurrent_readonly(
+                kernel, tool_context, plan.steps, turn, concurrent_readonly, event_callback
+            )
+            for index, step in enumerate(plan.steps):
                 if cancel_requested(cancel_check):
                     message = f"Run cancelled by user before execution of tool: {step.tool}"
                     risks.append(message)
@@ -861,7 +866,10 @@ class RuntimeApp:
                     event_callback, "tool_start", f"Tool execution started: {step.tool}", turn=turn, tool=step.tool
                 )
                 try:
-                    result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
+                    if preexecuted is not None:
+                        result, trace, policy = preexecuted[index]
+                    else:
+                        result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback)
                     if result is None or trace is None:
                         recent_error = policy.reason
                         risks.append(recent_error)
@@ -920,6 +928,38 @@ class RuntimeApp:
         risks.append(message)
         evidence.write_trace("model_error", {"code": "max_turns_exceeded", "message": message})
         return "failed", turns_completed, message
+
+
+def _maybe_concurrent_readonly(
+    kernel: SafeExecutionKernel,
+    tool_context: ToolContext,
+    steps: Sequence[object],
+    turn: int,
+    enabled: bool,
+    event_callback: EventCallback | None,
+) -> list | None:
+    """Pre-execute a turn's steps concurrently when they are all read-only (subagent-style).
+
+    Only triggers in autonomous mode when every step is read-only (search / read_file)
+    and there are at least two. Read-only tools have no side effects and evidence writes
+    are locked, so concurrency is safe. Results are returned in step order; the serial
+    result-handling loop is unchanged, so behaviour for any non-read-only turn is identical.
+    """
+
+    readonly = {"search", "read_file"}
+    if not enabled or len(steps) < 2 or not all(getattr(step, "tool", None) in readonly for step in steps):
+        return None
+    import concurrent.futures
+
+    emit_event(
+        event_callback,
+        "subagent_concurrent",
+        f"Concurrently exploring {len(steps)} read-only steps.",
+        turn=turn,
+        step_count=len(steps),
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(steps), 8)) as executor:
+        return list(executor.map(lambda step: kernel.execute_tool(tool_context, step, turn, None), steps))
 
 
 def _max_model_turns(profile: ModelProfile) -> int:

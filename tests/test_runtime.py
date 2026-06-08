@@ -945,3 +945,49 @@ def test_loop_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
     assert result.turns == 3
     assert (tmp_path / "a.py").exists()
     assert (tmp_path / "b.py").exists()
+
+
+def test_loop_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("AAA\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("BBB\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+    plans = [
+        ModelPlan(
+            summary="read both files",
+            steps=[
+                ToolStep(tool="read_file", arguments={"path": "a.txt"}),
+                ToolStep(tool="read_file", arguments={"path": "b.txt"}),
+            ],
+        ),
+        ModelPlan(summary="done", status="done", steps=[]),
+    ]
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
+        return plans.pop(0)
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+    events = []
+
+    result = app.run_task("explore files", profile_name="real", mode="loop", event_callback=events.append)
+
+    assert result.status == "success"
+    assert any(event.type == "subagent_concurrent" for event in events)
+    read_results = [e for e in events if e.type == "tool_result" and e.payload.get("tool") == "read_file"]
+    assert len(read_results) == 2
