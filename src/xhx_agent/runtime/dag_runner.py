@@ -15,14 +15,12 @@ from xhx_agent.tools.terminal import TerminalResult
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RunResult, RuntimeApp
 
+from xhx_agent.runtime.utils import cancel_requested
 from xhx_agent.runtime.verify_loop import _refresh_repo_intel_index
 from xhx_agent.safety.policy import PolicyDecision
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
-
-
-from xhx_agent.runtime.utils import cancel_requested
 
 
 class DAGRunner:

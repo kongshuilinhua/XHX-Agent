@@ -67,14 +67,49 @@ def test_untrusted_shell_execution_denied() -> None:
     assert classify_command("netcat -lvp 4444") is RiskLevel.DENY
     assert classify_command("bash exploit.sh") is RiskLevel.DENY
     assert classify_command("sh exploit.sh") is RiskLevel.DENY
-    
-    # Test substring collision prevention (must NOT be denied)
+
+    # Test substring collision prevention (must NOT be denied): tokenization matches the
+    # executable exactly, so words that merely contain "sh"/"rm"/etc are unaffected.
     assert classify_command("git push origin main") is not RiskLevel.DENY
     assert classify_command("git stash pop") is not RiskLevel.DENY
     assert classify_command("show variables") is not RiskLevel.DENY
-    assert classify_command("fish ShellConfig") is not RiskLevel.DENY
+    assert classify_command("publish release notes") is not RiskLevel.DENY
 
     # Test proactive denial of chaining / shell operators outside whitelists
     assert classify_command("pytest && echo done") is RiskLevel.DENY
     assert classify_command("pytest | grep error") is RiskLevel.DENY
 
+
+def test_risk_classifier_blocks_known_bypasses() -> None:
+    # Flag reorderings / long forms of destructive deletes must not slip through to CONFIRM.
+    for command in (
+        "rm -rf /",
+        "rm -fr /",
+        "rm -r -f /",
+        "rm --recursive --force /",
+        "del /q /s C:/important",
+        "rd /s /q C:/important",
+    ):
+        assert classify_command(command) is RiskLevel.DENY, command
+
+    # Interpreters executing inline code are arbitrary code execution.
+    assert classify_command("python -c \"import shutil; shutil.rmtree('/')\"") is RiskLevel.DENY
+    assert classify_command("node -e \"require('fs').rmSync('/', {recursive:true})\"") is RiskLevel.DENY
+
+    # Interactive shells / privilege escalation as the command itself.
+    assert classify_command('powershell -c "Remove-Item -Recurse -Force C:/"') is RiskLevel.DENY
+    assert classify_command("sudo rm important") is RiskLevel.DENY
+
+    # Destructive moves and permission changes.
+    assert classify_command("mv ~/.ssh /tmp") is RiskLevel.DENY
+    assert classify_command("chmod 777 /etc/passwd") is RiskLevel.DENY
+
+    # Redirection / chaining / substitution / newline injection cannot smuggle commands.
+    assert classify_command("echo pwned > /etc/hosts") is RiskLevel.DENY
+    assert classify_command("pytest ; python -c 'x'") is RiskLevel.DENY
+    assert classify_command("pytest\nrm -rf /") is RiskLevel.DENY
+    assert classify_command("echo $(rm -rf /)") is RiskLevel.DENY
+
+    # Dangerous git operations beyond the literal reset --hard string.
+    assert classify_command("git push --force origin main") is RiskLevel.DENY
+    assert classify_command("git clean -fd") is RiskLevel.DENY

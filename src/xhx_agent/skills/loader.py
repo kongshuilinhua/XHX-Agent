@@ -117,4 +117,3 @@ class SkillLoader:
                 matched_skills.append(skill)
 
         return matched_skills
-

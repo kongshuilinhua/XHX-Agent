@@ -43,7 +43,10 @@ def decide_tool(tool_name: str) -> PolicyDecision:
         return PolicyDecision(
             decision="allow",
             risk=RiskLevel.CONFIRM,
-            reason=f"Dynamic MCP tool {tool_name} execution allowed under sandbox controls.",
+            reason=(
+                f"Dynamic tool {tool_name} allowed; it runs with the agent's own privileges "
+                "(no isolation sandbox), constrained only by the workspace boundary."
+            ),
         )
     return PolicyDecision(
         decision="deny",

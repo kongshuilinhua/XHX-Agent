@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,9 @@ class EvidenceStore:
         ensure_xhx_dirs(workspace)
         self.trace_path = xhx_dir(workspace) / "traces" / f"{run_id}.jsonl"
         self.evidence_path = xhx_dir(workspace) / "evidence" / f"{run_id}.jsonl"
+        # Trace/evidence writes happen concurrently during parallel DAG read nodes; serialize
+        # appends so interleaved writes cannot corrupt the JSONL audit logs.
+        self._append_lock = threading.Lock()
 
     def write_trace(self, entry_type: str, payload: dict[str, Any]) -> RawTraceEntry:
         entry = RawTraceEntry(type=entry_type, run_id=self.run_id, payload=payload)
@@ -94,8 +98,9 @@ class EvidenceStore:
         )
 
     def _append_jsonl(self, path: Path, data: dict[str, Any]) -> None:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, ensure_ascii=False) + "\n")
+        line = json.dumps(data, ensure_ascii=False) + "\n"
+        with self._append_lock, path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
 
     def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():

@@ -40,7 +40,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
                                    │               ▼
                                    │       [2-Turn Auto-Repair Loop] (自愈自修复)
                                    │               ├── 成功 ──> [测试通过]
-                                   │               └── 失败 ──> [Git 一键回滚还原]
+                                   │               └── 失败 ──> [git worktree 丢弃 / 就地还原计划]
                                    │
                                    ▼
                          [Evidence Runtime & Summarizer]
@@ -58,7 +58,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 每轮 LLM 调用前，该内核负责在严格的 Token 预算限制内选择高价值信息，编译为上下文包，以杜绝上下文爆炸与历史污染。
 - **动态优先级裁剪**：按照“用户目标 > 当前任务计划 > 项目规则 (`XHX.md`) > AST 符号关联代码上下文 > 最近失败点/测试堆栈 > Evidence Top-K 摘要 > 滑动历史压缩摘要”的优先级在 Token 满溢时进行自动截断。
 - **冷启动 Repo Map**：提取项目的轻量级物理地图，让模型在宏观上理解仓库目录。
-- 📖 深入源码分析请阅读：[01-Context Pack Compiler 源码深潜](file:///d:/pycharmprojects/XHX-Agent/docs/deep_dive/01-context-pack-compiler.md)
+- 📖 深入源码分析请阅读：[01-Context Pack Compiler 源码深潜](deep_dive/01-context-pack-compiler.md)
 
 ### 2. Evidence Runtime (证据追踪与审计内核)
 
@@ -66,7 +66,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 - **Raw Trace 记录**：完整保存智能体与宿主机环境交互的所有原始细节。
 - **Evidence Index**：自动生成每次工具调用和观察的高浓度摘要，并采用 Top-K 检索算法按需将少量相关证据送入模型上下文。
 - **TrailGraph 拓扑图**：维护决策、命令、文件变动与证据的有向依赖网络，在任务结束时，一键自动渲染为可审计的人类可读 Markdown 日志（Logbook）。
-- 📖 深入源码分析请阅读：[02-Evidence Runtime 源码深潜](file:///d:/pycharmprojects/XHX-Agent/docs/deep_dive/02-evidence-runtime.md)
+- 📖 深入源码分析请阅读：[02-Evidence Runtime 源码深潜](deep_dive/02-evidence-runtime.md)
 
 ### 3. Safe Execution Kernel (安全执行内核)
 
@@ -75,9 +75,9 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
   - `Safe`（只读操作，如读文件、静态搜索）：自动执行。
   - `Confirm`（具有副作用的指令，如 pytest、应用补丁）：进入命令交互，请求用户授权。
   - `Deny`（越权或极其危险的指令，如 rm -rf、系统级配置重置）：一律强制拦截。
-- **修改前 Checkpoint 机制**：在 coder 应用 Patch 写入文件系统之前，自动创建轻量级 Git Checkpoint 备份。
-- **自愈式一键还原**：若任务失败或用户中止，自动触发 Restore Plan 将工作区毫发无损地回滚至最初的受损前状态。
-- 📖 深入源码分析请阅读：[03-Safe Execution Kernel 源码深潜](file:///d:/pycharmprojects/XHX-Agent/docs/deep_dive/03-safe-execution-kernel.md)
+- **Worktree 隔离回滚**：在 git 仓库内运行时，编辑在隔离的 git worktree 中进行，仅在成功时同步回主工作区；任务失败或中止时直接丢弃该 worktree，从而实现到基线状态的回滚。
+- **就地执行的还原计划**：若目标不是 git 仓库（或 worktree 创建失败），改动将就地写入工作区；此时运行时会显式发出 `isolation_degraded` 告警，并生成只读的 Restore Plan 记录变更点以供人工恢复——**此路径下不执行自动回滚**。
+- 📖 深入源码分析请阅读：[03-Safe Execution Kernel 源码深潜](deep_dive/03-safe-execution-kernel.md)
 
 ### 4. Adaptive Planner & Parallel DAG (自适应规划与并行拓扑调度内核)
 
@@ -85,13 +85,15 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 - **意图识别器 (Intent Classifier)**：根据用户需求和任务复杂度，自适应选择执行模式：
   - `Direct`：简单问答，无需探索。
   - `Research Only`：仅收集分析信息，不执行代码修改。
-  - `DAG Execute`：复杂多节点依赖开发任务的默认路线。
+  - `DAG Execute`：复杂多节点依赖开发任务的路线。
+
+> **实现现状（v1.0）**：DAG 的节点生成目前是基于意图关键词的启发式基线（拓扑排序、环检测、读写隔离调度均为真实实现），尚未接入 LLM 对任意需求的自动拆解。开放式编辑任务建议走 `linear-edit` 模式，由模型工具循环逐步完成。
 - **Kahn 拓扑排序算法**：在编译期对 DAG 任务进行零入度排序与有向环检测，100% 杜绝多任务间的死锁；采用 `queue.sort()` 消除物理哈希种子带来的调度顺序随机性扰动，实现多平台上 100% 的调度可测性与可复现性。
 - **读写隔离混合并发调度模型**：
   - **多线程只读并发**：所有的只读节点（如读文件、静态搜索）打包提交至 `ThreadPoolExecutor` 并发执行（默认最大 8 线程），压榨极致吞吐。
   - **单线程写入串行**：写节点（如打 Patch、运行 terminal 验证）被严格退化为单线程同步串行，从底层杜绝了并发脏写（Dirty Writes）和文件版本冲突。
 - **2-Turn 自适应故障修复回路**：如果自动化验证失败，系统捕获堆栈并进入最大 2 次尝试的自动 Repair 循环，若 2 次均失败则优雅触发 Git 回滚保护退出。
-- 📖 深入源码分析请阅读：[04-DAG Planner 源码深潜](file:///d:/pycharmprojects/XHX-Agent/docs/deep_dive/04-dag-planner.md)
+- 📖 深入源码分析请阅读：[04-DAG Planner 源码深潜](deep_dive/04-dag-planner.md)
 
 ### 5. Verification Router (自动化测试与验证路由内核)
 
@@ -107,7 +109,7 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 - **双轨制索引架构**：使用扁平 JSON (`.xhx/repo/index.json`) 承载冷启动内存流，通过高性能本地 SQLite B-Tree 索引数据库 (`.xhx/repo/index.db`) 承载高频交叉关联联表查询（定义表、模块导入图表、全局交叉文本引用表、函数级调用有向图）。
 - **多语言 AST 符号提取**：Python 采用标准库 `ast` 进行深度优先作用域嵌套分析；JS/TS 采用分级降级机制，优先使用精密的 Tree-Sitter 语法提取（支持现代前端箭头函数与别名解析），在环境缺失时优雅降级为 Regex 正则符号提取，兼顾了极致精度与环境鲁棒性。
 - **启发式测试匹配与 BFS 逆向追溯**：根据变更文件，提供 `calc.py -> test_calc.py` 物理秒级匹配；若匹配不成功，则以变更源为起点在 SQLite 模块导入图上逆向执行最大 4 层深度的宽度优先搜索 (BFS) 拓扑遍历，直至触碰到测试文件边界，实现高精度的“靶向验证”。
-- 📖 深入源码分析请阅读：[05-Repo Intelligence 源码深潜](file:///d:/pycharmprojects/XHX-Agent/docs/deep_dive/05-repo-intelligence.md)
+- 📖 深入源码分析请阅读：[05-Repo Intelligence 源码深潜](deep_dive/05-repo-intelligence.md)
 
 ---
 

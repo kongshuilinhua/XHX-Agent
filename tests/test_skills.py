@@ -84,28 +84,21 @@ def test_skill_loader_progressive_disclosure(tmp_path: Path) -> None:
 
 def test_skill_loader_logging_warnings(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     import logging
+
     from xhx_agent.skills.loader import SkillLoader
-    
+
     # 1. Create a skill directory with corrupted SKILL.md containing invalid YAML
     skills_dir = tmp_path / ".xhx" / "skills" / "broken_skill"
     skills_dir.mkdir(parents=True)
-    
+
     md_file = skills_dir / "SKILL.md"
-    md_file.write_text(
-        "---\n"
-        "name: broken\n"
-        "triggers:\n"
-        "  - [unclosed bracket\n"
-        "---\n"
-        "Skill body\n",
-        encoding="utf-8"
-    )
-    
+    md_file.write_text("---\nname: broken\ntriggers:\n  - [unclosed bracket\n---\nSkill body\n", encoding="utf-8")
+
     # 2. Trigger skill loader and capture standard warnings
     loader = SkillLoader(tmp_path)
     with caplog.at_level(logging.WARNING):
         loader.load_available_skills()
-        
+
     assert any("Failed to parse YAML frontmatter" in record.message for record in caplog.records)
 
 
