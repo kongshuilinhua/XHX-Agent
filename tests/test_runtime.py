@@ -891,3 +891,57 @@ def test_should_stop_after_turn_respects_autonomous_flag() -> None:
     # mock profile always stops after one turn
     mock = ModelProfile(provider="mock")
     assert _should_stop_after_turn(mock, [], [object()], stop_on_first_change=False) is True
+
+
+def test_loop_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    profiles_path(tmp_path).write_text(
+        ProfilesFile(
+            profiles=[
+                ModelProfile(
+                    name="real",
+                    provider="openai-compatible",
+                    base_url="https://api.example.com/v1",
+                    api_key_env="XHX_TEST_API_KEY",
+                    model="demo-model",
+                    stream=False,
+                )
+            ]
+        ).model_dump_json(indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    app = RuntimeApp(tmp_path)
+    plans = [
+        ModelPlan(
+            summary="add a",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={"patch": "*** Begin Patch\n*** Add File: a.py\n+x = 1\n*** End Patch\n"},
+                )
+            ],
+        ),
+        ModelPlan(
+            summary="add b",
+            steps=[
+                ToolStep(
+                    tool="apply_patch",
+                    arguments={"patch": "*** Begin Patch\n*** Add File: b.py\n+y = 2\n*** End Patch\n"},
+                )
+            ],
+        ),
+        ModelPlan(summary="done", status="done", steps=[]),
+    ]
+
+    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
+        return plans.pop(0)
+
+    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+
+    # mode="loop" is autonomous: it must NOT stop after the first change.
+    result = app.run_task("build stuff", profile_name="real", mode="loop")
+
+    assert result.turns == 3
+    assert (tmp_path / "a.py").exists()
+    assert (tmp_path / "b.py").exists()

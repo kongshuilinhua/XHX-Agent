@@ -3,13 +3,14 @@ from __future__ import annotations
 from xhx_agent.orchestrators.base import Orchestrator
 from xhx_agent.orchestrators.dag import DagOrchestrator
 from xhx_agent.orchestrators.linear import LinearOrchestrator
+from xhx_agent.orchestrators.loop import LoopOrchestrator
 from xhx_agent.planner.modes import ExecutionMode
 
 DEFAULT_MODE = "loop"
 
 _ORCHESTRATORS: dict[str, type] = {
-    "loop": LinearOrchestrator,  # M2 deepens the unified loop; M1 == current linear behaviour
-    "linear": LinearOrchestrator,
+    "loop": LoopOrchestrator,  # autonomous unified loop (M2)
+    "linear": LinearOrchestrator,  # stop-on-first-change fallback used by auto-classification
     "dag": DagOrchestrator,
     "graph": DagOrchestrator,  # M3 replaces with a LangGraph-based GraphOrchestrator
 }
