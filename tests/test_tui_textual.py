@@ -512,6 +512,9 @@ def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp
 
     async def run_app() -> None:
         async with app.run_test() as pilot:
+            # Let the app finish its initial compose/mount before the background worker starts,
+            # so run_task can resolve "#conversation" instead of racing mount on a fast runner.
+            await pilot.pause()
             assert app.handle_text_input("fix failing test", use_worker=True)
             for _ in range(200):
                 if app.pending_confirmation is not None:
