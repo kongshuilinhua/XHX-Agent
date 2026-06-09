@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from xhx_agent.safety.checkpoint import create_checkpoint, create_restore_plan
-from xhx_agent.safety.policy import decide_tool
+from xhx_agent.safety.policy import decide_terminal, decide_tool
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, decide_repair
 from xhx_agent.safety.risk import RiskLevel, classify_command
 
@@ -17,6 +17,30 @@ def test_tool_policy_decisions() -> None:
     assert decide_tool("search").risk is RiskLevel.SAFE
     assert decide_tool("apply_patch").risk is RiskLevel.CONFIRM
     assert decide_tool("terminal").decision == "deny"
+
+    # Dynamic MCP / custom tools are allowed but flagged CONFIRM: they run with the agent's
+    # own privileges (no isolation sandbox), so they are never auto-classified as SAFE.
+    mcp_decision = decide_tool("mcp_fetch_url")
+    assert mcp_decision.decision == "allow"
+    assert mcp_decision.risk is RiskLevel.CONFIRM
+    assert decide_tool("custom_formatter").risk is RiskLevel.CONFIRM
+
+
+def test_terminal_policy_decisions() -> None:
+    # Denied commands are rejected outright, with no confirmation escape hatch.
+    denied = decide_terminal("rm -rf /")
+    assert denied.decision == "deny"
+    assert denied.risk is RiskLevel.DENY
+    assert denied.requires_user is False
+
+    # Read-only safe commands are allowed without prompting.
+    assert decide_terminal("git status").decision == "allow"
+
+    # Confirm-tier commands prompt by default, but pre-approval (assume_yes) lets them through.
+    prompted = decide_terminal("pytest")
+    assert prompted.decision == "confirm"
+    assert prompted.requires_user is True
+    assert decide_terminal("pytest", assume_yes=True).decision == "allow"
 
 
 def test_checkpoint_records_changed_file_hash(tmp_path: Path) -> None:
@@ -113,3 +137,31 @@ def test_risk_classifier_blocks_known_bypasses() -> None:
     # Dangerous git operations beyond the literal reset --hard string.
     assert classify_command("git push --force origin main") is RiskLevel.DENY
     assert classify_command("git clean -fd") is RiskLevel.DENY
+
+
+def test_risk_classifier_edge_cases() -> None:
+    # Windows executable-extension stripping: appending .exe/.cmd/.bat/.com/.ps1 must not
+    # let a denylisted executable slip past — `rm.exe` still resolves to `rm`.
+    assert classify_command("rm.exe -rf C:/data") is RiskLevel.DENY
+    assert classify_command("RM.EXE -rf C:/data") is RiskLevel.DENY
+    assert classify_command("powershell.exe -c whoami") is RiskLevel.DENY
+    assert classify_command("sudo.exe rm important") is RiskLevel.DENY
+
+    # An extension that is NOT an executable extension is left intact, so a benign command
+    # with a dotted first token is not mis-stripped into a denylisted name.
+    assert classify_command("rm.txt") is RiskLevel.CONFIRM
+
+    # Empty / whitespace-only commands never auto-run; they fall back to confirmation.
+    assert classify_command("") is RiskLevel.CONFIRM
+    assert classify_command("    ") is RiskLevel.CONFIRM
+
+    # Malformed quoting cannot be parsed the way a shell would, so it is denied outright
+    # instead of being guessed at.
+    assert classify_command("echo 'unterminated") is RiskLevel.DENY
+    assert classify_command('git commit -m "no close') is RiskLevel.DENY
+
+    # Defense-in-depth substring patterns catch dangerous subcommands of executables that are
+    # not themselves denylisted (npm/pip are allowed binaries; these specific forms are not).
+    assert classify_command("npm install -g typescript") is RiskLevel.DENY
+    assert classify_command("pip install --global requests") is RiskLevel.DENY
+    assert classify_command("git clean -x") is RiskLevel.DENY

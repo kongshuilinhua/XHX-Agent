@@ -27,3 +27,24 @@ def test_kernel_records_policy_and_executes_tool(tmp_path: Path) -> None:
     assert "tool_call" in trace_text
     assert "tool_result" in trace_text
     assert "tool:read_file" in evidence_text
+
+
+def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path, "run-test")
+    kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
+
+    result, trace, policy = kernel.execute_tool(
+        ToolContext(workspace=tmp_path),
+        ToolStep(tool="terminal", arguments={"command": "rm -rf /"}),
+        turn=1,
+    )
+
+    # A denied tool never runs: no result, no tool_call trace.
+    assert policy.decision == "deny"
+    assert result is None
+    assert trace is None
+
+    # ...but the denial is still recorded as a policy decision, so the audit trail is complete.
+    trace_text = evidence.trace_path.read_text(encoding="utf-8")
+    assert "policy_decision" in trace_text
+    assert "tool_call" not in trace_text
