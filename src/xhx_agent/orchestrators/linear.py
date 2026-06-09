@@ -9,11 +9,10 @@ if TYPE_CHECKING:
 
 
 class LinearOrchestrator:
-    """Single autonomous agent loop: read -> edit -> verify -> repair.
+    """linear 范式：auto-classification 的 fallback，首次产生改动即停（stop-on-first-change）。
 
-    Default mode. M1 keeps the orchestration body on ``RuntimeApp._run_linear``
-    and dispatches to it, making this a thin, symmetric counterpart to
-    :class:`~xhx_agent.orchestrators.dag.DagOrchestrator`. M2 deepens the loop.
+    与 loop 共用 RuntimeApp._run_linear，但不开 autonomous，保留早期「改一处就停」的行为，
+    主要为向后兼容；真正的自主多轮循环是 loop。
     """
 
     name = "linear"

@@ -1,3 +1,9 @@
+"""可插拔编排器的抽象底座：定义 Orchestrator 协议与传给它的 OrchestratorContext。
+
+双范式（loop / graph / linear / dag）都实现同一个 Orchestrator.run(ctx)，共用 ctx 里的
+工具 / 安全内核 / 上下文 / 证据等基座——只有顶层控制流不同。编排器从不自己构造基座，全部从 ctx 取。
+"""
+
 from __future__ import annotations
 
 import time
@@ -20,9 +26,8 @@ if TYPE_CHECKING:
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
-# Surfaced when a run executes directly in the user's workspace because git worktree
-# isolation was unavailable (not a git repo, or worktree creation failed). In that mode a
-# failed run leaves its file changes in place; there is no automatic baseline rollback.
+# 当 git worktree 隔离不可用（非 git 仓库，或建 worktree 失败）而直接在用户工作区执行时抛出。
+# 这种模式下失败的运行会把文件改动留在原地，没有自动的基线回滚。
 IN_PLACE_WARNING = (
     "No git worktree isolation: changes were applied directly to the workspace and are NOT "
     "automatically rolled back on failure. Review the diff manually, or run inside a git "
@@ -32,12 +37,10 @@ IN_PLACE_WARNING = (
 
 @dataclass
 class OrchestratorContext:
-    """Shared base handles + run parameters handed to any orchestrator.
+    """传给任意编排器的共享基座句柄 + 运行参数。
 
-    ``RuntimeApp.run_task`` builds the worktree / evidence / kernel / scan /
-    tool_context, wraps them here, and passes this to the selected
-    orchestrator's ``run()``. Orchestrators read everything they need from this
-    context and never construct the base themselves.
+    RuntimeApp.run_task 先建好 worktree / evidence / kernel / scan / tool_context，
+    打包进这里，再交给所选编排器的 run()。编排器从本 ctx 读取所需的一切，绝不自己构造基座。
     """
 
     app: RuntimeApp
@@ -63,11 +66,10 @@ class OrchestratorContext:
 
 
 class Orchestrator(Protocol):
-    """A top-level control-flow strategy over the shared base.
+    """基于共享基座的顶层控制流策略。
 
-    Implementations decide *how* a task is driven (single autonomous loop vs.
-    multi-agent graph) while reusing the same tools, safety kernel, context
-    compiler and evidence store via :class:`OrchestratorContext`.
+    各实现决定一个任务「怎么」被驱动（单一自主 loop vs 多 agent graph），
+    同时通过 OrchestratorContext 复用同一套工具、安全内核、上下文编译器和证据存储。
     """
 
     name: str

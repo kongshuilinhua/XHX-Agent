@@ -9,13 +9,11 @@ if TYPE_CHECKING:
 
 
 class LoopOrchestrator:
-    """Unified autonomous agent loop (Claude-Code-style). The default mode.
+    """loop 范式：统一的自主 agent 循环（类 Claude Code），默认主范式。
 
-    Reuses ``RuntimeApp._run_linear`` but in autonomous mode: the model keeps
-    iterating (read -> edit -> verify) across many turns until it reports done or
-    hits ``config.max_loop_turns``, instead of stopping after the first change.
-    ``LinearOrchestrator`` (used by the auto-classification fallback) keeps the
-    original stop-on-first-change behaviour for backward compatibility.
+    复用 RuntimeApp._run_linear，但开启 autonomous：模型持续迭代（读→改→验证）多轮，
+    直到自己报告完成或触达 config.max_loop_turns，而非首次改动就停。
+    （auto-classification 的 fallback 用 LinearOrchestrator，保留首改即停的旧行为。）
     """
 
     name = "loop"

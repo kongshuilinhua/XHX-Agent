@@ -33,12 +33,11 @@ class _GraphState(TypedDict):
 
 
 class GraphOrchestrator:
-    """Multi-agent workflow via a LangGraph StateGraph (the optional, HPD-style paradigm).
+    """graph 范式：用 LangGraph StateGraph 实现的多 agent 工作流（可选的 HPD 式范式）。
 
-    Control flow is an explicit state graph: coordinator -> execute -> review, with a
-    conditional re-execute loop. It reuses the shared base (DAG planner, Kahn scheduler,
-    SafeExecutionKernel, ReviewerAgent), and is kept intentionally lean — its purpose is to
-    contrast with the unified ``loop`` paradigm, not to be production-grade.
+    控制流是显式状态图：coordinator → execute → review，带条件重执行回路。复用共享基座
+    （DAG planner、Kahn 调度、SafeExecutionKernel、ReviewerAgent），刻意保持精简——
+    目的是与统一的 loop 范式形成对照，而非追求生产级。
     """
 
     name = "graph"
@@ -110,6 +109,7 @@ class GraphOrchestrator:
             }
 
         def route(state: _GraphState) -> str:
+            # 成功且 review 通过 → 收尾；否则回 execute 重试，但最多 MAX_REVIEW_ROUNDS 轮，防死循环。
             if (state["success"] and state["review_passed"]) or state["rounds"] >= MAX_REVIEW_ROUNDS:
                 return "done"
             return "execute"
