@@ -394,7 +394,7 @@ v0.6 已完成：
 - JS/TS alias import 会有限读取根目录 `tsconfig.json` 的 `compilerOptions.baseUrl` 和单通配符 `paths`，可把 `@lib/*` 一类别名映射到仓库内文件。
 - impact analysis 在 direct test 命名匹配失败时，会用 import graph 的反向递归依赖找直接或间接依赖变更源文件的测试文件。
 - `repo_intel.index` 可以生成结构化 Repo Intelligence Index，并在 `xhx init` 时写入 `.xhx/repo/index.json`。
-- `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、带截断元数据的 reference index 和 content fingerprint，作为 JSON 产物落盘，后续可替换或补充 SQLite 索引。
+- `.xhx/repo/index.json` 当前包含 repo map、symbol index、import graph、call graph、带截断元数据的 reference index 和 content fingerprint，作为 JSON 主索引落盘，并同步一份 SQLite 镜像（`.xhx/repo/index.db`，含 symbols / imports / references / calls 四张表）。
 - `repo_intel.index` 提供只读 diagnostics，可区分 missing / invalid / stale / current，并报告索引大小、文件数、符号数、import edge 数、reference 数、指纹和 reference 截断情况。
 - CLI 提供 `xhx repo-index` 和 `xhx repo-index --json`，默认只做诊断，不自动重建或刷新索引；`xhx repo-index --refresh` 和 `xhx repo-index --refresh --json` 可由用户显式重建索引后输出诊断。
 - `load_repo_intel_index` 会优先读取 `.xhx/repo/index.json`，索引缺失、损坏或文件指纹过期时再即时构建。
@@ -410,12 +410,12 @@ v0.6 已完成：
 - Context Pack 会基于 `.xhx/repo/index.json` 的 reference index，按任务关键词加入有上限的 `reference_context` 文本引用片段。
 - reference index 可能因预算限制被截断或跳过超长文件；这是当前轻量索引的显式限制，不代表仓库中没有更多引用。
 
-v0.6 未完成 / 后续增强：
+v0.6 实现细节与限制 / 后续增强：
 
-- 尚未接入 Tree-sitter，当前 Python 使用标准库 AST，JS/TS 使用轻量正则。
-- 尚未实现 SQLite 持久化索引；当前只有 JSON 格式的 `.xhx/repo/index.json`。
-- 尚未实现真正增量更新索引；当前过期时会重建整个 JSON 索引。
-- 尚未实现完整跨语言语义引用关系和调用图；当前 reference index 只是文本级 symbol name 匹配。
+- JS/TS 符号提取已接入 Tree-sitter（`tree_sitter_javascript` / `tree_sitter_typescript`，解析失败时回退正则）；Python 符号 / import / call 提取使用标准库 `ast`；JS/TS 的 imports/calls 仍用正则提取，尚未统一到 Tree-sitter。
+- 已落盘 SQLite 镜像索引（`.xhx/repo/index.db`，symbols/imports/references/calls 四表带索引），与 JSON 主索引并存；当前查询路径仍以 JSON 为主，SQLite 主要作为可查询副本。
+- 已实现增量更新（`incremental_update_repo_intel_index`，基于文件 size/mtime 比对，只重算变更文件并保留未变部分），过期时不再整体重建 JSON；但 SQLite 镜像每次同步仍是全量重写。
+- call graph 已实现（AST / Tree-sitter 级，带 confidence 字段），但跨语言语义解析尚不完整；reference index 仍是文本级 symbol name 匹配，非语义引用解析。
 - impact analysis 目前只覆盖基础 source -> direct test 文件命名映射、有限深度 import graph、根目录 tsconfig baseUrl/paths，不解析完整调用图、跨语言关系、tsconfig extends / project references / 多通配符 paths 或复杂 test runner 参数。
 - Context Pack 的 context 选择仍是轻量关键词匹配、文本引用和 import graph 邻接补充，尚未使用完整调用图、语义级引用图或语义检索。
 
