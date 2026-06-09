@@ -119,10 +119,10 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 
 ## 核心底座：Repository Intelligence Graph (代码智能图谱)
 
-为了让运行时拥有高维度的语义代码认知底座，XHX-Agent 引入了基于 SQLite 物理数据库与抽象语法树（AST）的多维语义大图系统。
-- **双轨制索引架构**：使用扁平 JSON (`.xhx/repo/index.json`) 承载冷启动内存流，通过高性能本地 SQLite B-Tree 索引数据库 (`.xhx/repo/index.db`) 承载高频交叉关联联表查询（定义表、模块导入图表、全局交叉文本引用表、函数级调用有向图）。
+为了让运行时具备语义级的代码认知能力，XHX-Agent 基于抽象语法树（AST）与 Tree-Sitter 构建了一套符号 / 导入 / 引用 / 调用索引，并以 JSON 为主索引、SQLite 为镜像副本落盘。
+- **双轨制索引落盘**：以 JSON (`.xhx/repo/index.json`) 为主索引，运行时查询（符号检索、impact 分析、上下文构建）读取由它加载的内存结构；同时同步一份 SQLite 镜像 (`.xhx/repo/index.db`，含定义、模块导入图、文本引用、函数级调用图四张表)，作为未来可直接 SQL 查询的副本。当前查询路径以 JSON 内存结构为主，SQLite 暂为只写镜像而非查询后端。
 - **多语言 AST 符号提取**：Python 采用标准库 `ast` 进行深度优先作用域嵌套分析；JS/TS 采用分级降级机制，优先使用精密的 Tree-Sitter 语法提取（支持现代前端箭头函数与别名解析），在环境缺失时优雅降级为 Regex 正则符号提取，兼顾了极致精度与环境鲁棒性。
-- **启发式测试匹配与 BFS 逆向追溯**：根据变更文件，提供 `calc.py -> test_calc.py` 物理秒级匹配；若匹配不成功，则以变更源为起点在 SQLite 模块导入图上逆向执行最大 4 层深度的宽度优先搜索 (BFS) 拓扑遍历，直至触碰到测试文件边界，实现高精度的“靶向验证”。
+- **启发式测试匹配与 BFS 逆向追溯**：根据变更文件，提供 `calc.py -> test_calc.py` 直接匹配；若匹配不成功，则以变更源为起点，在（JSON 加载的）模块导入图上逆向执行最大 4 层深度的宽度优先搜索 (BFS) 遍历，直至触碰到测试文件边界，实现“靶向验证”。
 - 📖 深入源码分析请阅读：[05-Repo Intelligence 源码深潜](deep_dive/05-repo-intelligence.md)
 
 ---
@@ -148,9 +148,9 @@ XHX-Agent 在运行时严格分离用户可见的对话状态、LangGraph 图控
 .xhx/
   config.json          # 宿主机全局模型与策略配置文件
   profiles.json        # 各种模型供应商配置参数
-  index.db             # 核心底座: SQLite 高性能 B-Tree 符号索引数据库
   repo/
-    index.json         # 双轨底座: 结构化冷启动仓库指纹与索引 JSON
+    index.json         # 主索引: 结构化仓库指纹与符号/导入/引用/调用索引 JSON
+    index.db           # SQLite 镜像副本（四张索引表，当前为只写镜像，非查询后端）
   sessions/            # 对话会话历史（history.jsonl；xhx run --continue/--resume 跨进程续接，xhx sessions 列出）
   traces/              # 100% 落盘的智能体物理运行事件 Raw Trace
   evidence/            # 100% 结构化的证据数据与 TrailGraph 拓扑
