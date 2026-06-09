@@ -286,15 +286,14 @@ class RuntimeApp:
 
         verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
         commands = [item.command for item in verification_plan.commands] if verification_plan else []
-        verification_status = (
-            "cancelled"
-            if status == "cancelled"
-            else "not_executed"
-            if status == "failed"
-            else (verification_plan.skip_reason or "not_executed")
-            if verification_plan
-            else "skipped_no_changes"
-        )
+        if status == "cancelled":
+            verification_status = "cancelled"
+        elif status == "failed":
+            verification_status = "not_executed"
+        elif verification_plan:
+            verification_status = verification_plan.skip_reason or "not_executed"
+        else:
+            verification_status = "skipped_no_changes"
         if status not in {"failed", "cancelled"} and not changed_files:
             verification_status = "skipped_no_changes"
             ctx.evidence.write_trace("verification_skipped", {"reason": "No changed files."})
@@ -340,6 +339,11 @@ class RuntimeApp:
         if status != "success" and not ctx.isolated and changed_files:
             risks.append(IN_PLACE_WARNING)
 
+        checkpoint_path = str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None
+        restore_plan_path = (
+            str(restore_plan_path_value(ctx.original_workspace, ctx.run_id)) if restore_plan_created else None
+        )
+
         with contextlib.suppress(Exception):
             hooks_manager.trigger(
                 "before_summary",
@@ -360,10 +364,8 @@ class RuntimeApp:
             verification=verification_status,
             risks=risks,
             verification_results=verification_results,
-            checkpoint_path=str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None,
-            restore_plan_path=str(restore_plan_path_value(ctx.original_workspace, ctx.run_id))
-            if restore_plan_created
-            else None,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
             repair=repair_decision,
             repair_attempts=repair_attempts,
         )
@@ -395,10 +397,8 @@ class RuntimeApp:
             commands=commands_run or commands,
             verification=verification_status,
             verification_results=verification_results,
-            checkpoint_path=str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None,
-            restore_plan_path=str(restore_plan_path_value(ctx.original_workspace, ctx.run_id))
-            if restore_plan_created
-            else None,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
             repair=repair_decision,
             repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
@@ -529,7 +529,7 @@ class RuntimeApp:
                 cancel_check=ctx.cancel_check,
                 metrics_tracker=ctx.metrics_tracker,
             )
-            if ctx.status == "cancelled" or ctx.status == "failed":
+            if ctx.status in {"cancelled", "failed"}:
                 break
             if len(ctx.changed_files) == before_repair_changed:
                 ctx.status = "failed"
