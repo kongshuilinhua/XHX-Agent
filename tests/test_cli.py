@@ -127,3 +127,14 @@ def test_sessions_command_and_resume_by_id() -> None:
         resumed = runner.invoke(app, ["run", "keep going", "--profile", "mock", "--resume", run_id])
         assert resumed.exit_code == 0, resumed.output
         assert "Resuming from run" in strip_ansi(resumed.output)
+
+
+def test_run_mode_flag_accepted() -> None:
+    from xhx_agent.runtime.app import RuntimeApp
+
+    with runner.isolated_filesystem() as workspace:
+        root = Path(workspace)
+        RuntimeApp(root).init_project()
+        result = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock", "--mode", "loop"])
+        assert result.exit_code == 0, result.output
+        assert "status:" in result.output

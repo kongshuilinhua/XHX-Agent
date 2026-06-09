@@ -157,6 +157,15 @@ class CommandConsole:
             self.console.print(f"Unknown command: {command}. Type /help.")
         return True
 
+    @property
+    def orchestrator_mode(self) -> str | None:
+        """Explicit orchestrator paradigm to use, or None to auto-classify.
+
+        ``/mode loop|graph|linear|dag`` selects a paradigm; any other label (the
+        default ``linear-edit``) means auto-classification, preserving behaviour.
+        """
+        return self.mode if self.mode in {"loop", "graph", "linear", "dag"} else None
+
     def run_task(self, task: str) -> None:
         self.cancel_requested = False
         runtime_task = self.build_runtime_task(task)
@@ -177,6 +186,7 @@ class CommandConsole:
                             auto_repair=self.auto_repair,
                             event_callback=self.handle_event,
                             cancel_check=self.is_cancel_requested,
+                            mode=self.orchestrator_mode,
                         )
                 else:
                     self.print_dashboard()
@@ -188,6 +198,7 @@ class CommandConsole:
                         auto_repair=self.auto_repair,
                         event_callback=self.handle_event,
                         cancel_check=self.is_cancel_requested,
+                        mode=self.orchestrator_mode,
                     )
         except KeyboardInterrupt:
             self.request_cancel("Keyboard interrupt requested cancellation.", force=True)

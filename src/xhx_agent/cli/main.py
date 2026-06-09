@@ -90,6 +90,10 @@ def run(
         str | None,
         typer.Option("--resume", help="Resume from a specific session by run id (see `xhx sessions`)."),
     ] = None,
+    mode: Annotated[
+        str | None,
+        typer.Option("--mode", help="Orchestrator paradigm: loop | graph | linear | dag (default: auto-classified)."),
+    ] = None,
 ) -> None:
     runtime = RuntimeApp()
     if dry_run:
@@ -120,12 +124,17 @@ def run(
             target = "most recent session" if cont else f"session '{resume}'"
             console.print(f"No {target} found; starting fresh.")
     if json_output:
-        json_result = runtime.run_task(effective_task, profile, assume_yes=yes, auto_repair=auto_repair)
+        json_result = runtime.run_task(effective_task, profile, assume_yes=yes, auto_repair=auto_repair, mode=mode)
         record_session(runtime.workspace, task, json_result)
         console.print(json_result.model_dump_json(indent=2))
         return
     result = runtime.run_task(
-        effective_task, profile, assume_yes=yes, confirm_callback=_confirm_terminal_command, auto_repair=auto_repair
+        effective_task,
+        profile,
+        assume_yes=yes,
+        confirm_callback=_confirm_terminal_command,
+        auto_repair=auto_repair,
+        mode=mode,
     )
     record_session(runtime.workspace, task, result)
     console.print(f"status: {result.status}")

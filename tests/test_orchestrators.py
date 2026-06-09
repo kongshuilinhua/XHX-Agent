@@ -103,3 +103,19 @@ def test_graph_mode_runs_via_langgraph(tmp_path) -> None:
     assert any(e.type == "graph_review" for e in events)
     assert result.changed_files == ["src/calc.py"]
     assert result.status == "success"
+
+
+def test_console_orchestrator_mode_from_label(tmp_path) -> None:
+    from rich.console import Console
+
+    from xhx_agent.cli.console import CommandConsole
+
+    cc = CommandConsole(tmp_path, console=Console())
+    # default label ("linear-edit") is not an orchestrator key -> auto-classify
+    assert cc.orchestrator_mode is None
+    cc.set_mode("loop")
+    assert cc.orchestrator_mode == "loop"
+    cc.set_mode("graph")
+    assert cc.orchestrator_mode == "graph"
+    cc.set_mode("research-only")
+    assert cc.orchestrator_mode is None
