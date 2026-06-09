@@ -222,6 +222,7 @@ uv run xhx run "Fix the typo in main.py and run pytest" --profile mock --auto-re
 * `--dry-run`: Previews the initial execution plan, budget analysis, and risks, then exits.
 * `--continue`: Resumes from the most recent session, injecting its summary (run id, status, changed files) as context for the new task. Each run is recorded to `.xhx/sessions/history.jsonl`.
 * `--resume <run-id>`: Resumes from a specific past session by run id. Use `xhx sessions` to list recorded sessions.
+* `--mode <loop|graph|linear|dag>`: Picks the orchestrator paradigm explicitly (default: auto-classified). **`loop`** = a single autonomous, Claude-Code-style agent loop (the default main paradigm); **`graph`** = a LangGraph multi-agent workflow (coordinator → execute → review, with a conditional re-execute loop). The REPL/console exposes the same via `/mode loop|graph`. Both run over the exact same tool / safety / context / code-intelligence base — only the top-level control flow differs.
 
 ---
 
