@@ -41,6 +41,9 @@ dev = [
 
 [tool.pytest.ini_options]
 norecursedirs = ["tests/fixtures", ".tmp"]
+markers = [
+    "live: opt-in end-to-end tests that call a real LLM endpoint (skipped unless configured)",
+]
 
 [tool.ruff]
 target-version = "py313"

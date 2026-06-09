@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 
-from xhx_agent.models.openai_compatible import OpenAICompatibleClient, _parse_plan_content
+from xhx_agent.context.pack import ContextPack
+from xhx_agent.models.openai_compatible import (
+    OpenAICompatibleClient,
+    _context_payload,
+    _excerpt_around,
+    _extract_stream_delta,
+    _normalize_chat_content,
+    _parse_plan_content,
+)
 from xhx_agent.models.types import ModelClientError
 
 
@@ -218,3 +228,262 @@ def test_invalid_json_error_includes_location() -> None:
     assert "line" in exc.value.details
     assert "column" in exc.value.details
     assert "excerpt" in exc.value.details
+
+
+def _client(handler, *, stream: bool = False) -> OpenAICompatibleClient:
+    return OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        stream=stream,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+# --- summarize() -----------------------------------------------------------------------------
+
+
+def test_summarize_returns_stripped_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(
+        lambda _r: httpx.Response(200, json={"choices": [{"message": {"content": "  did X; 1 test failed.  "}}]})
+    )
+
+    assert client.summarize("tool history") == "did X; 1 test failed."
+
+
+def test_summarize_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XHX_TEST_API_KEY", raising=False)
+    client = _client(lambda _r: httpx.Response(200, json={}))
+
+    with pytest.raises(ModelClientError) as exc:
+        client.summarize("tool history")
+
+    assert exc.value.code == "missing_api_key"
+
+
+def test_summarize_http_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(500, text="boom"))
+
+    with pytest.raises(ModelClientError) as exc:
+        client.summarize("tool history")
+
+    assert exc.value.code == "http_error"
+    assert exc.value.details["status_code"] == 500
+
+
+# --- plan() non-stream error paths -----------------------------------------------------------
+
+
+def test_plan_network_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+
+    def handler(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    with pytest.raises(ModelClientError) as exc:
+        _client(handler).plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "network_error"
+
+
+def test_plan_non_json_response_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(200, content=b"<html>not json</html>"))
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_response"
+
+
+def test_plan_missing_choices_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(200, json={"object": "chat.completion"}))
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_response"
+
+
+def test_plan_empty_content_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(200, json={"choices": [{"message": {"content": "   "}}]}))
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_response"
+
+
+def test_plan_schema_invalid_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    # Valid JSON, but a "continue" plan with no steps violates the ModelPlan schema.
+    client = _client(
+        lambda _r: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"summary":"x","status":"continue","steps":[]}'}}]},
+        )
+    )
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_plan_schema"
+
+
+# --- plan() streaming error paths ------------------------------------------------------------
+
+
+def test_stream_http_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(429, text="rate limited"), stream=True)
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "http_error"
+    assert exc.value.details["status_code"] == 429
+
+
+def test_stream_empty_content_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(200, content="data: [DONE]\n\n"), stream=True)
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_response"
+
+
+def test_stream_invalid_json_line_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    client = _client(lambda _r: httpx.Response(200, content="data: {not valid json\n\n"), stream=True)
+
+    with pytest.raises(ModelClientError) as exc:
+        client.plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "invalid_response"
+
+
+# --- pure parsing helpers --------------------------------------------------------------------
+
+
+def test_normalize_chat_content_handles_mixed_parts() -> None:
+    assert _normalize_chat_content("plain string") == "plain string"
+    # A multimodal content array mixes raw strings, {"text":...}, {"content":...}, and ignorables.
+    mixed = _normalize_chat_content(
+        [
+            {"text": "alpha"},
+            "beta",
+            12345,  # non-str, non-dict -> ignored
+            {"content": "gamma"},  # nested content string
+            {"image_url": "http://x"},  # dict without text/content -> ignored
+        ]
+    )
+    assert mixed == "alpha\nbeta\ngamma"
+    # Unsupported top-level types normalize to an empty string.
+    assert _normalize_chat_content(42) == ""
+
+
+def test_extract_stream_delta_handles_malformed_chunks() -> None:
+    assert _extract_stream_delta({"choices": [{"delta": {"content": "hi"}}]}) == "hi"
+    assert _extract_stream_delta({}) == ""  # missing choices
+    assert _extract_stream_delta({"choices": [{"delta": "oops"}]}) == ""  # delta is not a dict
+
+
+def test_excerpt_around_adds_ellipsis_in_the_middle() -> None:
+    text = "x" * 500
+    middle = _excerpt_around(text, 250, radius=10)
+    assert middle.startswith("...")
+    assert middle.endswith("...")
+    # At the very start there is no leading ellipsis.
+    assert not _excerpt_around(text, 0, radius=10).startswith("...")
+
+
+def test_parse_plan_content_respects_escaped_quotes_in_strings() -> None:
+    # The brace-matcher must not treat an escaped quote inside a JSON string as a string boundary.
+    plan = _parse_plan_content('{"summary":"say \\"hi\\" now","status":"done","steps":[]}')
+    assert plan.summary == 'say "hi" now'
+
+
+def test_context_payload_accepts_context_pack_object() -> None:
+    pack = ContextPack(task="demo", budget_tokens=100, used_tokens_estimate=0)
+    payload = _context_payload(pack)
+    assert isinstance(payload, dict)
+    assert payload == pack.to_model_payload()
+    # A plain dict passes through unchanged.
+    assert _context_payload({"k": "v"}) == {"k": "v"}
+
+
+def test_stream_network_error_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+
+    def handler(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    with pytest.raises(ModelClientError) as exc:
+        _client(handler, stream=True).plan("read", {"detected_languages": []})
+
+    assert exc.value.code == "network_error"
+
+
+def test_stream_skips_empty_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    chunks = [
+        'data: {"choices":[{"delta":{}}]}\n\n',  # empty delta -> skipped, not appended
+        'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"ok\\",\\"status\\":\\"done\\",\\"steps\\":[]}"}}]}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    client = _client(lambda _r: httpx.Response(200, content="".join(chunks)), stream=True)
+
+    plan = client.plan("read", {"detected_languages": []})
+
+    assert plan.status == "done"
+
+
+def test_parse_plan_content_balanced_but_invalid_json() -> None:
+    # Braces balance, so the object extractor returns a candidate, but it is not valid JSON.
+    with pytest.raises(ModelClientError) as exc:
+        _parse_plan_content("{not: valid, json}")
+
+    assert exc.value.code == "invalid_plan_json"
+
+
+def test_extract_json_object_strips_double_markdown_fence() -> None:
+    plan = _parse_plan_content('```\n```json\n{"summary":"ok","status":"done","steps":[]}\n```\n```')
+
+    assert plan.status == "done"
+
+
+# --- opt-in live integration -----------------------------------------------------------------
+
+
+@pytest.mark.live
+def test_live_openai_plan_smoke() -> None:
+    """End-to-end smoke test against a real OpenAI-compatible endpoint.
+
+    Skipped by default. To run it::
+
+        XHX_LIVE_BASE_URL=https://api.openai.com/v1 \\
+        XHX_LIVE_API_KEY_ENV=OPENAI_API_KEY \\
+        XHX_LIVE_MODEL=gpt-4o-mini \\
+        uv run pytest -m live
+
+    The actual API key lives in the env var named by XHX_LIVE_API_KEY_ENV, so the secret is
+    never hard-coded. The test no-ops (skips) whenever the live config is absent, which keeps
+    CI deterministic and free of network/API dependencies.
+    """
+    base_url = os.getenv("XHX_LIVE_BASE_URL")
+    api_key_env = os.getenv("XHX_LIVE_API_KEY_ENV")
+    model = os.getenv("XHX_LIVE_MODEL")
+    if not (base_url and api_key_env and model and os.getenv(api_key_env)):
+        pytest.skip("Live LLM config not set (XHX_LIVE_BASE_URL / XHX_LIVE_API_KEY_ENV / XHX_LIVE_MODEL).")
+
+    client = OpenAICompatibleClient(base_url=base_url, api_key_env=api_key_env, model=model)
+    plan = client.plan("List the Python files in this repository.", {"detected_languages": ["python"]})
+
+    assert plan.summary
+    assert plan.status in {"continue", "done"}
