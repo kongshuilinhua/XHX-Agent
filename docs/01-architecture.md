@@ -109,11 +109,11 @@ XHX-Agent 采用高内聚、低耦合的分层软件架构构建，核心基于 
 在五大内核与代码智能底座之上，XHX-Agent 把"顶层控制流大脑"抽象为可插拔的 `Orchestrator`（`src/xhx_agent/orchestrators/`）。同一套工具、安全执行内核、Context Pack 与 Evidence 底座被不同范式共享，仅顶层控制流可替换：
 
 - **`loop`（统一自主 agent loop，类 Claude Code）**：单一循环，模型每一步自主决定下一个工具调用，配合人在回路的确认 / 打断 / steering。已支持自主多轮（`max_loop_turns`）、上下文压缩（启发式 + 可选 LLM 摘要）、会话恢复（`--continue`/`--resume`）与并发只读 subagent 探索。**默认主力范式。**
-- **`graph`（多 agent 工作流编排，类 HPD）**：评估 → 分解 → 并行 → 评审 → 综合的状态图，带条件分支与循环回边；计划基于 LangGraph 实现。
+- **`graph`（多 agent 工作流编排，类 HPD）**：基于 LangGraph `StateGraph` 的多 agent 状态图——coordinator（DAG 分解）→ execute（Kahn 并行 + kernel）→ review（质量门）+ 条件 re-execute 循环，复用现有底座（精简，作为统一 `loop` 的对比范式）。
 
 `run_task(mode=...)` 显式选择范式（`loop` / `graph`），未指定时由 `ModeClassifier` 兜底，`select_orchestrator` 统一分派；`OrchestratorContext` 携带共享底座句柄与运行参数。
 
-> **实现现状（M2，2026-06-08）**：抽象层、registry 选择、`run_task(mode=...)` API 已就位。`loop` 已实现为**自主统一循环**——模型持续多轮 read→edit→verify，直到自报完成或达 `max_loop_turns`（默认 20），而非改一个文件就停；自动分类兜底仍走 `linear`（改动后即停，向后兼容）。路线：`graph` 的 LangGraph 实现（M3）、`--mode` CLI/TUI 接入（M4），见 `docs/implementation/20-implementation-baseline.md`。
+> **实现现状（M2，2026-06-08）**：抽象层、registry 选择、`run_task(mode=...)` API 已就位。`loop` 已实现为**自主统一循环**——模型持续多轮 read→edit→verify，直到自报完成或达 `max_loop_turns`（默认 20），而非改一个文件就停；自动分类兜底仍走 `linear`（改动后即停，向后兼容）。`graph` 已实现为 LangGraph 多 agent 工作流（M3）。路线：`--mode` CLI/TUI 接入（M4），见 `docs/implementation/20-implementation-baseline.md`。
 
 ---
 
