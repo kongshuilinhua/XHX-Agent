@@ -151,9 +151,6 @@ class RuntimeApp:
                     detected_languages=scan.detected_languages,
                     file_count=scan.file_count,
                 )
-                repair_attempts = 0
-                risks: list[str] = []
-                turns_completed = 0
                 plan_summaries: list[str] = [
                     "Load project configuration.",
                     f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
@@ -161,53 +158,15 @@ class RuntimeApp:
                 tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
 
                 if cancel_requested(cancel_check):
-                    status = "cancelled"
-                    verification_status = "cancelled"
-                    risks.append("Run cancelled by user before model planning.")
-                    evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
-                    emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
-                    summary = write_report(
-                        workspace=original_workspace,
+                    return self._cancelled_before_planning(
                         run_id=run_id,
                         task=task,
-                        plan=plan_summaries + ["Run cancelled before model planning."],
-                        changed_files=[],
-                        commands=[],
-                        verification=verification_status,
-                        risks=risks,
-                    )
-                    evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-                    emit_event(
-                        event_callback,
-                        "run_end",
-                        "Run cancelled.",
-                        run_id=run_id,
-                        status=status,
-                        verification=verification_status,
-                        changed_files=[],
-                        summary_path=str(summary.relative_to(original_workspace)),
-                    )
-                    metrics = RunMetrics(
-                        duration_seconds=round(time.time() - start_time, 2),
-                        turns=turns_completed,
-                        tokens_estimate=metrics_tracker["tokens"],
-                        files_changed_count=0,
-                        commands_run_count=0,
-                        repair_attempts=repair_attempts,
-                        success=False,
-                    )
-                    return RunResult(
-                        run_id=run_id,
-                        status=status,
-                        turns=turns_completed,
-                        changed_files=[],
-                        commands=[],
-                        verification=verification_status,
-                        verification_results=[],
-                        summary_path=str(summary.relative_to(original_workspace)),
-                        risk_summary=risks,
-                        metrics=metrics,
-                        mode="direct",
+                        plan_summaries=plan_summaries,
+                        evidence=evidence,
+                        event_callback=event_callback,
+                        original_workspace=original_workspace,
+                        start_time=start_time,
+                        metrics_tracker=metrics_tracker,
                     )
 
                 execution_mode = ModeClassifier().classify(task, scan)
@@ -239,6 +198,66 @@ class RuntimeApp:
                 return result
             finally:
                 self.workspace = original_workspace
+
+    def _cancelled_before_planning(
+        self,
+        *,
+        run_id: str,
+        task: str,
+        plan_summaries: list[str],
+        evidence: EvidenceStore,
+        event_callback: EventCallback | None,
+        original_workspace: Path,
+        start_time: float,
+        metrics_tracker: dict[str, int],
+    ) -> RunResult:
+        """Build the terminal RunResult for a run cancelled before model planning began."""
+        message = "Run cancelled by user before model planning."
+        evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
+        emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
+        summary = write_report(
+            workspace=original_workspace,
+            run_id=run_id,
+            task=task,
+            plan=plan_summaries + ["Run cancelled before model planning."],
+            changed_files=[],
+            commands=[],
+            verification="cancelled",
+            risks=[message],
+        )
+        evidence.write_trace("run_end", {"status": "cancelled", "summary_path": str(summary)})
+        emit_event(
+            event_callback,
+            "run_end",
+            "Run cancelled.",
+            run_id=run_id,
+            status="cancelled",
+            verification="cancelled",
+            changed_files=[],
+            summary_path=str(summary.relative_to(original_workspace)),
+        )
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - start_time, 2),
+            turns=0,
+            tokens_estimate=metrics_tracker["tokens"],
+            files_changed_count=0,
+            commands_run_count=0,
+            repair_attempts=0,
+            success=False,
+        )
+        return RunResult(
+            run_id=run_id,
+            status="cancelled",
+            turns=0,
+            changed_files=[],
+            commands=[],
+            verification="cancelled",
+            verification_results=[],
+            summary_path=str(summary.relative_to(original_workspace)),
+            risk_summary=[message],
+            metrics=metrics,
+            mode="direct",
+        )
 
     def _run_linear(self, ctx: OrchestratorContext) -> RunResult:
         changed_files: list[str] = []
