@@ -77,9 +77,29 @@ def test_select_orchestrator_defaults_and_errors() -> None:
     assert select_orchestrator(None).name == "loop"
     assert select_orchestrator("loop").name == "loop"
     assert select_orchestrator("linear").name == "linear"
-    assert select_orchestrator("graph").name == "dag"
+    assert select_orchestrator("graph").name == "graph"
     assert select_orchestrator("dag").name == "dag"
     assert execution_mode_to_key(ExecutionMode.DAG_EXECUTE) == "dag"
     assert execution_mode_to_key(ExecutionMode.LINEAR_EDIT) == "linear"
     with pytest.raises(ValueError):
         select_orchestrator("nope")
+
+
+def test_graph_mode_runs_via_langgraph(tmp_path) -> None:
+    from xhx_agent.runtime.app import RuntimeApp
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("def test_add():\n    assert True\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    events = []
+
+    result = RuntimeApp(tmp_path).run_task("refactor math", assume_yes=True, mode="graph", event_callback=events.append)
+
+    assert result.mode == "graph"
+    assert any(e.type == "graph_coordinator" for e in events)
+    assert any(e.type == "graph_execute" for e in events)
+    assert any(e.type == "graph_review" for e in events)
+    assert result.changed_files == ["src/calc.py"]
+    assert result.status == "success"
