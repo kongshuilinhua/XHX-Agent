@@ -7,6 +7,8 @@
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![CI](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml)
 
+**English** · [简体中文](README.zh-CN.md)
+
 </div>
 
 > A **context-budgeted local coding agent runtime** with a **pluggable, dual-paradigm orchestrator**: run a task as a single autonomous **`loop`** (Claude-Code-style) or as a multi-agent **`graph`** (LangGraph) — over one shared safety / context / code-intelligence base.
