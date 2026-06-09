@@ -1,3 +1,9 @@
+"""安全执行内核：运行时调用工具 / 跑验证命令 / 写审计的唯一入口。
+
+把「策略判定 → 执行 → 证据落盘」收口在一处：每次工具调用先经 policy 判定，deny 的直接短路
+（但仍记一条 policy_decision，保证审计链不断），其余才真正执行并写 trace/evidence。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,7 +20,7 @@ ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 
 
 class SafeExecutionKernel:
-    """Runtime-facing boundary for policy, execution, and audit writes."""
+    """运行时面向的边界：把策略判定、工具执行、审计写入收口在一起。"""
 
     def __init__(self, workspace: Path, run_id: str, evidence: EvidenceStore, tool_registry: ToolRegistry) -> None:
         self.workspace = workspace
@@ -32,6 +38,7 @@ class SafeExecutionKernel:
         policy = decide_tool(step.tool)
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
+            # 被拒工具到此为止：不产生 tool_call、不执行；但上面已记 policy_decision，审计链完整。
             return None, None, policy
         trace = self.evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
         result = self.tool_registry.execute(context, step)

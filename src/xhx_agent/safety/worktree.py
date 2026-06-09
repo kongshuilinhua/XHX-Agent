@@ -1,3 +1,9 @@
+"""Git worktree 隔离：在仓库内开一个临时 worktree 跑改动，成功才同步回主工作区。
+
+这是「失败自动回滚」的实现基础——失败时直接丢弃整个 worktree，主工作区毫发无损。
+非 git 仓库（或建 worktree 失败）则优雅降级为就地执行，此时没有自动回滚（由上层 Restore Plan 兜底）。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -9,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_git_repo(workspace: Path) -> bool:
+    """workspace 是否在 git 工作区内（worktree 隔离的前提）。"""
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -24,6 +31,11 @@ def is_git_repo(workspace: Path) -> bool:
 
 
 class WorktreeContext:
+    """上下文管理器：进入时尝试建隔离 worktree，退出时清理 worktree 与临时分支。
+
+    is_active 表示隔离是否真的生效；为 False 时所有操作落在主工作区（就地执行，无自动回滚）。
+    """
+
     def __init__(self, workspace: Path, run_id: str) -> None:
         self.workspace = workspace.resolve()
         self.run_id = run_id
@@ -62,7 +74,7 @@ class WorktreeContext:
         return self
 
     def sync_to_workspace(self, changed_files: list[str]) -> None:
-        """Copy changed files from isolated worktree back to primary workspace on success."""
+        """成功后把隔离 worktree 里的变更文件同步回主工作区（含删除主工作区里已不存在的文件）。"""
         if not self.is_active:
             return
 
@@ -86,7 +98,7 @@ class WorktreeContext:
 
         try:
             logger.info("Cleaning up Git worktree and branch...")
-            # 1. Remove git worktree
+            # 1. 移除 git worktree
             completed = subprocess.run(
                 ["git", "worktree", "remove", "--force", str(self.worktree_dir)],
                 cwd=self.workspace,
@@ -98,7 +110,7 @@ class WorktreeContext:
             if completed.returncode != 0:
                 logger.warning("Failed to remove Git worktree cleanly: %s", completed.stderr)
 
-            # 2. Delete branch
+            # 2. 删除临时分支
             completed_branch = subprocess.run(
                 ["git", "branch", "-D", self.branch_name],
                 cwd=self.workspace,
@@ -110,7 +122,7 @@ class WorktreeContext:
             if completed_branch.returncode != 0:
                 logger.warning("Failed to delete temporary branch cleanly: %s", completed_branch.stderr)
 
-            # 3. Clean up directory if still exists
+            # 3. 目录残留则强制清理
             if self.worktree_dir.exists():
                 shutil.rmtree(self.worktree_dir, ignore_errors=True)
 

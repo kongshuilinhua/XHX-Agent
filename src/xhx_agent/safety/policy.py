@@ -1,3 +1,10 @@
+"""工具与 terminal 命令的策略判定：把风险档转成「放行 / 确认 / 拒绝」的决定。
+
+terminal 命令的风险分级委托给 safety.risk；工具按白名单判定。两个关键约定：apply_patch 这类结构化写
+虽标 CONFIRM，但在 worktree 隔离下自动放行（不逐条弹确认）；mcp_/custom_ 动态工具放行但标 CONFIRM——
+它们以 Agent 自身权限运行，没有沙箱隔离。
+"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel
@@ -13,6 +20,7 @@ class PolicyDecision(BaseModel):
 
 
 def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
+    """按风险档决定 terminal 命令：deny 直接拒；confirm 默认需确认（assume_yes 可预批）；其余放行。"""
     risk = classify_command(command)
     if risk is RiskLevel.DENY:
         return PolicyDecision(decision="deny", risk=risk, reason="Command is denied by policy.")
@@ -27,6 +35,7 @@ def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
 
 
 def decide_tool(tool_name: str) -> PolicyDecision:
+    """按工具名判定：只读工具放行，apply_patch 标 CONFIRM，mcp_/custom_ 动态工具放行但 CONFIRM，其余拒绝。"""
     if tool_name in {"search", "read_file"}:
         return PolicyDecision(
             decision="allow",

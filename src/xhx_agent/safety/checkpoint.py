@@ -1,3 +1,9 @@
+"""检查点与恢复计划：验证 / 修复前给变更文件拍一份元数据快照。
+
+关键约定（回看勿误解为缺陷）：checkpoint 只存每个文件的 sha256 + 大小、不存原文，
+所以 restore plan 是「只读」的——只报告哪些文件变了，绝不自动回滚。真正的回滚靠 worktree 隔离。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -66,10 +72,10 @@ def create_checkpoint(workspace: Path, run_id: str, changed_files: list[str] | N
 
 
 def create_restore_plan(workspace: Path, run_id: str, checkpoint: Checkpoint) -> CheckpointRestorePlan:
-    """Write a read-only restore plan without modifying repository files.
+    """生成一份只读恢复计划，不改动任何仓库文件。
 
-    v0.2 checkpoints intentionally store metadata only. This plan records what
-    changed after the checkpoint and makes the recovery boundary explicit.
+    checkpoint 刻意只存元数据，所以这里只记录「检查点之后哪些文件变了」，把恢复边界显式化，
+    供人工对照 git diff 处理；不执行自动回滚。
     """
 
     ensure_xhx_dirs(workspace)
