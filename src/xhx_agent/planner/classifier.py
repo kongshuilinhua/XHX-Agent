@@ -1,3 +1,9 @@
+"""意图分类器：用关键词启发式把任务粗分到 direct / research-only / linear-edit / dag-execute。
+
+仅在没有显式 --mode 时用于挑编排器。是轻量关键词规则（中英双语）、不是 LLM 分类；
+判定顺序从特殊到一般：先认直达命令，再问答/研究，再多文件 DAG，最后按有无写关键词落到编辑或研究。
+"""
+
 from __future__ import annotations
 
 import re
@@ -11,13 +17,14 @@ class ModeClassifier:
         pass
 
     def classify(self, task: str, scan: ProjectScan | None = None) -> ExecutionMode:
+        """按关键词把任务分到一个 ExecutionMode（顺序从特殊到一般，先命中先返回）。"""
         lowered = task.lower().strip()
 
-        # 1. Simple direct commands
+        # 1. 直达命令（退出/清屏/帮助等）
         if lowered in {"exit", "quit", "clear", "help", "/help", "/exit", "/clear", "退出", "清屏", "帮助"}:
             return ExecutionMode.DIRECT
 
-        # 2. Simple Q&A or explanation with no file operations
+        # 2. 纯问答 / 解释，且不含写操作关键词
         direct_keywords = {
             r"\bexplain how\b",
             r"\bwhat is\b",
@@ -33,7 +40,7 @@ class ModeClassifier:
         if has_direct and not self._has_write_keywords(lowered):
             return ExecutionMode.DIRECT
 
-        # 3. Research-only
+        # 3. 只读研究（分析/查找/读取…）
         research_keywords = {"analyze", "find", "search", "read", "lookup", "explain", "where", "list"}
         zh_research_keywords = {"分析", "查找", "搜索", "读取", "定位", "列表"}
         has_research = any(kw in lowered for kw in research_keywords) or any(
@@ -42,13 +49,13 @@ class ModeClassifier:
         if has_research and not self._has_write_keywords(lowered):
             return ExecutionMode.RESEARCH_ONLY
 
-        # 4. Multi-file or complex DAG execution
+        # 4. 多文件 / 复杂 DAG（重构/跨模块…）
         dag_keywords = {"refactor", "across modules", "multi-file", "all files", "whole project", "integrate"}
         zh_dag_keywords = {"重构", "跨模块", "多文件", "所有文件", "整个项目", "集成"}
         if any(kw in lowered for kw in dag_keywords) or any(kw in lowered for kw in zh_dag_keywords):
             return ExecutionMode.DAG_EXECUTE
 
-        # 5. Default fallback to linear-edit or research-only
+        # 5. 兜底：有写关键词走 linear-edit，否则 research-only
         if self._has_write_keywords(lowered):
             return ExecutionMode.LINEAR_EDIT
 

@@ -1,3 +1,10 @@
+"""OpenAI 兼容的对话补全客户端（规划层用）：把任务 + 上下文包发给 LLM，解析回结构化 ModelPlan。
+
+只依赖 /chat/completions，支持流式与非流式。容错是重点：HTTP 错误、非 JSON 响应、多模态 content、
+markdown 代码围栏、混杂散文里的 JSON 对象，都被规整成结构化的 ModelClientError 或干净的 plan。
+API key 只从环境变量名（api_key_env 指向的变量）读取，从不硬编码。
+"""
+
 from __future__ import annotations
 
 import json
@@ -42,7 +49,7 @@ Use only the supplied context pack; do not assume unread files.
 
 
 class OpenAICompatibleClient:
-    """Minimal OpenAI-compatible chat completions client for v0.1 planning."""
+    """精简的 OpenAI 兼容对话补全客户端，供规划层调用。"""
 
     def __init__(
         self,
@@ -324,6 +331,10 @@ def _parse_plan_content(content: str) -> ModelPlan:
 
 
 def _extract_json_object(content: str) -> str:
+    """从可能夹带散文 / markdown 围栏的模型输出里，抠出第一个完整的 JSON 对象。
+
+    用括号深度匹配（且正确跳过字符串内的转义引号），比正则更稳；找不到完整对象则抛 invalid_plan_json。
+    """
     stripped = _strip_markdown_fence(content.strip())
     if stripped.startswith("```"):
         stripped = _strip_markdown_fence(stripped)
