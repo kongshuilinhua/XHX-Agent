@@ -15,6 +15,7 @@ from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
+from xhx_agent.runtime.session import record_session
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
@@ -298,6 +299,11 @@ class TextualCommandConsoleApp(App[None]):
             thread=True,
         )
 
+    @property
+    def orchestrator_mode(self) -> str | None:
+        """Explicit orchestrator paradigm from /mode, or None to auto-classify."""
+        return self.state.mode if self.state.mode in {"loop", "graph", "linear", "dag"} else None
+
     def run_task(self, task: str, *, announce_user: bool = True, reset_cancel: bool = True) -> None:
         if reset_cancel:
             self.cancel_requested = False
@@ -314,8 +320,10 @@ class TextualCommandConsoleApp(App[None]):
             auto_repair=self.auto_repair,
             event_callback=self.handle_runtime_event,
             cancel_check=self.is_cancel_requested,
+            mode=self.orchestrator_mode,
         )
         self.last_result = result
+        record_session(self.workspace, task, result)
         self.apply_run_result(result)
         self.append_message(f"system> run finished: {result.status}, verification: {result.verification}")
         self.run_pending_steer()
