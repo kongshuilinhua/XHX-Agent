@@ -1,3 +1,10 @@
+"""上下文包编译器：每次模型调用前，把候选上下文按优先级塞进固定 token 预算。
+
+流程：收集候选（项目地图 / 命中的 skill / 符号·引用·调用·import 上下文 / 变更文件 / 工具历史 /
+最近错误 / 证据）→ 各自带 priority → 从高到低塞，超预算就丢。token 用 tiktoken 精确计、失败回退字符
+启发式。长循环里旧的工具历史会被压成一行而非丢弃（见 _compact_tool_summaries）。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -16,6 +23,8 @@ from xhx_agent.repo_intel.symbols import Symbol, search_symbols
 
 logger = logging.getLogger(__name__)
 
+# 预算与各类上下文的体积上限：这些 MAX_* 是控制「喂给模型多少」的旋钮，
+# 共同保证上下文包不超 token 预算、各类内容也不互相挤占过多。
 DEFAULT_CONTEXT_BUDGET_TOKENS = 6_000
 DEFAULT_TOP_K_EVIDENCE = 8
 MAX_CHANGED_FILES = 8
@@ -62,6 +71,7 @@ def compile_context_pack(
     top_k_evidence: int = DEFAULT_TOP_K_EVIDENCE,
     history_summarizer: Callable[[list[str]], str] | None = None,
 ) -> ContextPack:
+    """编译一份预算内的上下文包：收集带优先级的候选 → 按优先级塞进 budget_tokens → 超出则丢弃。"""
     candidates: list[ContextItem] = []
 
     xhx_md = workspace / "XHX.md"
@@ -222,6 +232,8 @@ def compile_context_pack(
     debug_records: list[ContextDebugRecord] = []
     used_tokens = _estimate_tokens(task) + _estimate_tokens(str(scan.model_dump()))
     reserved_tokens = used_tokens
+    # 按 (priority, source) 从高到低塞：装得下就纳入并累加 token，装不下记为 omitted。
+    # 于是高优先级（recent_error=95、project_map=90 等）在预算紧张时优先保命。
     for item in sorted(candidates, key=lambda current: (current.priority, current.source), reverse=True):
         item.tokens_estimate = _estimate_tokens(item.content)
         if not item.content:
@@ -652,7 +664,7 @@ def _limit_text(text: str, max_chars: int) -> str:
 
 
 def _heuristic_compaction(older: list[str]) -> str:
-    """Aggregate older tool summaries by tool name with a success/failure tally."""
+    """把更早的工具历史按工具名聚合成一行，附成功/失败计数。"""
 
     tool_counts: dict[str, int] = {}
     failed = 0
@@ -672,12 +684,10 @@ def _heuristic_compaction(older: list[str]) -> str:
 def _compact_tool_summaries(
     summaries: list[str], keep_recent: int, summarizer: Callable[[list[str]], str] | None = None
 ) -> tuple[str | None, list[str]]:
-    """Compact overflowing tool summaries so a long loop keeps a trace of earlier work.
+    """压缩溢出的工具历史，让长循环仍保留早期工作的痕迹。
 
-    Older summaries beyond ``keep_recent`` are condensed into one line. With no
-    ``summarizer`` this is a pure heuristic tally (tool counts + failures). When a
-    ``summarizer`` is supplied (e.g. an LLM-backed callback) it produces a
-    semantic summary instead; any error falls back to the heuristic tally.
+    超过 keep_recent 的更早历史被压成一行：没有 summarizer 时是纯启发式计数（工具次数 + 失败数）；
+    传了 summarizer（如 LLM 回调）则生成语义摘要，出错时回退到启发式计数。
     """
 
     keep_recent = max(0, keep_recent)
@@ -716,6 +726,7 @@ def _estimate_tokens(text: str) -> int:
         except Exception:
             pass
 
+    # tiktoken 不可用时的字符级回退：ASCII 约 0.25 token/字符，非 ASCII（中文等）约 1.5。
     tokens = 0.0
     for char in text:
         if ord(char) > 127:

@@ -1,3 +1,9 @@
+"""SQLite 镜像：把 JSON 主索引同步成一份 .xhx/repo/index.db（symbols/imports/references/calls 四表）。
+
+注意（回看勿误解）：当前查询路径仍走 JSON 加载的内存索引，这份 SQLite 是「只写镜像」——
+每次全量重刷（DELETE + INSERT），作为未来直接 SQL 查询的预留，目前没有读取它的代码。
+"""
+
 from __future__ import annotations
 
 import sqlite3
@@ -11,6 +17,7 @@ def repo_db_path(workspace: Path) -> Path:
 
 
 def sync_index_to_sqlite(workspace: Path, index: RepoIntelIndex) -> Path:
+    """把内存索引全量写入 SQLite 镜像：建表 → 清空旧记录 → 批量插入 symbols/imports/references/calls。"""
     db_file = repo_db_path(workspace)
     db_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -70,7 +77,7 @@ def sync_index_to_sqlite(workspace: Path, index: RepoIntelIndex) -> Path:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls (caller)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls (callee)")
 
-        # 2. Clear old records in this transaction
+        # 2. 全量重刷：每次同步清空再插入（这是只写镜像，不做增量）。
         cursor.execute("DELETE FROM symbols")
         cursor.execute("DELETE FROM imports")
         cursor.execute('DELETE FROM "references"')

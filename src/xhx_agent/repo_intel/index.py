@@ -1,3 +1,9 @@
+"""代码智能索引：构建 / 落盘 / 增量更新 RepoIntelIndex（repo map + 符号 + import + 引用 + 调用图）。
+
+write_repo_intel_index 写 JSON 主索引并同步 SQLite 镜像；load_repo_intel_index 优先读 JSON，
+指纹过期时走 incremental_update（按 size/mtime 只重算变更文件），缺失/损坏时整体重建。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -64,6 +70,7 @@ def write_repo_intel_index(workspace: Path, index: RepoIntelIndex | None = None)
     index = index or build_repo_intel_index(workspace)
     path.write_text(index.model_dump_json(indent=2), encoding="utf-8")
     try:
+        # JSON 是主索引；SQLite 只是同步出来的可查询镜像，同步失败不阻断主流程。
         sync_index_to_sqlite(workspace, index)
     except Exception as e:
         logger.warning("Failed to sync index to SQLite DB: %s", e)
@@ -225,6 +232,7 @@ def _update_references(
 
 
 def incremental_update_repo_intel_index(workspace: Path, old_index: RepoIntelIndex) -> RepoIntelIndex:
+    """增量更新索引：按文件 size/mtime 比对找出变更/删除，只重算这些文件，未变部分原样保留。"""
     root = workspace.resolve()
     new_repo_map = build_repo_map(root)
 
@@ -297,6 +305,7 @@ def load_repo_intel_index(workspace: Path) -> RepoIntelIndex:
         write_repo_intel_index(workspace, new_idx)
         return new_idx
     current_repo_map = build_repo_map(workspace)
+    # 指纹（文件 size+mtime 的哈希）变了才增量更新，避免每次都全量重扫。
     if index.content_fingerprint != repo_map_fingerprint(current_repo_map):
         updated_idx = incremental_update_repo_intel_index(workspace, index)
         write_repo_intel_index(workspace, updated_idx)
