@@ -1,3 +1,10 @@
+"""运行时主入口：RuntimeApp 把一个任务从「初始化 → 编排 → 验证/修复 → 出报告」串起来。
+
+run_task 是总入口：建好 worktree 隔离 / evidence / kernel / scan，打包成 OrchestratorContext，
+按 --mode（或意图分类）选编排器执行，成功才把改动同步回主工作区。loop/linear 范式的实际循环体
+在 _run_linear → _run_model_tool_loop，验证与有界自动修复在 _execute_verification_and_repair_loop。
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -91,6 +98,12 @@ CancelCheck = Callable[[], bool]
 
 
 class RuntimeApp:
+    """单次运行的宿主：持有 workspace 与工具注册表，提供 init / run / 验证 / 修复等顶层方法。
+
+    注意：run_task 期间 self.workspace 会被临时切到隔离 worktree，结束在 finally 切回——
+    所以内部方法读 self.workspace 拿到的始终是「当前活动工作区」。
+    """
+
     def __init__(self, workspace: Path | None = None, tool_registry: ToolRegistry | None = None) -> None:
         self.workspace = (workspace or Path.cwd()).resolve()
         self.tool_registry = tool_registry or default_tool_registry()
@@ -120,6 +133,7 @@ class RuntimeApp:
         cancel_check: CancelCheck | None = None,
         mode: str | None = None,
     ) -> RunResult:
+        """任务总入口：worktree 隔离 → 选编排器 → 运行 → 成功则同步回主工作区。"""
         start_time = time.time()
         metrics_tracker = {"tokens": 0}
         config = load_config(self.workspace)
@@ -211,7 +225,7 @@ class RuntimeApp:
         start_time: float,
         metrics_tracker: dict[str, int],
     ) -> RunResult:
-        """Build the terminal RunResult for a run cancelled before model planning began."""
+        """构造「在模型规划开始前被取消」的终态 RunResult。"""
         message = "Run cancelled by user before model planning."
         evidence.write_trace("cancel_requested", {"stage": "before_model_loop"})
         emit_event(event_callback, "run_cancelled", "Run cancelled before model planning.", run_id=run_id)
@@ -260,6 +274,11 @@ class RuntimeApp:
         )
 
     def _run_linear(self, ctx: OrchestratorContext) -> RunResult:
+        """loop / linear 范式的实际循环体：模型工具循环 → 刷新索引 → 验证 + 有界修复 → 出报告。
+
+        autonomous（loop）与否（linear）只体现在喂给 _run_model_tool_loop 的几个开关上：
+        max_turns、stop_on_first_change、history_summarizer、concurrent_readonly。
+        """
         changed_files: list[str] = []
         commands_run: list[str] = []
         verification_results: list[TerminalResult] = []
@@ -295,6 +314,7 @@ class RuntimeApp:
             event_callback=ctx.event_callback,
             cancel_check=ctx.cancel_check,
             metrics_tracker=ctx.metrics_tracker,
+            # autonomous（loop）才放开多轮 + 历史压缩 + 只读并发；非 autonomous（linear）首改即停。
             max_turns=load_config(self.workspace).max_loop_turns if ctx.autonomous else None,
             stop_on_first_change=not ctx.autonomous,
             history_summarizer=self._make_history_summarizer(ctx.profile) if ctx.autonomous else None,
@@ -430,6 +450,10 @@ class RuntimeApp:
         self,
         ctx: VerificationLoopContext,
     ) -> tuple[str, str, int, int, str | None, Checkpoint | None, RepairDecision | None, bool]:
+        """验证 + 有界自动修复循环：拍 checkpoint → 定向验证 → review → 失败则最多 2 轮修复。
+
+        修复若没产生新改动就判失败退出；整体失败且有 checkpoint 时生成只读 Restore Plan。
+        """
         checkpoint: Checkpoint | None = None
         restore_plan_created = False
         repair_decision: RepairDecision | None = None
@@ -800,6 +824,11 @@ class RuntimeApp:
         history_summarizer: Callable[[list[str]], str] | None = None,
         concurrent_readonly: bool = False,
     ) -> tuple[str, int, str | None]:
+        """模型↔工具的多轮循环：每轮 编译上下文包 → 取模型计划 → 顺序执行工具 → 判定是否继续。
+
+        autonomous 下最多跑 max_turns 轮、直到模型报 status=done；非 autonomous 首次产生改动即停。
+        返回 (status, 完成的轮数, 最近一次错误)。
+        """
         status = "success"
         turns_completed = starting_turn - 1
         turn_limit = max_turns or _max_model_turns(profile)
