@@ -1,7 +1,7 @@
 # 设计：`loop`（ReAct）范式 —— 对话 + 原生 tool-calling 统一循环（Phase 1）
 
 - 日期：2026-06-10（已刷新，对齐最终决策）
-- 状态：草案（待用户审阅）
+- 状态：Phase 1 已实现（2026-06-10，分支 worktree-loop-tool-calling-phase1）
 - 上位文档：[ROADMAP](../../../ROADMAP.md)（最终架构、命名、分阶段）
 - 借鉴：Claude Code 还原源码 `src/query.ts` 的统一 agent 循环
 
