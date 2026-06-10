@@ -893,7 +893,7 @@ def test_should_stop_after_turn_respects_autonomous_flag() -> None:
     assert _should_stop_after_turn(mock, [], [object()], stop_on_first_change=False) is True
 
 
-def test_loop_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
+def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     profiles_path(tmp_path).write_text(
         ProfilesFile(
@@ -939,15 +939,15 @@ def test_loop_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
 
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
 
-    # mode="loop" is autonomous: it must NOT stop after the first change.
-    result = app.run_task("build stuff", profile_name="real", mode="loop")
+    # mode="plan" is autonomous: it must NOT stop after the first change.
+    result = app.run_task("build stuff", profile_name="real", mode="plan")
 
     assert result.turns == 3
     assert (tmp_path / "a.py").exists()
     assert (tmp_path / "b.py").exists()
 
 
-def test_loop_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
+def test_plan_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("AAA\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("BBB\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()
@@ -985,7 +985,7 @@ def test_loop_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
     events = []
 
-    result = app.run_task("explore files", profile_name="real", mode="loop", event_callback=events.append)
+    result = app.run_task("explore files", profile_name="real", mode="plan", event_callback=events.append)
 
     assert result.status == "success"
     assert any(event.type == "subagent_concurrent" for event in events)

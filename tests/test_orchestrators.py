@@ -74,9 +74,9 @@ def test_select_orchestrator_defaults_and_errors() -> None:
     from xhx_agent.orchestrators.registry import execution_mode_to_key, select_orchestrator
     from xhx_agent.planner.modes import ExecutionMode
 
-    # rename phase: default mode key "loop" is a temporary alias to the plan orchestrator
-    assert select_orchestrator(None).name == "plan"
-    assert select_orchestrator("loop").name == "plan"
+    # DEFAULT_MODE="loop" -> LoopOrchestrator (named "loop"); "plan" -> PlanOrchestrator
+    assert select_orchestrator(None).name == "loop"
+    assert select_orchestrator("loop").name == "loop"
     assert select_orchestrator("plan").name == "plan"
     assert select_orchestrator("linear").name == "linear"
     assert select_orchestrator("graph").name == "graph"
