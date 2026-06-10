@@ -77,8 +77,8 @@
 ## 4. 分阶段（每步可跑、可 demo、可讲）
 
 - **Phase 0**：《Claude Code 源码经验》文档（零代码风险，作后续图纸）。
-- **Phase 1**：**tool-calling 基础设施 + `loop`(ReAct) MVP** —— 客户端 + 工具 JSON schema + 消息历史 + mock 模拟；支持**对话 + `read_file`/`search`/`apply_patch`**（读+写）。详见 [设计文档](docs/superpowers/specs/2026-06-10-agent-tool-calling-conversation-design.md)。
-- **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ `terminal`/`verify` 工具 + 只读并发。
+- **Phase 1**：**tool-calling 基础设施 + `loop`(ReAct) MVP** —— 客户端 + **声明式工具接口**（schema + 风险档 + readonly/destructive + executor）+ 消息历史 + mock 模拟；支持**对话 + `read_file`/`search`/`apply_patch`**（读+写）。详见 [设计文档](docs/superpowers/specs/2026-06-10-agent-tool-calling-conversation-design.md)。
+- **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发。详见 §8。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
@@ -139,11 +139,28 @@
 
 ---
 
-## 8. 待讨论功能（停车场 · Parking Lot）
+## 8. 工具生态：Kernel 作为万能闸门（部分已设计）
+
+**原则**：不管是内置工具、bash 命令、还是外部 MCP 工具，**每次调用都过同一个风险分级闸门**（Safe Execution Kernel）。骨架已就位——`decide_tool` 覆盖内置 / `mcp_` / `custom_`，`decide_terminal` 对命令做 shlex 分级（危险可执行文件黑名单 + shell 元字符/内联解释器一律 deny + 120s 看门狗）。**新工具 = 声明 schema + 风险档 + executor，自动接入闸门**。
+
+**现状**
+- 已暴露给模型：`search` / `read_file` / `apply_patch`。
+- `terminal`：已存在但**仅用于验证**，未暴露给模型。
+- **MCP：已有可用 stdio 客户端**（连接/握手/`tools/list`/`tools/call`/动态注册 `mcp_` 前缀 + mock + CONFIRM 门控）——非从零。
+
+**本阶段已选**（并入 Phase 1/2）：声明式工具接口 + **暴露受控 `terminal`/bash**（最高杠杆，最能展示安全内核）。
+
+**候选工具（未来 · 按 价值÷成本）**
+- 只读 git（status/diff/log）：独立工具保证只读、输出结构化，与裸 bash 分开。
+- MCP 接入新 `loop` + `.xhx/mcp.json` 多服务器配置化（客户端已有，主要是接线/配置）。
+- web 检索（WebFetch/WebSearch）：有用但引入外部依赖/key + SSRF 风险，优先级最低。
+
+---
+
+## 9. 待讨论功能（停车场 · Parking Lot）
 
 > 下面是后续要继续讨论、尚未定型的候选功能。讨论清楚后会移入上方正式规划。
 
-- 更多工具（git 操作、web 检索、扩展 MCP）
 - 三范式可量化对比 benchmark（成功率 / token / 轮数）
 - 多模型路由（探索用便宜模型、改代码用强模型）
 - _（继续讨论中……）_
