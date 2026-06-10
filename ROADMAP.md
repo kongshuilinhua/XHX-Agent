@@ -65,6 +65,7 @@
 **改造（迁到 tool-calling）**
 - 🚧 模型协议：手写 plan-JSON `{summary,status,steps}` 全退役 → **原生 `tool_calls` + 消息历史**
 - 🚧 `mock` provider：改成**模拟 `tool_calls`**，保证离线/CI 仍可跑
+- 🚧 会话管理：现有 `--continue`/`--resume` 从"**摘要续接**"升级为"**完整消息历史持久化**"（落盘 `loop` 的 H，真正还原整段对话）；与长期记忆（§7）分工——会话=单次完整状态，记忆=跨会话事实
 - 🚧 现有 `loop`/`linear` → `plan` 范式；现有 `graph`/`dag` → `graph` 范式
 - ⚠️ 取舍：依赖模型支持 function calling（DeepSeek 支持；放弃对不支持 tool-calling 模型的兼容）
 
@@ -78,7 +79,7 @@
 
 - **Phase 0**：《Claude Code 源码经验》文档（零代码风险，作后续图纸）。
 - **Phase 1**：**tool-calling 基础设施 + `loop`(ReAct) MVP** —— 客户端 + **声明式工具接口**（schema + 风险档 + readonly/destructive + executor）+ 消息历史 + mock 模拟；支持**对话 + `read_file`/`search`/`apply_patch`**（读+写）。详见 [设计文档](docs/superpowers/specs/2026-06-10-agent-tool-calling-conversation-design.md)。
-- **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发。详见 §8。
+- **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发 + **会话持久化**（落盘 `loop` 完整消息历史，`--continue`/`--resume` 还原整段对话）。详见 §8。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
