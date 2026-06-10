@@ -47,3 +47,14 @@ class ModelClientError(Exception):
             "message": self.message,
             "details": self.details,
         }
+
+
+class ToolCall(BaseModel):
+    id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatResult(BaseModel):
+    content: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
