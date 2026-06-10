@@ -1,5 +1,9 @@
 import json
+
+from xhx_agent.models import build_chat_client
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
+from xhx_agent.runtime.profiles import ModelProfile
+
 
 class _FakeResp:
     status_code = 200
@@ -7,8 +11,12 @@ class _FakeResp:
     def json(self): return self._p
 
 class _FakeHTTP:
-    def __init__(self, payload): self._p = payload; self.last = None
-    def post(self, url, headers=None, json=None): self.last = json; return _FakeResp(self._p)
+    def __init__(self, payload):
+        self._p = payload
+        self.last = None
+    def post(self, url, headers=None, json=None):
+        self.last = json
+        return _FakeResp(self._p)
 
 def _client(payload, monkeypatch):
     monkeypatch.setenv("XHX_TEST_KEY", "sk-test")
@@ -29,9 +37,6 @@ def test_chat_parses_tool_calls(monkeypatch):
     assert len(res.tool_calls) == 1
     tc = res.tool_calls[0]
     assert (tc.id, tc.name, tc.arguments) == ("call_1", "read_file", {"path": "a.py"})
-
-from xhx_agent.models import build_chat_client
-from xhx_agent.runtime.profiles import ModelProfile
 
 def test_mock_chat_question_returns_text():
     client = build_chat_client(ModelProfile(name="mock", provider="mock", base_url="", api_key_env="", model="mock"))

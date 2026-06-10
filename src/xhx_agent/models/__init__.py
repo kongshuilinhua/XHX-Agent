@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from xhx_agent.runtime.profiles import ModelProfile
 
 
-def build_chat_client(profile: "ModelProfile"):
+def build_chat_client(profile: ModelProfile):
     """按 profile.provider 构造支持 chat(messages, tools) 的客户端。"""
     if profile.provider == "mock":
         from xhx_agent.models.mock import MockModelClient

@@ -1,5 +1,6 @@
 from xhx_agent.runtime.app import RunResult
 
+
 def _base(**kw):
     return RunResult(run_id="r1", status="success", changed_files=[], commands=[],
                      verification="skipped", summary_path="p", risk_summary=[], **kw)
