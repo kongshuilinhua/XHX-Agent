@@ -81,6 +81,7 @@
 
 - **Phase 0**：《Claude Code 源码经验》文档（零代码风险，作后续图纸）。
 - **Phase 1**（✅ 已实现）：**tool-calling 基础设施 + `loop`(ReAct) MVP** —— 客户端 + **声明式工具接口**（schema + 风险档 + readonly/destructive + executor）+ 消息历史 + mock 模拟；支持**对话 + `read_file`/`search`/`apply_patch`**（读+写）。详见 [设计文档](docs/superpowers/specs/2026-06-10-agent-tool-calling-conversation-design.md)。
+- **Phase 1 终审遗留（并入 Phase 2）**：① TUI（textual_app）也渲染 `RunResult.answer`；② 兑现"schema 单一来源"——用 JSON schema 派生工具参数校验、`ToolDefinition` 纳入 runner，替换 `_validate_arguments` 硬编码；③ 给 `ToolDefinition.read_only/destructive` 接上 `decide_tool` 风险门控。
 - **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发 + **会话持久化**（落盘 `loop` 完整消息历史，`--continue`/`--resume` 还原整段对话）。详见 §8。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
