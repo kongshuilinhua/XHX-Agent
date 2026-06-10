@@ -34,31 +34,16 @@ def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
     return PolicyDecision(decision="allow", risk=risk, reason="Command allowed by policy.")
 
 
-def decide_tool(tool_name: str) -> PolicyDecision:
-    """按工具名判定：只读工具放行，apply_patch 标 CONFIRM，mcp_/custom_ 动态工具放行但 CONFIRM，其余拒绝。"""
-    if tool_name in {"search", "read_file"}:
-        return PolicyDecision(
-            decision="allow",
-            risk=RiskLevel.SAFE,
-            reason=f"Tool {tool_name} is read-only.",
-        )
-    if tool_name == "apply_patch":
-        return PolicyDecision(
-            decision="allow",
-            risk=RiskLevel.CONFIRM,
-            reason="Structured repository write allowed by apply_patch-only policy.",
-        )
+def decide_tool(tool_name: str, *, read_only: bool = False, destructive: bool = False) -> PolicyDecision:
+    """按工具标志判定：只读→SAFE 放行；破坏性→CONFIRM 放行（worktree 隔离）；
+    mcp_/custom_ 动态工具→CONFIRM 放行（以 Agent 权限运行、无沙箱）；其余拒绝。"""
+    if read_only:
+        return PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Tool {tool_name} is read-only.")
+    if destructive:
+        return PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM,
+            reason=f"Tool {tool_name} performs writes; allowed under worktree isolation.")
     if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
-        return PolicyDecision(
-            decision="allow",
-            risk=RiskLevel.CONFIRM,
-            reason=(
-                f"Dynamic tool {tool_name} allowed; it runs with the agent's own privileges "
-                "(no isolation sandbox), constrained only by the workspace boundary."
-            ),
-        )
-    return PolicyDecision(
-        decision="deny",
-        risk=RiskLevel.DENY,
-        reason=f"Tool {tool_name} is not allowed by policy.",
-    )
+        return PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM,
+            reason=(f"Dynamic tool {tool_name} allowed; runs with the agent's own privileges "
+                    "(no isolation sandbox), constrained only by the workspace boundary."))
+    return PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=f"Tool {tool_name} is not allowed by policy.")

@@ -13,9 +13,11 @@ def test_command_risk_classification() -> None:
 
 
 def test_tool_policy_decisions() -> None:
-    assert decide_tool("read_file").decision == "allow"
-    assert decide_tool("search").risk is RiskLevel.SAFE
-    assert decide_tool("apply_patch").risk is RiskLevel.CONFIRM
+    # Risk is now derived from the tool's read_only/destructive flags (passed by the kernel),
+    # not a hardcoded tool-name list.
+    assert decide_tool("read_file", read_only=True).decision == "allow"
+    assert decide_tool("search", read_only=True).risk is RiskLevel.SAFE
+    assert decide_tool("apply_patch", destructive=True).risk is RiskLevel.CONFIRM
     assert decide_tool("terminal").decision == "deny"
 
     # Dynamic MCP / custom tools are allowed but flagged CONFIRM: they run with the agent's
@@ -24,6 +26,26 @@ def test_tool_policy_decisions() -> None:
     assert mcp_decision.decision == "allow"
     assert mcp_decision.risk is RiskLevel.CONFIRM
     assert decide_tool("custom_formatter").risk is RiskLevel.CONFIRM
+
+
+def test_decide_tool_read_only_is_safe():
+    d = decide_tool("read_file", read_only=True)
+    assert d.decision == "allow" and d.risk is RiskLevel.SAFE
+
+
+def test_decide_tool_destructive_is_confirm():
+    d = decide_tool("apply_patch", destructive=True)
+    assert d.decision == "allow" and d.risk is RiskLevel.CONFIRM
+
+
+def test_decide_tool_dynamic_prefix_confirm():
+    d = decide_tool("mcp_weather")
+    assert d.decision == "allow" and d.risk is RiskLevel.CONFIRM
+
+
+def test_decide_tool_unknown_denied():
+    d = decide_tool("rm_everything")
+    assert d.decision == "deny" and d.risk is RiskLevel.DENY
 
 
 def test_terminal_policy_decisions() -> None:

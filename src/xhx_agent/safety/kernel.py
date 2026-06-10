@@ -35,7 +35,12 @@ class SafeExecutionKernel:
         turn: int,
         event_callback: EventCallback | None = None,
     ) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision]:
-        policy = decide_tool(step.tool)
+        d = self.tool_registry.definition(step.tool)
+        policy = decide_tool(
+            step.tool,
+            read_only=bool(d and d.read_only),
+            destructive=bool(d and d.destructive),
+        )
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
             # 被拒工具到此为止：不产生 tool_call、不执行；但上面已记 policy_decision，审计链完整。
