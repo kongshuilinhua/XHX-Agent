@@ -80,6 +80,7 @@ class RunResult(BaseModel):
     risk_summary: list[str]
     metrics: RunMetrics | None = None
     mode: str = ""
+    answer: str | None = None
 
 
 class PlanPreview(BaseModel):
