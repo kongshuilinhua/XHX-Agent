@@ -10,13 +10,14 @@ from xhx_agent.orchestrators.base import Orchestrator
 from xhx_agent.orchestrators.dag import DagOrchestrator
 from xhx_agent.orchestrators.graph import GraphOrchestrator
 from xhx_agent.orchestrators.linear import LinearOrchestrator
-from xhx_agent.orchestrators.loop import LoopOrchestrator
+from xhx_agent.orchestrators.plan import PlanOrchestrator
 from xhx_agent.planner.modes import ExecutionMode
 
 DEFAULT_MODE = "loop"
 
 _ORCHESTRATORS: dict[str, type] = {
-    "loop": LoopOrchestrator,  # 自主统一循环（M2）
+    "plan": PlanOrchestrator,  # 自主 plan-execute（原 loop 改名）
+    "loop": PlanOrchestrator,  # 临时别名：新 ReAct loop 在后续任务接管
     "linear": LinearOrchestrator,  # auto-classification 用的首改即停 fallback
     "dag": DagOrchestrator,
     "graph": GraphOrchestrator,  # LangGraph 多 agent 工作流（M3）
