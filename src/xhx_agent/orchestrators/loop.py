@@ -78,24 +78,34 @@ class LoopOrchestrator:
                 ],
             })
 
-            for tc in result.tool_calls:
-                step = ToolStep(tool=tc.name, arguments=tc.arguments)
+            def _exec_one(tc):
                 emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}",
                            turn=turn, tool=tc.name)
+                step = ToolStep(tool=tc.name, arguments=tc.arguments)
                 try:
                     exec_result, _trace, policy = ctx.kernel.execute_tool(
                         ctx.tool_context, step, turn, ctx.event_callback)
                     if exec_result is None:
-                        content = f"Tool denied/blocked: {policy.reason}"
-                    else:
-                        content = _render_tool_content(exec_result)
-                        changed_files.extend(exec_result.changed_files)
+                        return tc, f"Tool denied/blocked: {policy.reason}", []
+                    return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
                 except Exception as exc:  # noqa: BLE001
-                    content = f"[{tc.name} error] {exc}"
-                    ctx.evidence.write_trace(
-                        "tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
-                emit_event(ctx.event_callback, "tool_result", "Tool execution completed.",
-                           turn=turn, tool=tc.name)
+                    ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
+                    return tc, f"[{tc.name} error] {exc}", []
+
+            reg = ctx.kernel.tool_registry
+            all_readonly = len(result.tool_calls) >= 2 and all(
+                (reg.definition(tc.name) is not None and reg.definition(tc.name).read_only)
+                for tc in result.tool_calls)
+            if all_readonly:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
+                    outcomes = list(pool.map(_exec_one, result.tool_calls))
+            else:
+                outcomes = [_exec_one(tc) for tc in result.tool_calls]
+
+            for tc, content, changed in outcomes:
+                emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
+                changed_files.extend(changed)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": content[:_MAX_TOOL_RESULT_CHARS]})
         else:
