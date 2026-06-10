@@ -17,41 +17,6 @@ from xhx_agent.tools.search import search
 ToolName = Literal["search", "read_file", "apply_patch"]
 
 
-@dataclass(frozen=True)
-class ToolDefinition:
-    name: str
-    description: str
-    parameters: dict[str, Any]  # JSON Schema
-    read_only: bool = False
-    destructive: bool = False
-
-
-TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
-    "search": ToolDefinition(
-        name="search", description="在仓库内按文本搜索，返回匹配的文件/行。只读。",
-        parameters={"type": "object", "properties": {
-            "query": {"type": "string", "description": "搜索文本"},
-            "glob": {"type": "string", "description": "可选文件名 glob，如 *.py"},
-            "max_results": {"type": "integer", "default": 50}},
-            "required": ["query"]},
-        read_only=True),
-    "read_file": ToolDefinition(
-        name="read_file", description="按行读取仓库内文件内容。只读。",
-        parameters={"type": "object", "properties": {
-            "path": {"type": "string", "description": "相对路径"},
-            "start_line": {"type": "integer", "default": 1},
-            "max_lines": {"type": "integer", "default": 200}},
-            "required": ["path"]},
-        read_only=True),
-    "apply_patch": ToolDefinition(
-        name="apply_patch", description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
-        parameters={"type": "object", "properties": {
-            "patch": {"type": "string", "description": "完整 patch 文本"}},
-            "required": ["patch"]},
-        destructive=True),
-}
-
-
 class ToolExecutionResult(BaseModel):
     tool: str
     status: str
@@ -72,82 +37,6 @@ class ToolContext(BaseModel):
 
 
 ToolRunner = Callable[[ToolContext, dict[str, Any]], ToolExecutionResult]
-
-
-class ToolRegistry:
-    def __init__(self) -> None:
-        self._tools: dict[str, ToolRunner] = {}
-
-    def register(self, name: ToolName, runner: ToolRunner) -> None:
-        self._tools[name] = runner
-
-    @property
-    def names(self) -> set[str]:
-        return set(self._tools)
-
-    def tool_schemas(self) -> list[dict[str, Any]]:
-        """导出已注册工具的 OpenAI function 格式 schema（喂给模型的 tools 参数）。"""
-        return [
-            {"type": "function", "function": {
-                "name": d.name, "description": d.description, "parameters": d.parameters}}
-            for name, d in TOOL_DEFINITIONS.items() if name in self._tools
-        ]
-
-    def validate_plan(self, plan: ModelPlan) -> None:
-        for index, step in enumerate(plan.steps, start=1):
-            if step.tool not in self._tools:
-                raise ModelClientError(
-                    code="unsupported_tool",
-                    message=f"Model plan step {index} requested unsupported tool: {step.tool}",
-                    details={"tool": step.tool, "step": step.model_dump()},
-                )
-            self._validate_arguments(index, step)
-
-    def execute(self, context: ToolContext, step: ToolStep) -> ToolExecutionResult:
-        if step.tool not in self._tools:
-            return ToolExecutionResult(
-                tool=step.tool,
-                status="failed",
-                summary=f"Unsupported tool: {step.tool}",
-                trace_payload={"tool": step.tool, "error": "unsupported tool"},
-                error=f"Unsupported tool: {step.tool}",
-            )
-        return self._tools[step.tool](context, step.arguments)
-
-    def _validate_arguments(self, index: int, step: ToolStep) -> None:
-        if step.tool == "search":
-            query = step.arguments.get("query")
-            if not isinstance(query, str) or not query:
-                raise _invalid_tool_arguments(index, step, "search requires non-empty string argument: query")
-            glob = step.arguments.get("glob")
-            if glob is not None and not isinstance(glob, str):
-                raise _invalid_tool_arguments(index, step, "search argument glob must be a string when provided")
-            return
-        if step.tool == "read_file":
-            path = step.arguments.get("path")
-            if not isinstance(path, str) or not path:
-                raise _invalid_tool_arguments(index, step, "read_file requires non-empty string argument: path")
-            return
-        if step.tool == "apply_patch":
-            patch = step.arguments.get("patch")
-            if not isinstance(patch, str) or not patch:
-                raise _invalid_tool_arguments(index, step, "apply_patch requires non-empty string argument: patch")
-
-
-def default_tool_registry() -> ToolRegistry:
-    registry = ToolRegistry()
-    registry.register("search", _run_search)
-    registry.register("read_file", _run_read_file)
-    registry.register("apply_patch", _run_apply_patch)
-    return registry
-
-
-def _invalid_tool_arguments(index: int, step: ToolStep, message: str) -> ModelClientError:
-    return ModelClientError(
-        code="invalid_tool_arguments",
-        message=f"Model plan step {index} is invalid: {message}",
-        details={"tool": step.tool, "step": step.model_dump()},
-    )
 
 
 def _run_search(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
@@ -208,3 +97,128 @@ def _run_apply_patch(context: ToolContext, arguments: dict[str, Any]) -> ToolExe
         changed_files=result.changed_files,
         error=result.stderr if result.status != "success" else None,
     )
+
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON Schema
+    read_only: bool = False
+    destructive: bool = False
+    runner: ToolRunner | None = None
+
+
+TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
+    "search": ToolDefinition(
+        name="search", description="在仓库内按文本搜索，返回匹配的文件/行。只读。",
+        parameters={"type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索文本"},
+            "glob": {"type": "string", "description": "可选文件名 glob，如 *.py"},
+            "max_results": {"type": "integer", "default": 50}},
+            "required": ["query"]},
+        read_only=True, runner=_run_search),
+    "read_file": ToolDefinition(
+        name="read_file", description="按行读取仓库内文件内容。只读。",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string", "description": "相对路径"},
+            "start_line": {"type": "integer", "default": 1},
+            "max_lines": {"type": "integer", "default": 200}},
+            "required": ["path"]},
+        read_only=True, runner=_run_read_file),
+    "apply_patch": ToolDefinition(
+        name="apply_patch", description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
+        parameters={"type": "object", "properties": {
+            "patch": {"type": "string", "description": "完整 patch 文本"}},
+            "required": ["patch"]},
+        destructive=True, runner=_run_apply_patch),
+}
+
+
+class ToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, ToolRunner] = {}
+        self._definitions: dict[str, ToolDefinition] = {}
+
+    def register(self, name: ToolName, runner: ToolRunner) -> None:
+        self._tools[name] = runner
+
+    def register_definition(self, d: ToolDefinition) -> None:
+        self._definitions[d.name] = d
+        self._tools[d.name] = d.runner
+
+    def definition(self, name: str) -> ToolDefinition | None:
+        return self._definitions.get(name)
+
+    @property
+    def names(self) -> set[str]:
+        return set(self._tools)
+
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """导出已注册工具的 OpenAI function 格式 schema（喂给模型的 tools 参数）。"""
+        return [
+            {"type": "function", "function": {
+                "name": d.name, "description": d.description, "parameters": d.parameters}}
+            for d in self._definitions.values()
+        ]
+
+    def validate_plan(self, plan: ModelPlan) -> None:
+        for index, step in enumerate(plan.steps, start=1):
+            if step.tool not in self._tools:
+                raise ModelClientError(
+                    code="unsupported_tool",
+                    message=f"Model plan step {index} requested unsupported tool: {step.tool}",
+                    details={"tool": step.tool, "step": step.model_dump()},
+                )
+            d = self._definitions.get(step.tool)
+            if d is not None:
+                _validate_against_schema(index, step, d.parameters)
+
+    def execute(self, context: ToolContext, step: ToolStep) -> ToolExecutionResult:
+        if step.tool not in self._tools:
+            return ToolExecutionResult(
+                tool=step.tool,
+                status="failed",
+                summary=f"Unsupported tool: {step.tool}",
+                trace_payload={"tool": step.tool, "error": "unsupported tool"},
+                error=f"Unsupported tool: {step.tool}",
+            )
+        return self._tools[step.tool](context, step.arguments)
+
+
+def default_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    for d in TOOL_DEFINITIONS.values():
+        registry.register_definition(d)
+    return registry
+
+
+def _invalid_tool_arguments(index: int, step: ToolStep, message: str) -> ModelClientError:
+    return ModelClientError(
+        code="invalid_tool_arguments",
+        message=f"Model plan step {index} is invalid: {message}",
+        details={"tool": step.tool, "step": step.model_dump()},
+    )
+
+
+_JSON_PY_TYPES: dict[str, type | tuple[type, ...]] = {
+    "string": str, "integer": int, "number": (int, float),
+    "boolean": bool, "object": dict, "array": list,
+}
+
+
+def _validate_against_schema(index: int, step: ToolStep, schema: dict[str, Any]) -> None:
+    props = schema.get("properties", {})
+    required = schema.get("required", [])
+    args = step.arguments
+    for key in required:
+        val = args.get(key)
+        if val is None or (isinstance(val, str) and not val):
+            raise _invalid_tool_arguments(index, step, f"{step.tool} requires non-empty argument: {key}")
+    for key, val in args.items():
+        spec = props.get(key)
+        if not spec or val is None:
+            continue
+        py = _JSON_PY_TYPES.get(spec.get("type", ""))
+        if py and not isinstance(val, py):
+            raise _invalid_tool_arguments(index, step, f"{step.tool} argument {key} must be {spec['type']}")

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
-from xhx_agent.tools.registry import ToolContext, default_tool_registry
+from xhx_agent.tools.registry import TOOL_DEFINITIONS, ToolContext, default_tool_registry
 
 
 def test_tool_registry_rejects_unsupported_tool() -> None:
@@ -81,3 +81,35 @@ def test_tool_registry_apply_patch_returns_structured_failure(tmp_path: Path) ->
     assert result.error
     assert result.evidence_kind is None
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_definitions_carry_runner():
+    assert all(d.runner is not None for d in TOOL_DEFINITIONS.values())
+
+
+def test_registry_definition_lookup():
+    reg = default_tool_registry()
+    assert reg.definition("read_file").read_only is True
+    assert reg.definition("apply_patch").destructive is True
+    assert reg.definition("nope") is None
+
+
+def test_schema_validation_missing_required():
+    reg = default_tool_registry()
+    plan = ModelPlan(summary="s", status="continue", steps=[ToolStep(tool="read_file", arguments={})])
+    with pytest.raises(ModelClientError) as ei:
+        reg.validate_plan(plan)
+    assert ei.value.code == "invalid_tool_arguments"
+
+
+def test_schema_validation_wrong_type():
+    reg = default_tool_registry()
+    plan = ModelPlan(summary="s", status="continue", steps=[ToolStep(tool="search", arguments={"query": 123})])
+    with pytest.raises(ModelClientError):
+        reg.validate_plan(plan)
+
+
+def test_schema_validation_ok():
+    reg = default_tool_registry()
+    plan = ModelPlan(summary="s", status="continue", steps=[ToolStep(tool="read_file", arguments={"path": "a.py"})])
+    reg.validate_plan(plan)
