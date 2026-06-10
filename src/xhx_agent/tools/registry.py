@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,41 @@ from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
 
 ToolName = Literal["search", "read_file", "apply_patch"]
+
+
+@dataclass(frozen=True)
+class ToolDefinition:
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON Schema
+    read_only: bool = False
+    destructive: bool = False
+
+
+TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
+    "search": ToolDefinition(
+        name="search", description="在仓库内按文本搜索，返回匹配的文件/行。只读。",
+        parameters={"type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索文本"},
+            "glob": {"type": "string", "description": "可选文件名 glob，如 *.py"},
+            "max_results": {"type": "integer", "default": 50}},
+            "required": ["query"]},
+        read_only=True),
+    "read_file": ToolDefinition(
+        name="read_file", description="按行读取仓库内文件内容。只读。",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string", "description": "相对路径"},
+            "start_line": {"type": "integer", "default": 1},
+            "max_lines": {"type": "integer", "default": 200}},
+            "required": ["path"]},
+        read_only=True),
+    "apply_patch": ToolDefinition(
+        name="apply_patch", description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
+        parameters={"type": "object", "properties": {
+            "patch": {"type": "string", "description": "完整 patch 文本"}},
+            "required": ["patch"]},
+        destructive=True),
+}
 
 
 class ToolExecutionResult(BaseModel):
@@ -48,6 +84,14 @@ class ToolRegistry:
     @property
     def names(self) -> set[str]:
         return set(self._tools)
+
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """导出已注册工具的 OpenAI function 格式 schema（喂给模型的 tools 参数）。"""
+        return [
+            {"type": "function", "function": {
+                "name": d.name, "description": d.description, "parameters": d.parameters}}
+            for name, d in TOOL_DEFINITIONS.items() if name in self._tools
+        ]
 
     def validate_plan(self, plan: ModelPlan) -> None:
         for index, step in enumerate(plan.steps, start=1):
