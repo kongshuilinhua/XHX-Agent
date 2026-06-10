@@ -81,8 +81,9 @@
 - **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ `terminal`/`verify` 工具 + 只读并发。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
-- **Phase 5**：流式渲染 + 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
-- **Phase 6**：README 三范式对比叙事 + 经验文档收尾 + 测试覆盖打磨。
+- **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
+- **Phase 6**：流式渲染 + 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
+- **Phase 7**：README 三范式对比叙事 + 经验文档收尾 + 测试覆盖打磨。
 
 > 落地顺序的细节（如先收敛旧范式还是先建 loop）将在动手前进一步确定；总思路是先把 tool-calling 基础 + `loop` 跑通，再迁 `plan`、`graph`。
 
@@ -99,8 +100,33 @@
 
 ---
 
-## 6. 待讨论功能（停车场 · Parking Lot）
+## 6. 子 agent / 并行探索（已设计 · 对应 Phase 5）
+
+**价值**：一套设计同时拿到三个价值——上下文隔离 / 并行加速 / 专精分工。其中**上下文隔离**接上 xhx 预算化主线，形成"**三层上下文管理**"叙事：①每轮 context pack 预算化（纵向）②`loop` 内历史压缩（纵向）③跨 agent 委派子 agent（横向）。
+
+**机制**：`loop` 调 `dispatch(description, prompt, agent_type)` 工具 → 新开**隔离子循环**（自己的消息历史、自己的 context pack、受限工具、限轮数），跑完**只回浓缩结论**；父上下文只长一句。
+
+**三价值如何落地**
+- 上下文隔离：子 agent 的中间噪音留在自己历史，父只收浓缩结论（**Don't peek**）。
+- 并行加速：一个 turn 里多个 `dispatch` 并发执行（复用现有只读并发线程池思路）。
+- 专精分工：`agent_type` 注册表（explore / review / verify …）+ 每型工具白名单。
+
+**读写范围（首版即含写）**
+- 只读 `explore`：自由并行。
+- 写型子 agent：各自跑在独立 git worktree；**并行执行 + 串行合并 + 冲突上报**——父给子 agent 划不重叠范围，撞了就把"合并冲突"作为工具错误回报父 `loop`，让模型重新规划。复用 `SafeExecutionKernel` 的 worktree / checkpoint / restore。
+
+**护栏**：depth ≤ 1（子 agent 不能再派子 agent，防 worktree 嵌套爆炸）。
+
+**全程复用基座**：tool-calling 客户端、kernel（工具白名单门控）、context-pack 编译器（子 agent 为窄任务编自己的包）、evidence（子 trace 嵌套在父 run 下）。
+
+---
+
+## 7. 待讨论功能（停车场 · Parking Lot）
 
 > 下面是后续要继续讨论、尚未定型的候选功能。讨论清楚后会移入上方正式规划。
 
-- _（待补充——继续讨论中）_
+- 记忆 / 长期上下文（跨会话偏好与决策）
+- 更多工具（git 操作、web 检索、扩展 MCP）
+- 三范式可量化对比 benchmark（成功率 / token / 轮数）
+- 多模型路由（探索用便宜模型、改代码用强模型）
+- _（继续讨论中……）_
