@@ -86,7 +86,7 @@
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
 - **Phase 6**：长期记忆 / 跨会话上下文（`.xhx/memory/` 4 类型事实 + 建议-确认写入 + 确定性召回入 context-pack）。详见 §7。
-- **Phase 7**：流式渲染 + 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
+- **Phase 7**：流式渲染 + **TUI/交互重做**（追加式滚屏 + 细状态行 + Textual 富视图，详见 §10）+ 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
 - **Phase 8**：三范式 benchmark —— 量化对比台架（任务集 × 范式矩阵，测成功率/token/轮数/时间，出对比报告）。详见 §9。
 - **Phase 9**：多模型路由 —— 按角色/子 agent 选模型（便宜探索、强模型改代码）+ fallback 降级。详见 §9。
 - **Phase 10**：README 三范式对比叙事（用 Phase 8 数据）+ 经验文档收尾 + 测试覆盖打磨。
@@ -176,7 +176,26 @@
 
 ---
 
-## 10. 待讨论功能（停车场 · Parking Lot）
+## 10. TUI / 交互重做（部分已修 · 绑定 loop/流式）
+
+**问题**：现有 REPL 把"全屏仪表盘"当主界面——一次交互整页重绘多遍、噪音大；`Table.grid` 固定列导致长 workspace 路径与 `cancel` 糊连。和即将到来的流式 `loop` 也不搭。
+
+**参照（两套主流殊途同归）**
+- **Claude Code**（Ink/React）：Static 滚屏 + 流式小区 + flex 布局 + 细状态行。
+- **Pi**（`pi-tui` 自研，`D:\pycharmprojects\pi`）：组件树 `render(width)→lines` + `previousLines` **逐行 diff** + `requestRender` **防抖** + agent 核心与 TUI **解耦**。
+
+**5 条普适原则**：①diff 重绘不清屏 ②合并/防抖渲染 ③按宽度的组件布局 ④渲染器与 loop 解耦 ⑤流式内容独立区 + 细状态行。
+
+**xhx 关键判断**：架构已对——loop 全程 `emit_event`/`event_callback`，rich REPL / Textual TUI / JSON-RPC 都是同一事件流的消费者（天然解耦）；且**已有 Textual app**（Textual 原生具备 diff/防抖/响应式）。**问题只在 rich REPL 的渲染策略**。
+
+**落地**
+- `xhx chat`（REPL）：改成**追加式滚屏 + 一个细 `Live` 只渲染流式行 + 状态**，表头宽度自适应。基础版随 loop MVP（Phase 1/2）落地，流式打磨在 Phase 7。
+- `xhx tui`（Textual）：作为富视图主场打磨（Phase 7）。
+- ✅ **已修**：表头 workspace/cancel 溢出糊连（`tui/page.py`，改为全宽 fold 行，commit `77424c7`）。
+
+---
+
+## 11. 待讨论功能（停车场 · Parking Lot）
 
 > 下面是后续要继续讨论、尚未定型的候选功能。讨论清楚后会移入上方正式规划。
 
