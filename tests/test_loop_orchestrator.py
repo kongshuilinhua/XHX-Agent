@@ -69,8 +69,8 @@ def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
 
 
 def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
-    from xhx_agent.models.types import ChatResult, ToolCall
     import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.models.types import ChatResult, ToolCall
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
     seq = [
@@ -82,7 +82,9 @@ def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
     class _Fake:
         def __init__(self): self.i = 0
         def chat(self, messages, tools):
-            r = seq[self.i]; self.i += 1; return r
+            r = seq[self.i]
+            self.i += 1
+            return r
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read both", profile_name="mock", mode="loop")

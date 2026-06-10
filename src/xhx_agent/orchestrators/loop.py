@@ -78,7 +78,7 @@ class LoopOrchestrator:
                 ],
             })
 
-            def _exec_one(tc):
+            def _exec_one(tc, turn=turn):
                 emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}",
                            turn=turn, tool=tc.name)
                 step = ToolStep(tool=tc.name, arguments=tc.arguments)
