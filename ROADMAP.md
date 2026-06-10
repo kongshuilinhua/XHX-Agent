@@ -51,13 +51,15 @@
 
 ## 3. 能力清单（保留 / 改造 / 新增）
 
+> 图例：✅ 已实现 · 🚧 本次新增/改造 · ⚠️ 取舍/风险。**注意**：部分 ✅ 能力（如 `mock`、会话、`benchmark`、MCP）会在"改造/新增"里被扩展或重写——同一项出现在两处不是矛盾，是"保留能力、升级实现"。
+
 **保留（现有独特资产）**
 - ✅ Context Pack 编译器：tiktoken 预算、优先级裁剪、历史压缩
 - ✅ Safe Execution Kernel：risk 三档（safe/confirm/deny）、worktree 隔离、checkpoint/restore
 - ✅ Repo Intelligence：ast + tree-sitter，JSON + SQLite，增量刷新
 - ✅ 验证路由 + 有界自修复（≤2 轮）
 - ✅ Evidence 证据链 + 确定性回放（replay）
-- ✅ 会话恢复：`--continue` / `--resume` / `sessions`
+- ✅ 会话恢复：`--continue` / `--resume` / `sessions`（Phase 2 升级为完整历史持久化，见"改造"）
 - ✅ 入口：CLI `run` / REPL `chat` / TUI / JSON-RPC
 - ✅ 离线 `mock` profile、benchmark、Skills/Hooks/MCP
 - ✅ LLM 接入：OpenAI 兼容（**DeepSeek 已真实连通**）
@@ -89,7 +91,7 @@
 - **Phase 9**：多模型路由 —— 按角色/子 agent 选模型（便宜探索、强模型改代码）+ fallback 降级。详见 §9。
 - **Phase 10**：README 三范式对比叙事（用 Phase 8 数据）+ 经验文档收尾 + 测试覆盖打磨。
 
-> 落地顺序的细节（如先收敛旧范式还是先建 loop）将在动手前进一步确定；总思路是先把 tool-calling 基础 + `loop` 跑通，再迁 `plan`、`graph`。
+> 落地顺序可微调；总思路：先把 tool-calling 基础 + `loop`（Phase 1–2）跑通，再迁 `plan`/`graph`（Phase 3–4，顺带把 `linear`/`dag` 收敛为支撑机制），子 agent / 记忆等增量功能其后。
 
 ---
 
@@ -106,7 +108,7 @@
 
 ## 6. 子 agent / 并行探索（已设计 · 对应 Phase 5）
 
-**价值**：一套设计同时拿到三个价值——上下文隔离 / 并行加速 / 专精分工。其中**上下文隔离**接上 xhx 预算化主线，形成"**多轴上下文管理**"叙事：①每轮 context pack 预算化（纵向）②`loop` 内历史压缩（纵向）③跨 agent 委派子 agent（横向）④长期记忆（时间轴，见 §7）。
+**价值**：一套设计同时拿到三个价值——上下文隔离 / 并行加速 / 专精分工。其中**上下文隔离**接上 xhx 预算化主线，形成"**四轴上下文管理**"叙事：①每轮 context pack 预算化（纵向）②`loop` 内历史压缩（纵向）③跨 agent 委派子 agent（横向）④长期记忆（时间轴，见 §7）。
 
 **机制**：`loop` 调 `dispatch(description, prompt, agent_type)` 工具 → 新开**隔离子循环**（自己的消息历史、自己的 context pack、受限工具、限轮数），跑完**只回浓缩结论**；父上下文只长一句。
 
