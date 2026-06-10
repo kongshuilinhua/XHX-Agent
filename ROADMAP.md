@@ -85,7 +85,9 @@
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
 - **Phase 6**：长期记忆 / 跨会话上下文（`.xhx/memory/` 4 类型事实 + 建议-确认写入 + 确定性召回入 context-pack）。详见 §7。
 - **Phase 7**：流式渲染 + 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
-- **Phase 8**：README 三范式对比叙事 + 经验文档收尾 + 测试覆盖打磨。
+- **Phase 8**：三范式 benchmark —— 量化对比台架（任务集 × 范式矩阵，测成功率/token/轮数/时间，出对比报告）。详见 §9。
+- **Phase 9**：多模型路由 —— 按角色/子 agent 选模型（便宜探索、强模型改代码）+ fallback 降级。详见 §9。
+- **Phase 10**：README 三范式对比叙事（用 Phase 8 数据）+ 经验文档收尾 + 测试覆盖打磨。
 
 > 落地顺序的细节（如先收敛旧范式还是先建 loop）将在动手前进一步确定；总思路是先把 tool-calling 基础 + `loop` 跑通，再迁 `plan`、`graph`。
 
@@ -158,10 +160,22 @@
 
 ---
 
-## 9. 待讨论功能（停车场 · Parking Lot）
+## 9. 量化对比 benchmark + 多模型路由（已设计）
+
+### 9.1 三范式 benchmark（对应 Phase 8）
+**价值**：把"一套基座、多范式、可直接对比"从口号变成**数字表**——核心论点的实证，也是 README/面试的王牌素材。
+**做什么**：同一批任务分别用 `plan`/`graph`/`loop` 跑，测 成功率（验证通过）/ token / 轮数·LLM 调用 / 墙钟 / 改动文件 / 修复轮数 → 出对比报告（markdown + JSON）。
+**复用**：已有 `benchmark` 命令 + `evals/metrics.py`（`RunMetrics`）+ 运行时 `metrics_tracker`；任务集用 `tests/fixtures` 夹具当种子。mock 跑确定性进 CI，真实 LLM 跑真数字。
+
+### 9.2 多模型路由（对应 Phase 9）
+**价值**：成本优化（便宜模型做探索/历史压缩，强模型做规划/改代码）+ fallback 健壮性；与子 agent 天然组合（explore 子 agent 走便宜模型）。
+**做什么**：让一次 run 按角色/步骤/子 agent 选不同 profile；强模型失败/限流时 **fallback 降级**（对标 Claude Code 的 `fallbackModel`）。
+**复用**：已有 profiles 系统（`.xhx/profiles.json`）；`summarize()` 压缩历史这条路最适合先换便宜模型。
+
+---
+
+## 10. 待讨论功能（停车场 · Parking Lot）
 
 > 下面是后续要继续讨论、尚未定型的候选功能。讨论清楚后会移入上方正式规划。
 
-- 三范式可量化对比 benchmark（成功率 / token / 轮数）
-- 多模型路由（探索用便宜模型、改代码用强模型）
-- _（继续讨论中……）_
+- _（暂空——继续讨论中……）_
