@@ -786,6 +786,8 @@ class TextualCommandConsoleApp(App[None]):
 
     def _apply_run_result(self, result: RunResult) -> None:
         self.state.apply_result(result)
+        if result.answer:
+            self._append_message(f"assistant> {result.answer}")
         self.refresh_snapshot()
 
     def append_message(self, message: str) -> None:

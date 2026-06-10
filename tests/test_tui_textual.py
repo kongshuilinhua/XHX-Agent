@@ -928,3 +928,22 @@ def test_textual_run_task_executes_queued_steer_as_follow_up(tmp_path) -> None:
     assert second_kwargs["cancel_check"]() is False
     assert app.pending_steer is None
     assert "running queued steer as follow-up" in app.messages
+
+
+def test_textual_apply_run_result_surfaces_loop_answer(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    result = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="not_executed",
+        summary_path=".xhx/logbook/run-1.md",
+        risk_summary=[],
+        mode="loop",
+        answer="loop 的回答",
+    )
+
+    app._apply_run_result(result)
+
+    assert any("loop 的回答" in message for message in app.messages)
