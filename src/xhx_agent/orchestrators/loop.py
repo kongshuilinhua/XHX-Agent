@@ -82,13 +82,18 @@ class LoopOrchestrator:
                 step = ToolStep(tool=tc.name, arguments=tc.arguments)
                 emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}",
                            turn=turn, tool=tc.name)
-                exec_result, _trace, policy = ctx.kernel.execute_tool(
-                    ctx.tool_context, step, turn, ctx.event_callback)
-                if exec_result is None:
-                    content = f"Tool denied/blocked: {policy.reason}"
-                else:
-                    content = _render_tool_content(exec_result)
-                    changed_files.extend(exec_result.changed_files)
+                try:
+                    exec_result, _trace, policy = ctx.kernel.execute_tool(
+                        ctx.tool_context, step, turn, ctx.event_callback)
+                    if exec_result is None:
+                        content = f"Tool denied/blocked: {policy.reason}"
+                    else:
+                        content = _render_tool_content(exec_result)
+                        changed_files.extend(exec_result.changed_files)
+                except Exception as exc:  # noqa: BLE001
+                    content = f"[{tc.name} error] {exc}"
+                    ctx.evidence.write_trace(
+                        "tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
                 emit_event(ctx.event_callback, "tool_result", "Tool execution completed.",
                            turn=turn, tool=tc.name)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
