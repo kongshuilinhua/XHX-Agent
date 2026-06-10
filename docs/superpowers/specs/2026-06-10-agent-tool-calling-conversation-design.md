@@ -1,8 +1,15 @@
-# 设计：`agent` 范式——对话 + 原生 tool-calling 统一循环（Phase 1）
+# 设计：`loop`（ReAct）范式——对话 + 原生 tool-calling 统一循环（Phase 1）
 
 - 日期：2026-06-10
 - 状态：草案（待用户审阅）
 - 关联背景：从 Claude Code 还原源码（`src/query.ts` 的统一 agent 循环）借鉴而来
+
+> **术语更新（2026-06-10）**：本文早期把这个范式叫 `agent`，后统一改名为 **`loop`**（ReAct tool-use loop——它才真在"循环"）。
+> 同期定下两个更高层的决策（见 [ROADMAP](../../../ROADMAP.md)）：
+> 1. **tool-calling 升级为统一协议**：手写 plan-JSON 全退役，三范式 `plan`/`graph`/`loop` 都用原生 `tool_calls`，只在控制流上不同。
+> 2. **命名修订**：原 `loop`（plan-execute）→ `plan`；本文的 tool-use 循环 → `loop`。
+>
+> 下文出现的 `agent` 一词，除"xhx-agent / Claude Code agent"等专名外，均指本范式（现名 `loop`）。本 spec 的循环算法、工具 schema、安全集成等设计内容仍然有效，只是名字与定位按上述更新。
 
 ---
 
