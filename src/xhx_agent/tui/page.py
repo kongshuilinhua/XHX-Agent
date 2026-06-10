@@ -49,7 +49,7 @@ def render_console_page(
     return Panel(Group(header, body, footer), title="xhx-agent", border_style="cyan")
 
 
-def _header_table(state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool) -> Table:
+def _header_table(state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool) -> RenderableType:
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
     table.add_column(ratio=1)
@@ -70,9 +70,12 @@ def _header_table(state: ConsoleState, *, workspace: str, profile: str, auto_rep
         f"verification: {state.verification}",
         f"flags: {', '.join(flags) or 'none'}",
     )
+    # workspace path can be long; a 1/3-width grid cell overflowed into the next
+    # column (rendered "…XHX-Agentcancel: no"). Put it on its own full-width line
+    # that folds on narrow terminals instead of bleeding into the cancel field.
     cancel = "yes" if state.cancel_requested else "no"
-    table.add_row(f"workspace: {workspace}", f"cancel: {cancel}", "")
-    return table
+    workspace_line = Text(f"workspace: {workspace}    cancel: {cancel}", overflow="fold")
+    return Group(table, workspace_line)
 
 
 def _conversation_panel(state: ConsoleState) -> Panel:
