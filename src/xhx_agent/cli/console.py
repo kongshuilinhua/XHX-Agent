@@ -164,7 +164,7 @@ class CommandConsole:
         ``/mode loop|graph|linear|dag`` selects a paradigm; any other label (the
         default ``linear-edit``) means auto-classification, preserving behaviour.
         """
-        return self.mode if self.mode in {"loop", "graph", "linear", "dag"} else None
+        return self.mode if self.mode in {"plan", "loop", "graph", "linear", "dag"} else None
 
     def run_task(self, task: str) -> None:
         self.cancel_requested = False
@@ -671,6 +671,8 @@ class CommandConsole:
         return table
 
     def print_run_result(self, result: RunResult) -> None:
+        if result.answer:
+            self.console.print(Panel(result.answer, title="Answer", border_style="green"))
         table = Table(title="Run Result")
         table.add_column("Field")
         table.add_column("Value")
