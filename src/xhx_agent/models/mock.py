@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from xhx_agent.models.types import MockPlan, ToolStep
+from xhx_agent.models.types import ChatResult, MockPlan, ToolCall, ToolStep
 
 
 class MockModelClient:
     """Deterministic v0.1 planner for fixtures and local smoke tests."""
+
+    def chat(self, messages: list[dict], tools: list[dict]) -> ChatResult:
+        has_tool_result = any(m.get("role") == "tool" for m in messages)
+        last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+        edit_words = ("fix", "修", "改", "加", "patch", "refactor", "重构")
+        is_edit = any(w in str(last_user).lower() for w in edit_words)
+        if is_edit and not has_tool_result:
+            return ChatResult(content=None, tool_calls=[
+                ToolCall(id="mock_call_1", name="read_file", arguments={"path": "README.md"})])
+        return ChatResult(content="Mock loop reply: 任务已处理（确定性 mock）。", tool_calls=[])
 
     def summarize(self, text: str) -> str:
         lines = [line for line in text.splitlines() if line.strip()]
