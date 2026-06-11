@@ -267,6 +267,10 @@ def replay(
 def benchmark(
     profile: Annotated[str, typer.Option("--profile", help="Model profile name to benchmark.")] = "mock",
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
+    modes: Annotated[
+        str | None,
+        typer.Option("--modes", help="Comma-separated paradigms to compare, e.g. loop,plan,graph."),
+    ] = None,
 ) -> None:
     from xhx_agent.evals.benchmark import BenchmarkRunner
 
@@ -274,6 +278,25 @@ def benchmark(
     if not json_output:
         console.print(f"Running benchmark fixtures against profile: {profile}...")
     try:
+        if modes:
+            import json
+
+            from xhx_agent.evals.benchmark import render_benchmark_report
+
+            mode_list = [m.strip() for m in modes.split(",") if m.strip()]
+            report = render_benchmark_report(profile, runner.run_matrix(profile, mode_list))
+            if json_output:
+                console.print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
+                return
+            out_dir = Path.cwd() / ".xhx" / "benchmark"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "report.md").write_text(report.markdown, encoding="utf-8")
+            (out_dir / "report.json").write_text(
+                json.dumps(report.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            console.print(report.markdown)
+            console.print("\n[green]Report written to .xhx/benchmark/report.md | report.json[/green]")
+            return
         results = runner.run_benchmark(profile)
         if json_output:
             import json
