@@ -7,6 +7,11 @@
 
 **为什么**：真实联调发现真模型每次 `apply_patch` 都因信封不匹配失败、编辑任务空转到顶（背景见仓库根 `ROADMAP.md` 与开发者记忆 `apply-patch-real-model-bug`）。这是 portfolio 主线能力（真能改代码）的潜伏 bug，优先修。
 
+## 现状：核心解析已由 Claude 写好（commit `c14420a`）
+`src/xhx_agent/tools/patch.py` 已加：`_strip_fences`（剥 ``` 围栏）、`_looks_like_unified_diff`、`_parse_unified_diff`（标准 unified diff → 复用 `_PatchOperation`/`_plan_writes`；`--- /dev/null` 视为新增文件；按上下文匹配、忽略 `@@` 行号）、`_parse_patch` 改为按格式分派（信封 → `_parse_envelope` 原逻辑；unified diff → 新解析器；未知 → 回原严格错误）。已内联冒烟通过 5 例（信封/unified/围栏/新文件/垃圾），`tests/test_patch.py` 现有 8 例仍绿、ruff 绿。
+
+**Gemini 的活（简单 + 测试 + e2e）**：把下面 check 点用**测试**钉死 + 补工具描述 + e2e；**不必再设计解析器**（已完成），如发现核心有 bug 则在分支上最小修正并说明。
+
 ## 先读（理解现状）
 - `src/xhx_agent/tools/patch.py` —— 当前严格信封解析（入口 `_parse_patch`）。
 - `src/xhx_agent/tools/registry.py` —— `apply_patch` 的 `ToolDefinition` 与 description。
