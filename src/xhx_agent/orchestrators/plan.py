@@ -52,16 +52,25 @@ class PlanOrchestrator:
         )
         answer = state["answer"]
 
-        verification = "not_executed"
+        verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used = (
+            self._verify_and_repair(
+                ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state
+            )
+        )
+        answer = state["answer"]
+
         summary = write_report(
             workspace=ctx.original_workspace,
             run_id=ctx.run_id,
             task=ctx.task,
             plan=[f"plan paradigm: {turns_used} turn(s)."],
             changed_files=sorted(set(changed_files)),
-            commands=[],
+            commands=commands_run,
             verification=verification,
             risks=risks,
+            verification_results=verification_results,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
         )
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
@@ -70,14 +79,114 @@ class PlanOrchestrator:
             status=status,
             turns=turns_used,
             changed_files=sorted(set(changed_files)),
-            commands=[],
+            commands=commands_run,
             verification=verification,
+            verification_results=verification_results,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
             risk_summary=risks,
             mode=ctx.mode or "plan",
             answer=answer,
             transcript_path=transcript_rel,
         )
+
+    def _verify_and_repair(
+        self,
+        ctx: OrchestratorContext,
+        client: Any,
+        schemas: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        changed_files: list[str],
+        risks: list[str],
+        max_turns: int,
+        status: str,
+        turns_used: int,
+        state: dict[str, Any],
+    ) -> tuple[str, list[Any], list[str], int, Any, int]:
+        """plan 招牌：执行产生 changed_files 后跑验证；失败且 auto_repair 时把失败回喂模型继续修（≤2 轮）。"""
+        from xhx_agent.runtime.verify_loop import _refresh_repo_intel_index
+        from xhx_agent.safety.repair import decide_repair
+
+        verification = "skipped_no_changes"
+        verification_results: list[Any] = []
+        commands_run: list[str] = []
+        repair_attempts = 0
+        repair_decision = None
+        if not changed_files or status in {"failed", "cancelled"}:
+            return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used
+
+        from xhx_agent.verification.router import infer_verification
+
+        _refresh_repo_intel_index(ctx.workspace, ctx.evidence, ctx.event_callback, risks)
+        while True:
+            vplan = infer_verification(ctx.workspace, sorted(set(changed_files)))
+            if not vplan.commands:
+                verification = vplan.skip_reason or "not_executed"
+                break
+            verification_results = []
+            ok = True
+            requires_confirmation = False
+            for cmd in vplan.commands:
+                er = ctx.kernel.run_verification(
+                    cmd.command,
+                    assume_yes=ctx.assume_yes,
+                    confirm_callback=ctx.confirm_callback,
+                    event_callback=ctx.event_callback,
+                )
+                commands_run.append(cmd.command)
+                verification_results.append(er)
+                if er.status == "confirm":
+                    requires_confirmation = True
+                    ok = False
+                    break
+                if er.status != "success":
+                    ok = False
+            if ok:
+                verification = "passed"
+            elif requires_confirmation:
+                verification = "requires_confirmation"
+            elif any(r.status == "failed" for r in verification_results):
+                verification = "failed"
+            else:
+                verification = "not_executed"
+
+            repair_decision = decide_repair(
+                verification, attempts_used=repair_attempts, auto_repair_enabled=ctx.auto_repair
+            )
+            ctx.evidence.write_trace("repair_decision", repair_decision.model_dump())
+            if verification != "failed" or not repair_decision.should_repair:
+                if verification == "failed":
+                    risks.append(f"Verification failed and repair not applied: {repair_decision.reason}")
+                break
+
+            repair_attempts += 1
+            err = next(
+                (
+                    (r.stderr or r.stdout or r.summary)
+                    for r in verification_results
+                    if r.status == "failed" and (r.stderr or r.stdout or r.summary)
+                ),
+                "tests failed",
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Verification failed:\n{err}\n"
+                        "Fix the code so the tests pass. Use apply_patch, then stop."
+                    ),
+                }
+            )
+            repair_cap = min(max_turns, turns_used + 2)
+            status, turns_used = self._drive(
+                ctx, client, schemas, messages, changed_files, risks, repair_cap, start_turn=turns_used + 1, state=state
+            )
+            _refresh_repo_intel_index(ctx.workspace, ctx.evidence, ctx.event_callback, risks)
+            if status in {"failed", "cancelled"}:
+                break
+
+        return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used
 
     def _drive(
         self,
