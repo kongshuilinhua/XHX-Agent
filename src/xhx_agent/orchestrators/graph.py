@@ -19,7 +19,7 @@ from langgraph.graph import END, StateGraph
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
 from xhx_agent.models import build_chat_client
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich
+from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -65,7 +65,7 @@ def _coordinate(ctx: OrchestratorContext, client: Any) -> list[str]:
         {"role": "system", "content": COORDINATOR_PROMPT + "\n\n" + render_xhx_md(ctx.scan)},
         {"role": "user", "content": ctx.task},
     ]
-    result = client.chat(messages, [])
+    result = chat_and_count(ctx, client, messages, [])
     lines = [ln.strip() for ln in (result.content or "").splitlines()]
     subtasks = [ln[2:].strip() for ln in lines if ln.startswith("- ") and ln[2:].strip()]
     if not subtasks:
@@ -83,7 +83,7 @@ def _run_worker(ctx: OrchestratorContext, client: Any, subtask: str, turn: int) 
     changed: list[str] = []
     text = ""
     for _ in range(WORKER_MAX_TURNS):
-        result = client.chat(messages, schemas)
+        result = chat_and_count(ctx, client, messages, schemas)
         if not result.tool_calls:
             text = result.content or ""
             break
@@ -113,8 +113,8 @@ def _review(ctx: OrchestratorContext, client: Any, changed_files: list[str], wor
         f"Changed files: {sorted(set(changed_files)) or 'none'}\n"
         f"Worker results:\n" + "\n".join(f"- {r}" for r in worker_results)
     )
-    result = client.chat(
-        [{"role": "system", "content": REVIEWER_PROMPT}, {"role": "user", "content": summary}], []
+    result = chat_and_count(
+        ctx, client, [{"role": "system", "content": REVIEWER_PROMPT}, {"role": "user", "content": summary}], []
     )
     verdict = (result.content or "").strip()
     passed = verdict.upper().startswith("PASS")

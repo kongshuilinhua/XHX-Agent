@@ -10,6 +10,27 @@ from xhx_agent.runtime.events import emit_event
 _MAX_TOOL_RESULT_CHARS = 8000
 
 
+def _estimate_message_tokens(messages: list[dict]) -> int:
+    """估算一组消息的 token 数（tiktoken，失败回退字符级；复用 context.compiler）。"""
+    from xhx_agent.context.compiler import _estimate_tokens
+
+    total = 0
+    for m in messages:
+        total += _estimate_tokens(str(m.get("content") or ""))
+        for tc in m.get("tool_calls") or []:
+            total += _estimate_tokens(str(tc.get("function", {}).get("arguments", "")))
+    return total
+
+
+def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], schemas: list[dict]) -> Any:
+    """调 client.chat，并把本轮发送的上下文 token 估算累加进 ctx.metrics_tracker['tokens']。
+
+    与 legacy 路径"每轮计入整段上下文"语义一致——给三范式一个可对比的 token 吞吐量指标。
+    """
+    ctx.metrics_tracker["tokens"] = ctx.metrics_tracker.get("tokens", 0) + _estimate_message_tokens(messages)
+    return client.chat(messages, schemas)
+
+
 def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str], dict | None]:
     """同 execute_tool_call，但额外带回 meta（结构化工具成功时含 evidence_kind/source/summary/trace_id；否则 None）。"""
     emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
+from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.models import build_chat_client
 from xhx_agent.models.types import ModelClientError
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich
+from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -78,6 +80,15 @@ class PlanOrchestrator:
         )
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - ctx.start_time, 2),
+            turns=turns_used,
+            tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
+            files_changed_count=len(set(changed_files)),
+            commands_run_count=len(commands_run),
+            repair_attempts=repair_attempts,
+            success=(status == "success"),
+        )
         return RunResult(
             run_id=ctx.run_id,
             status=status,
@@ -95,6 +106,7 @@ class PlanOrchestrator:
             mode=ctx.mode or "plan",
             answer=answer,
             transcript_path=transcript_rel,
+            metrics=metrics,
         )
 
     def _verify_and_repair(
@@ -245,7 +257,7 @@ class PlanOrchestrator:
                 risks.append("Run cancelled before model call.")
                 return status, turns_used
             try:
-                result = client.chat(messages, schemas)
+                result = chat_and_count(ctx, client, messages, schemas)
             except ModelClientError as exc:
                 ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
                 emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)

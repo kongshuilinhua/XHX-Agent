@@ -37,7 +37,7 @@ def run_subagent(
     turn: int = 0,
 ) -> str:
     """跑一个隔离只读子循环，返回浓缩结论（作为父的 dispatch 工具结果）。"""
-    from xhx_agent.orchestrators._toolturn import _execute_tool_call_rich
+    from xhx_agent.orchestrators._toolturn import _execute_tool_call_rich, chat_and_count
 
     allowed = AGENT_TOOLSETS.get(agent_type)
     if allowed is None:
@@ -56,7 +56,7 @@ def run_subagent(
 
     answer = ""
     for _ in range(MAX_SUBAGENT_TURNS):
-        result = client.chat(messages, schemas)
+        result = chat_and_count(ctx, client, messages, schemas)
         if not result.tool_calls:
             answer = result.content or ""
             break
