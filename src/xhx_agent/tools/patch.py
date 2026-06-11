@@ -52,7 +52,34 @@ def apply_patch(workspace: Path, patch_text: str) -> PatchResult:
 
 
 def _parse_patch(patch_text: str) -> list[_PatchOperation]:
-    lines = patch_text.splitlines()
+    """Parse a patch into structured operations, accepting the formats real LLMs emit.
+
+    Dispatch by shape after stripping any markdown code fence:
+    - ``*** Begin Patch`` envelope (the project's v0.1 format) -> _parse_envelope
+    - standard unified diff (``--- ``/``+++ ``/``@@``) -> _parse_unified_diff
+    Unknown input falls through to the envelope parser so its strict error is preserved.
+    """
+
+    lines = _strip_fences(patch_text).splitlines()
+    if lines and lines[0] == "*** Begin Patch":
+        return _parse_envelope(lines)
+    if _looks_like_unified_diff(lines):
+        return _parse_unified_diff(lines)
+    return _parse_envelope(lines)
+
+
+def _strip_fences(text: str) -> str:
+    """Strip a wrapping markdown code fence (``` / ```diff / ```patch) and surrounding blanks."""
+
+    lines = text.strip().splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+    return "\n".join(lines).strip("\n")
+
+
+def _parse_envelope(lines: list[str]) -> list[_PatchOperation]:
     if not lines or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
         raise ValueError("Patch must start with *** Begin Patch and end with *** End Patch.")
 
@@ -72,6 +99,97 @@ def _parse_patch(patch_text: str) -> list[_PatchOperation]:
 
     if not operations:
         raise ValueError("Patch must contain at least one file operation.")
+    paths = [operation.path for operation in operations]
+    if len(paths) != len(set(paths)):
+        raise ValueError("Patch cannot contain multiple operations for the same file.")
+    return operations
+
+
+def _looks_like_unified_diff(lines: list[str]) -> bool:
+    return any(line.startswith(("--- ", "diff --git ", "@@")) for line in lines)
+
+
+def _strip_ab_prefix(path: str) -> str:
+    for prefix in ("a/", "b/"):
+        if path.startswith(prefix):
+            return path[len(prefix) :]
+    return path
+
+
+def _parse_unified_diff(lines: list[str]) -> list[_PatchOperation]:
+    """Parse a standard unified diff into the same _PatchOperation list the envelope produces.
+
+    Hunk @@ line numbers are ignored; matching is by context (like the envelope parser), so a
+    correct context/removed block must exist verbatim in the target. ``--- /dev/null`` => add file.
+    """
+
+    operations: list[_PatchOperation] = []
+    current_path: str | None = None
+    is_add = False
+    hunks: list[_PatchHunk] = []
+    add_content: list[str] = []
+    index = 0
+    total = len(lines)
+
+    def flush() -> None:
+        nonlocal current_path, is_add, hunks, add_content
+        if current_path is None:
+            return
+        if is_add:
+            operations.append(_PatchOperation(kind="add", path=current_path, content="\n".join(add_content) + "\n"))
+        elif hunks:
+            operations.append(_PatchOperation(kind="update", path=current_path, hunks=list(hunks)))
+        else:
+            raise ValueError(f"Unified diff has no hunks for {current_path}.")
+        current_path, is_add, hunks, add_content = None, False, [], []
+
+    while index < total:
+        line = lines[index]
+        if line.startswith(("diff --git ", "index ", "new file mode", "deleted file mode", "similarity ", "rename ")):
+            index += 1
+            continue
+        if line.startswith("--- "):
+            flush()
+            old_path = line[4:].strip()
+            if index + 1 >= total or not lines[index + 1].startswith("+++ "):
+                raise ValueError("Unified diff '---' header not followed by '+++'.")
+            new_path = lines[index + 1][4:].strip()
+            is_add = old_path.endswith("/dev/null")
+            target = old_path if new_path.endswith("/dev/null") else new_path
+            current_path = _validate_relative_path(_strip_ab_prefix(target))
+            index += 2
+            continue
+        if line.startswith("@@"):
+            index += 1
+            old_lines: list[str] = []
+            new_lines: list[str] = []
+            while index < total and not lines[index].startswith(("@@", "--- ", "diff --git ")):
+                hunk_line = lines[index]
+                if hunk_line.startswith("\\"):  # "\ No newline at end of file"
+                    index += 1
+                    continue
+                if hunk_line.startswith("+"):
+                    new_lines.append(hunk_line[1:])
+                    add_content.append(hunk_line[1:])
+                elif hunk_line.startswith("-"):
+                    old_lines.append(hunk_line[1:])
+                elif hunk_line.startswith(" "):
+                    old_lines.append(hunk_line[1:])
+                    new_lines.append(hunk_line[1:])
+                elif hunk_line == "":
+                    old_lines.append("")
+                    new_lines.append("")
+                else:
+                    break
+                index += 1
+            if not is_add:
+                hunks.append(_PatchHunk(old="\n".join(old_lines), new="\n".join(new_lines)))
+            continue
+        index += 1
+    flush()
+
+    if not operations:
+        raise ValueError("Unified diff contained no file operations.")
     paths = [operation.path for operation in operations]
     if len(paths) != len(set(paths)):
         raise ValueError("Patch cannot contain multiple operations for the same file.")
