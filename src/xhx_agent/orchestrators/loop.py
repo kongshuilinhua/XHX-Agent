@@ -127,7 +127,7 @@ class LoopOrchestrator:
 
             reg = ctx.kernel.tool_registry
 
-            def _is_readonly(tc) -> bool:
+            def _is_readonly(tc, reg=reg) -> bool:
                 d = reg.definition(tc.name)
                 return d is not None and d.read_only
 
