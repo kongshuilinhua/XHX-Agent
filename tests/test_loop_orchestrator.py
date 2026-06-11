@@ -137,8 +137,9 @@ def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
 
 def test_loop_persists_full_transcript(tmp_path, monkeypatch):
     import json
-    from xhx_agent.models.types import ChatResult, ToolCall
+
     import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
     seq = [
         ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="read_file",
@@ -148,7 +149,9 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
     class _Fake:
         def __init__(self): self.i = 0
         def chat(self, messages, tools):
-            r = seq[self.i]; self.i += 1; return r
+            r = seq[self.i]
+            self.i += 1
+            return r
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read it", profile_name="mock", mode="loop")
@@ -162,8 +165,8 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
 
 
 def test_loop_restores_prior_messages(tmp_path, monkeypatch):
-    from xhx_agent.models.types import ChatResult
     import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
     seen = {}
     class _Fake:
