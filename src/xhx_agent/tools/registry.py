@@ -106,6 +106,7 @@ class ToolDefinition:
     parameters: dict[str, Any]  # JSON Schema
     read_only: bool = False
     destructive: bool = False
+    is_command: bool = False
     runner: ToolRunner | None = None
 
 
@@ -132,6 +133,22 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "patch": {"type": "string", "description": "完整 patch 文本"}},
             "required": ["patch"]},
         destructive=True, runner=_run_apply_patch),
+    "terminal": ToolDefinition(
+        name="terminal",
+        description=("在仓库工作区运行一条 shell 命令并返回输出。命令会过安全风险分级："
+                     "只读命令(ls/cat/git status 等)自动执行；测试等命令需用户确认；"
+                     "危险命令(rm/curl/bash/sudo/重定向等)被拒。"),
+        parameters={"type": "object", "properties": {
+            "command": {"type": "string", "description": "要执行的完整命令（单条，不要用 ; | & 等拼接）"}},
+            "required": ["command"]},
+        is_command=True),
+    "verify": ToolDefinition(
+        name="verify",
+        description="运行项目测试做验证。可选 command（默认按项目语言推断，如 python -m pytest）。",
+        parameters={"type": "object", "properties": {
+            "command": {"type": "string", "description": "可选：自定义验证命令；省略则用项目默认测试命令"}},
+            "required": []},
+        is_command=True),
 }
 
 
@@ -145,7 +162,8 @@ class ToolRegistry:
 
     def register_definition(self, d: ToolDefinition) -> None:
         self._definitions[d.name] = d
-        self._tools[d.name] = d.runner
+        if d.runner is not None:
+            self._tools[d.name] = d.runner
 
     def definition(self, name: str) -> ToolDefinition | None:
         return self._definitions.get(name)

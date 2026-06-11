@@ -84,7 +84,9 @@ def test_tool_registry_apply_patch_returns_structured_failure(tmp_path: Path) ->
 
 
 def test_definitions_carry_runner():
-    assert all(d.runner is not None for d in TOOL_DEFINITIONS.values())
+    # structured (non-command) tools must carry a runner; command tools (terminal/verify) do not
+    assert all(d.runner is not None for d in TOOL_DEFINITIONS.values() if not d.is_command)
+    assert all(d.runner is None for d in TOOL_DEFINITIONS.values() if d.is_command)
 
 
 def test_registry_definition_lookup():
