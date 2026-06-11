@@ -68,23 +68,35 @@ class LoopOrchestrator:
             if not result.tool_calls:
                 answer = result.content or ""
                 messages.append({"role": "assistant", "content": answer})
-                emit_event(ctx.event_callback, "model_plan", f"loop answer [turn {turn}]",
-                           turn=turn, step_count=0, status="done")
+                emit_event(
+                    ctx.event_callback,
+                    "model_plan",
+                    f"loop answer [turn {turn}]",
+                    turn=turn,
+                    step_count=0,
+                    status="done",
+                )
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": result.content or "",
-                "tool_calls": [
-                    {"id": tc.id, "type": "function",
-                     "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
-                    for tc in result.tool_calls
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": result.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                        }
+                        for tc in result.tool_calls
+                    ],
+                }
+            )
 
             def _exec_one(tc, turn=turn):
-                emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}",
-                           turn=turn, tool=tc.name)
+                emit_event(
+                    ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name
+                )
                 d = ctx.kernel.tool_registry.definition(tc.name)
                 if d is not None and d.is_command:
                     command = str(tc.arguments.get("command") or _default_verify_command(ctx.scan))
@@ -92,8 +104,11 @@ class LoopOrchestrator:
                         exec_result = ctx.kernel.run_command_tool(
                             command,
                             evidence_kind="test" if tc.name == "verify" else "command",
-                            assume_yes=ctx.assume_yes, confirm_callback=ctx.confirm_callback,
-                            event_callback=ctx.event_callback, turn=turn)
+                            assume_yes=ctx.assume_yes,
+                            confirm_callback=ctx.confirm_callback,
+                            event_callback=ctx.event_callback,
+                            turn=turn,
+                        )
                         return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
                     except Exception as exc:  # noqa: BLE001
                         ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
@@ -101,7 +116,8 @@ class LoopOrchestrator:
                 step = ToolStep(tool=tc.name, arguments=tc.arguments)
                 try:
                     exec_result, _trace, policy = ctx.kernel.execute_tool(
-                        ctx.tool_context, step, turn, ctx.event_callback)
+                        ctx.tool_context, step, turn, ctx.event_callback
+                    )
                     if exec_result is None:
                         return tc, f"Tool denied/blocked: {policy.reason}", []
                     return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
@@ -110,11 +126,15 @@ class LoopOrchestrator:
                     return tc, f"[{tc.name} error] {exc}", []
 
             reg = ctx.kernel.tool_registry
-            all_readonly = len(result.tool_calls) >= 2 and all(
-                (reg.definition(tc.name) is not None and reg.definition(tc.name).read_only)
-                for tc in result.tool_calls)
+
+            def _is_readonly(tc) -> bool:
+                d = reg.definition(tc.name)
+                return d is not None and d.read_only
+
+            all_readonly = len(result.tool_calls) >= 2 and all(_is_readonly(tc) for tc in result.tool_calls)
             if all_readonly:
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
                     outcomes = list(pool.map(_exec_one, result.tool_calls))
             else:
@@ -123,26 +143,36 @@ class LoopOrchestrator:
             for tc, content, changed in outcomes:
                 emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
                 changed_files.extend(changed)
-                messages.append({"role": "tool", "tool_call_id": tc.id,
-                                 "content": content[:_MAX_TOOL_RESULT_CHARS]})
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
         else:
             status = "failed"
             risks.append(f"loop did not finish within {max_turns} turn(s).")
 
         summary = write_report(
-            workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
+            workspace=ctx.original_workspace,
+            run_id=ctx.run_id,
+            task=ctx.task,
             plan=[f"loop paradigm: {turns_used} turn(s)."],
-            changed_files=sorted(set(changed_files)), commands=[],
-            verification="not_executed", risks=risks)
+            changed_files=sorted(set(changed_files)),
+            commands=[],
+            verification="not_executed",
+            risks=risks,
+        )
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         return RunResult(
-            run_id=ctx.run_id, status=status, turns=turns_used,
-            changed_files=sorted(set(changed_files)), commands=[],
+            run_id=ctx.run_id,
+            status=status,
+            turns=turns_used,
+            changed_files=sorted(set(changed_files)),
+            commands=[],
             verification="not_executed",
             summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks, mode=ctx.mode or "loop", answer=answer,
-            transcript_path=transcript_rel)
+            risk_summary=risks,
+            mode=ctx.mode or "loop",
+            answer=answer,
+            transcript_path=transcript_rel,
+        )
 
 
 def _default_verify_command(scan: Any) -> str:

@@ -31,6 +31,7 @@ def test_loop_malformed_tool_args_does_not_crash(tmp_path, monkeypatch):
     class _Fake:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
@@ -56,6 +57,7 @@ def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
     class _Fake:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
@@ -71,20 +73,29 @@ def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
 def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
     from xhx_agent.models.types import ChatResult, ToolCall
+
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
     seq = [
-        ChatResult(content=None, tool_calls=[
-            ToolCall(id="c1", name="read_file", arguments={"path": "a.py"}),
-            ToolCall(id="c2", name="read_file", arguments={"path": "b.py"})]),
+        ChatResult(
+            content=None,
+            tool_calls=[
+                ToolCall(id="c1", name="read_file", arguments={"path": "a.py"}),
+                ToolCall(id="c2", name="read_file", arguments={"path": "b.py"}),
+            ],
+        ),
         ChatResult(content="done", tool_calls=[]),
     ]
+
     class _Fake:
-        def __init__(self): self.i = 0
+        def __init__(self):
+            self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
             return r
+
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read both", profile_name="mock", mode="loop")
@@ -94,41 +105,48 @@ def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
 def test_loop_terminal_tool_runs_safe_command(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
     from xhx_agent.models.types import ChatResult, ToolCall
+
     seq = [
         ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="terminal", arguments={"command": "git status"})]),
         ChatResult(content="checked", tool_calls=[]),
     ]
+
     class _Fake:
-        def __init__(self): self.i = 0
+        def __init__(self):
+            self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
             return r
+
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     events = []
-    res = RuntimeApp(tmp_path).run_task(
-        "check status", profile_name="mock", mode="loop", event_callback=events.append)
+    res = RuntimeApp(tmp_path).run_task("check status", profile_name="mock", mode="loop", event_callback=events.append)
     assert res.status == "success" and res.answer == "checked"
     # The command must have actually run through the command-level safety gate.
-    assert any(
-        e.type == "policy_decision" and e.payload.get("command") == "git status"
-        for e in events)
+    assert any(e.type == "policy_decision" and e.payload.get("command") == "git status" for e in events)
 
 
 def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
     from xhx_agent.models.types import ChatResult, ToolCall
+
     seq = [
         ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="terminal", arguments={"command": "rm -rf src"})]),
         ChatResult(content="ok", tool_calls=[]),
     ]
+
     class _Fake:
-        def __init__(self): self.i = 0
+        def __init__(self):
+            self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
             return r
+
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("delete", profile_name="mock", mode="loop")
@@ -141,17 +159,21 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
     from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
+
     seq = [
-        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="read_file",
-                   arguments={"path": "README.md"})]),
+        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "README.md"})]),
         ChatResult(content="done reading", tool_calls=[]),
     ]
+
     class _Fake:
-        def __init__(self): self.i = 0
+        def __init__(self):
+            self.i = 0
+
         def chat(self, messages, tools):
             r = seq[self.i]
             self.i += 1
             return r
+
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read it", profile_name="mock", mode="loop")
@@ -168,12 +190,15 @@ def test_loop_restores_prior_messages(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
+
     seen = {}
+
     class _Fake:
         def chat(self, messages, tools):
             seen["roles"] = [m["role"] for m in messages]
             seen["contents"] = [m.get("content") for m in messages]
             return ChatResult(content="continued", tool_calls=[])
+
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     prior = [
@@ -181,8 +206,7 @@ def test_loop_restores_prior_messages(tmp_path, monkeypatch):
         {"role": "user", "content": "earlier question"},
         {"role": "assistant", "content": "earlier answer"},
     ]
-    res = RuntimeApp(tmp_path).run_task(
-        "follow up", profile_name="mock", mode="loop", prior_messages=prior)
+    res = RuntimeApp(tmp_path).run_task("follow up", profile_name="mock", mode="loop", prior_messages=prior)
     assert res.status == "success" and res.answer == "continued"
     # 恰好一个 system（新的），旧 system 被丢弃；历史 user/assistant 在；新 task 在末尾
     assert seen["roles"].count("system") == 1

@@ -49,7 +49,9 @@ def render_console_page(
     return Panel(Group(header, body, footer), title="xhx-agent", border_style="cyan")
 
 
-def _header_table(state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool) -> RenderableType:
+def _header_table(
+    state: ConsoleState, *, workspace: str, profile: str, auto_repair: bool, assume_yes: bool
+) -> RenderableType:
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
     table.add_column(ratio=1)

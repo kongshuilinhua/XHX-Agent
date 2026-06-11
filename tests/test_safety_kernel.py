@@ -54,9 +54,7 @@ def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
 
-    result = kernel.run_command_tool(
-        "git status", evidence_kind="command", assume_yes=False, confirm_callback=None
-    )
+    result = kernel.run_command_tool("git status", evidence_kind="command", assume_yes=False, confirm_callback=None)
 
     assert result.tool == "terminal"
     # really executes; a non-git dir may fail but must not raise.
@@ -67,9 +65,7 @@ def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
 
-    result = kernel.run_command_tool(
-        "rm -rf x", evidence_kind="command", assume_yes=False, confirm_callback=None
-    )
+    result = kernel.run_command_tool("rm -rf x", evidence_kind="command", assume_yes=False, confirm_callback=None)
 
     assert result.status == "deny"
 

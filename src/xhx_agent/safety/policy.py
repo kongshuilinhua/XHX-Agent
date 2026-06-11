@@ -40,10 +40,18 @@ def decide_tool(tool_name: str, *, read_only: bool = False, destructive: bool = 
     if read_only:
         return PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Tool {tool_name} is read-only.")
     if destructive:
-        return PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM,
-            reason=f"Tool {tool_name} performs writes; allowed under worktree isolation.")
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason=f"Tool {tool_name} performs writes; allowed under worktree isolation.",
+        )
     if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
-        return PolicyDecision(decision="allow", risk=RiskLevel.CONFIRM,
-            reason=(f"Dynamic tool {tool_name} allowed; runs with the agent's own privileges "
-                    "(no isolation sandbox), constrained only by the workspace boundary."))
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason=(
+                f"Dynamic tool {tool_name} allowed; runs with the agent's own privileges "
+                "(no isolation sandbox), constrained only by the workspace boundary."
+            ),
+        )
     return PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=f"Tool {tool_name} is not allowed by policy.")

@@ -61,6 +61,7 @@ def test_format_follow_up_includes_key_fields() -> None:
 
 def test_transcript_roundtrip(tmp_path) -> None:
     from xhx_agent.runtime.session import load_transcript_messages, save_transcript
+
     msgs = [
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "hello"},
@@ -72,6 +73,7 @@ def test_transcript_roundtrip(tmp_path) -> None:
 
 def test_load_transcript_missing_returns_none(tmp_path) -> None:
     from xhx_agent.runtime.session import load_transcript_messages
+
     assert load_transcript_messages(tmp_path, ".xhx/sessions/nope.json") is None
     assert load_transcript_messages(tmp_path, None) is None
 
@@ -91,6 +93,7 @@ def test_record_session_persists_transcript_and_mode(tmp_path) -> None:
     assert entry.mode == "loop"
     assert entry.transcript_path is not None
     from xhx_agent.runtime.session import load_transcript_messages
+
     assert load_transcript_messages(tmp_path, entry.transcript_path) == _LoopResult.messages
 
 

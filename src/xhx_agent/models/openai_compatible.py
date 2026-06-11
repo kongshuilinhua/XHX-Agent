@@ -72,11 +72,12 @@ class OpenAICompatibleClient:
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResult:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
-            raise ModelClientError(code="missing_api_key",
+            raise ModelClientError(
+                code="missing_api_key",
                 message=f"Missing API key environment variable: {self.api_key_env}",
-                details={"api_key_env": self.api_key_env})
-        payload: dict[str, Any] = {
-            "model": self.model, "temperature": self.temperature, "messages": messages}
+                details={"api_key_env": self.api_key_env},
+            )
+        payload: dict[str, Any] = {"model": self.model, "temperature": self.temperature, "messages": messages}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -84,20 +85,26 @@ class OpenAICompatibleClient:
             response = self.http_client.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload)
+                json=payload,
+            )
         except httpx.HTTPError as exc:
-            raise ModelClientError(code="network_error", message=f"Chat request failed: {exc}",
-                details={"error": str(exc)}) from exc
+            raise ModelClientError(
+                code="network_error", message=f"Chat request failed: {exc}", details={"error": str(exc)}
+            ) from exc
         if response.status_code >= 400:
-            raise ModelClientError(code="http_error",
+            raise ModelClientError(
+                code="http_error",
                 message=f"Chat request returned HTTP {response.status_code}.",
-                details={"status_code": response.status_code, "body": response.text[:1000]})
+                details={"status_code": response.status_code, "body": response.text[:1000]},
+            )
         try:
             message = response.json()["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise ModelClientError(code="invalid_response",
+            raise ModelClientError(
+                code="invalid_response",
                 message="Chat response missing choices[0].message.",
-                details={"body": response.text[:1000]}) from exc
+                details={"body": response.text[:1000]},
+            ) from exc
         tool_calls: list[ToolCall] = []
         for tc in message.get("tool_calls") or []:
             fn = tc.get("function", {})
@@ -107,9 +114,11 @@ class OpenAICompatibleClient:
                 try:
                     args = json.loads(raw_args) if raw_args.strip() else {}
                 except json.JSONDecodeError as exc:
-                    raise ModelClientError(code="invalid_tool_arguments",
+                    raise ModelClientError(
+                        code="invalid_tool_arguments",
                         message=f"tool_call arguments not valid JSON: {raw_args[:200]}",
-                        details={"arguments": raw_args[:1000]}) from exc
+                        details={"arguments": raw_args[:1000]},
+                    ) from exc
             tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args or {}))
         content = message.get("content")
         return ChatResult(content=content if isinstance(content, str) else None, tool_calls=tool_calls)

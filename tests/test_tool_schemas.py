@@ -16,12 +16,14 @@ def test_schema_shape_openai_function():
 
 def test_terminal_and_verify_in_schemas():
     from xhx_agent.tools.registry import default_tool_registry
+
     names = {s["function"]["name"] for s in default_tool_registry().tool_schemas()}
     assert {"terminal", "verify"} <= names
 
 
 def test_command_tools_flagged():
     from xhx_agent.tools.registry import default_tool_registry
+
     reg = default_tool_registry()
     assert reg.definition("terminal").is_command is True
     assert reg.definition("verify").is_command is True
@@ -30,6 +32,7 @@ def test_command_tools_flagged():
 
 def test_command_tools_not_in_tools_map():
     from xhx_agent.tools.registry import default_tool_registry
+
     reg = default_tool_registry()
     # command tools have no runner → not registered in the structured runner map
     assert "terminal" not in reg.names

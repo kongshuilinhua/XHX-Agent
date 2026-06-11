@@ -112,43 +112,74 @@ class ToolDefinition:
 
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "search": ToolDefinition(
-        name="search", description="在仓库内按文本搜索，返回匹配的文件/行。只读。",
-        parameters={"type": "object", "properties": {
-            "query": {"type": "string", "description": "搜索文本"},
-            "glob": {"type": "string", "description": "可选文件名 glob，如 *.py"},
-            "max_results": {"type": "integer", "default": 50}},
-            "required": ["query"]},
-        read_only=True, runner=_run_search),
+        name="search",
+        description="在仓库内按文本搜索，返回匹配的文件/行。只读。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索文本"},
+                "glob": {"type": "string", "description": "可选文件名 glob，如 *.py"},
+                "max_results": {"type": "integer", "default": 50},
+            },
+            "required": ["query"],
+        },
+        read_only=True,
+        runner=_run_search,
+    ),
     "read_file": ToolDefinition(
-        name="read_file", description="按行读取仓库内文件内容。只读。",
-        parameters={"type": "object", "properties": {
-            "path": {"type": "string", "description": "相对路径"},
-            "start_line": {"type": "integer", "default": 1},
-            "max_lines": {"type": "integer", "default": 200}},
-            "required": ["path"]},
-        read_only=True, runner=_run_read_file),
+        name="read_file",
+        description="按行读取仓库内文件内容。只读。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "相对路径"},
+                "start_line": {"type": "integer", "default": 1},
+                "max_lines": {"type": "integer", "default": 200},
+            },
+            "required": ["path"],
+        },
+        read_only=True,
+        runner=_run_read_file,
+    ),
     "apply_patch": ToolDefinition(
-        name="apply_patch", description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
-        parameters={"type": "object", "properties": {
-            "patch": {"type": "string", "description": "完整 patch 文本"}},
-            "required": ["patch"]},
-        destructive=True, runner=_run_apply_patch),
+        name="apply_patch",
+        description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
+        parameters={
+            "type": "object",
+            "properties": {"patch": {"type": "string", "description": "完整 patch 文本"}},
+            "required": ["patch"],
+        },
+        destructive=True,
+        runner=_run_apply_patch,
+    ),
     "terminal": ToolDefinition(
         name="terminal",
-        description=("在仓库工作区运行一条 shell 命令并返回输出。命令会过安全风险分级："
-                     "只读命令(ls/cat/git status 等)自动执行；测试等命令需用户确认；"
-                     "危险命令(rm/curl/bash/sudo/重定向等)被拒。"),
-        parameters={"type": "object", "properties": {
-            "command": {"type": "string", "description": "要执行的完整命令（单条，不要用 ; | & 等拼接）"}},
-            "required": ["command"]},
-        is_command=True),
+        description=(
+            "在仓库工作区运行一条 shell 命令并返回输出。命令会过安全风险分级："
+            "只读命令(ls/cat/git status 等)自动执行；测试等命令需用户确认；"
+            "危险命令(rm/curl/bash/sudo/重定向等)被拒。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的完整命令（单条，不要用 ; | & 等拼接）"}
+            },
+            "required": ["command"],
+        },
+        is_command=True,
+    ),
     "verify": ToolDefinition(
         name="verify",
         description="运行项目测试做验证。可选 command（默认按项目语言推断，如 python -m pytest）。",
-        parameters={"type": "object", "properties": {
-            "command": {"type": "string", "description": "可选：自定义验证命令；省略则用项目默认测试命令"}},
-            "required": []},
-        is_command=True),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "可选：自定义验证命令；省略则用项目默认测试命令"}
+            },
+            "required": [],
+        },
+        is_command=True,
+    ),
 }
 
 
@@ -175,8 +206,7 @@ class ToolRegistry:
     def tool_schemas(self) -> list[dict[str, Any]]:
         """导出已注册工具的 OpenAI function 格式 schema（喂给模型的 tools 参数）。"""
         return [
-            {"type": "function", "function": {
-                "name": d.name, "description": d.description, "parameters": d.parameters}}
+            {"type": "function", "function": {"name": d.name, "description": d.description, "parameters": d.parameters}}
             for d in self._definitions.values()
         ]
 
@@ -220,8 +250,12 @@ def _invalid_tool_arguments(index: int, step: ToolStep, message: str) -> ModelCl
 
 
 _JSON_PY_TYPES: dict[str, type | tuple[type, ...]] = {
-    "string": str, "integer": int, "number": (int, float),
-    "boolean": bool, "object": dict, "array": list,
+    "string": str,
+    "integer": int,
+    "number": (int, float),
+    "boolean": bool,
+    "object": dict,
+    "array": list,
 }
 
 

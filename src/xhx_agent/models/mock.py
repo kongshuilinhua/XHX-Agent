@@ -14,8 +14,9 @@ class MockModelClient:
         edit_words = ("fix", "修", "改", "加", "patch", "refactor", "重构")
         is_edit = any(w in str(last_user).lower() for w in edit_words)
         if is_edit and not has_tool_result:
-            return ChatResult(content=None, tool_calls=[
-                ToolCall(id="mock_call_1", name="read_file", arguments={"path": "README.md"})])
+            return ChatResult(
+                content=None, tool_calls=[ToolCall(id="mock_call_1", name="read_file", arguments={"path": "README.md"})]
+            )
         return ChatResult(content="Mock loop reply: 任务已处理（确定性 mock）。", tool_calls=[])
 
     def summarize(self, text: str) -> str:
