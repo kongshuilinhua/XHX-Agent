@@ -86,6 +86,7 @@
 - **Phase 2b ✅ 已完成（2026-06-10）**：受控 `terminal` 工具（命令级 `decide_terminal` 门控：SAFE 自动/CONFIRM 确认/DENY 拦截 + 120s 看门狗）+ `verify` 工具（默认项目测试命令）+ **confirm 回路落地**（CONFIRM 档经 `confirm_callback`）。真实联调：DeepSeek 经 `loop` 调 terminal 跑 `git status` 过闸门并总结。
 - **Phase 2c ✅ 已完成（2026-06-11）**：会话持久化升级为**完整消息历史**——`loop` 每次结束把整段对话（含最终 assistant 回答）落盘到 `.xhx/sessions/<run_id>.json`，索引新增 `transcript_path`/`mode`；`--continue`/`--resume` 优先全量还原（新 system + 历史去旧 system + 新 task 经 `prior_messages` 注入），缺 transcript 的老会话回退摘要续接。
 - **Phase 3a ✅ 已完成（2026-06-11）**：`plan` 范式迁 tool-calling（批量规划 + 执行 + 验证路由 + 有界自修复回喂）。新 `PlanOrchestrator` 走原生 tool-calling 自主多轮（批量规划、只读 tool_calls 并发、回纯文本即停），改动后经 `infer_verification` 路由验证；失败且 `--auto-repair` 时把"Verification failed"回喂同一 tool-calling 循环让模型修（`decide_repair` 门控、≤2 轮）。本切片**仅重指 `--mode plan`**；默认 `linear`/`dag`/`graph` 与 ModelPlan 路径不变。共享 `execute_tool_call`（`_toolturn.py`）由 `loop`/`plan` 共用，`loop` 行为零变更。`linear`/默认收敛留 3b。
+- **Phase 3b-1 ✅ 已完成（2026-06-11）**：给 tool-calling `plan` 补齐证据 parity（apply_patch 证据 + patch-evidence-binding + checkpoint/restore），纯增量、默认路由不变；默认切换 + 测试迁移留 3b-2。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。**（plan 部分已落地，见 Phase 3a；剩 `linear`/默认收敛 → 3b。）**
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
