@@ -89,3 +89,47 @@ def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read both", profile_name="mock", mode="loop")
     assert res.status == "success" and res.answer == "done"
+
+
+def test_loop_terminal_tool_runs_safe_command(tmp_path, monkeypatch):
+    import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    seq = [
+        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="terminal", arguments={"command": "git status"})]),
+        ChatResult(content="checked", tool_calls=[]),
+    ]
+    class _Fake:
+        def __init__(self): self.i = 0
+        def chat(self, messages, tools):
+            r = seq[self.i]
+            self.i += 1
+            return r
+    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    RuntimeApp(tmp_path).init_project()
+    events = []
+    res = RuntimeApp(tmp_path).run_task(
+        "check status", profile_name="mock", mode="loop", event_callback=events.append)
+    assert res.status == "success" and res.answer == "checked"
+    # The command must have actually run through the command-level safety gate.
+    assert any(
+        e.type == "policy_decision" and e.payload.get("command") == "git status"
+        for e in events)
+
+
+def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
+    import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    seq = [
+        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="terminal", arguments={"command": "rm -rf src"})]),
+        ChatResult(content="ok", tool_calls=[]),
+    ]
+    class _Fake:
+        def __init__(self): self.i = 0
+        def chat(self, messages, tools):
+            r = seq[self.i]
+            self.i += 1
+            return r
+    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    RuntimeApp(tmp_path).init_project()
+    res = RuntimeApp(tmp_path).run_task("delete", profile_name="mock", mode="loop")
+    assert res.status == "success" and res.answer == "ok"

@@ -81,6 +81,19 @@ class LoopOrchestrator:
             def _exec_one(tc, turn=turn):
                 emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}",
                            turn=turn, tool=tc.name)
+                d = ctx.kernel.tool_registry.definition(tc.name)
+                if d is not None and d.is_command:
+                    command = str(tc.arguments.get("command") or _default_verify_command(ctx.scan))
+                    try:
+                        exec_result = ctx.kernel.run_command_tool(
+                            command,
+                            evidence_kind="test" if tc.name == "verify" else "command",
+                            assume_yes=ctx.assume_yes, confirm_callback=ctx.confirm_callback,
+                            event_callback=ctx.event_callback, turn=turn)
+                        return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
+                    except Exception as exc:  # noqa: BLE001
+                        ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
+                        return tc, f"[{tc.name} error] {exc}", []
                 step = ToolStep(tool=tc.name, arguments=tc.arguments)
                 try:
                     exec_result, _trace, policy = ctx.kernel.execute_tool(
@@ -124,6 +137,15 @@ class LoopOrchestrator:
             verification="not_executed",
             summary_path=str(summary.relative_to(ctx.original_workspace)),
             risk_summary=risks, mode=ctx.mode or "loop", answer=answer)
+
+
+def _default_verify_command(scan: Any) -> str:
+    langs = getattr(scan, "detected_languages", []) or []
+    if "python" in langs:
+        return "python -m pytest"
+    if "javascript" in langs or "typescript" in langs:
+        return "npm test"
+    return "python -m pytest"
 
 
 def _render_tool_content(result: Any) -> str:
