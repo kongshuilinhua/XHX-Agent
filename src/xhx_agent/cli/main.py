@@ -286,7 +286,7 @@ def benchmark(
             mode_list = [m.strip() for m in modes.split(",") if m.strip()]
             report = render_benchmark_report(profile, runner.run_matrix(profile, mode_list))
             if json_output:
-                console.print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
+                print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
                 return
             out_dir = Path.cwd() / ".xhx" / "benchmark"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -301,7 +301,7 @@ def benchmark(
         if json_output:
             import json
 
-            console.print(json.dumps([r.model_dump() for r in results], indent=2))
+            print(json.dumps([r.model_dump() for r in results], indent=2))
             return
 
         # Render a beautiful rich table
