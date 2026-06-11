@@ -99,6 +99,34 @@ class SafeExecutionKernel:
         )
         return result
 
+    def run_command_tool(
+        self,
+        command: str,
+        *,
+        evidence_kind: str = "command",
+        assume_yes: bool = False,
+        confirm_callback: ConfirmationCallback | None = None,
+        event_callback: EventCallback | None = None,
+        turn: int = 0,
+    ) -> ToolExecutionResult:
+        """命令工具（terminal/verify）的执行入口：过 decide_terminal 命令级闸门 + confirm，跑命令，转成 ToolExecutionResult。"""
+        result = run_terminal(self.workspace, command, assume_yes=assume_yes, confirm_callback=confirm_callback)
+        self.record_policy("terminal", command, result.policy, {"turn": turn, "command": command}, event_callback)
+        self.evidence.write_trace(
+            "tool_result", {"turn": turn, "tool": "terminal", "command": command, **result.model_dump()}
+        )
+        ok = result.status == "success"
+        return ToolExecutionResult(
+            tool="terminal",
+            status=result.status,
+            summary=result.summary or f"command {result.status}",
+            trace_payload={"tool": "terminal", "command": command, **result.model_dump()},
+            evidence_kind=evidence_kind if ok else None,
+            evidence_source=command if ok else None,
+            evidence_summary=result.summary if ok else None,
+            error=None if ok else (result.stderr or result.summary or result.status),
+        )
+
     def record_policy(
         self,
         scope: str,

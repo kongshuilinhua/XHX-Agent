@@ -48,3 +48,38 @@ def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
     trace_text = evidence.trace_path.read_text(encoding="utf-8")
     assert "policy_decision" in trace_text
     assert "tool_call" not in trace_text
+
+
+def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path, "run-test")
+    kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
+
+    result = kernel.run_command_tool(
+        "git status", evidence_kind="command", assume_yes=False, confirm_callback=None
+    )
+
+    assert result.tool == "terminal"
+    # really executes; a non-git dir may fail but must not raise.
+    assert result.status in ("success", "failed")
+
+
+def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path, "run-test")
+    kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
+
+    result = kernel.run_command_tool(
+        "rm -rf x", evidence_kind="command", assume_yes=False, confirm_callback=None
+    )
+
+    assert result.status == "deny"
+
+
+def test_run_command_tool_confirm_declined(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path, "run-test")
+    kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
+
+    result = kernel.run_command_tool(
+        "pytest", evidence_kind="test", assume_yes=False, confirm_callback=lambda c, p: False
+    )
+
+    assert result.status == "confirm"
