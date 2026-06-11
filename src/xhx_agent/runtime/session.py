@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,8 @@ class SessionEntry(BaseModel):
     verification: str = "not_executed"
     changed_files: list[str] = []
     summary_path: str | None = None
+    transcript_path: str | None = None
+    mode: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
@@ -28,10 +31,36 @@ def session_history_path(workspace: Path) -> Path:
     return xhx_dir(workspace) / "sessions" / "history.jsonl"
 
 
+def transcript_path(workspace: Path, run_id: str) -> Path:
+    return xhx_dir(workspace) / "sessions" / f"{run_id}.json"
+
+
+def save_transcript(workspace: Path, run_id: str, messages: list[dict]) -> str:
+    """落盘整段消息历史，返回相对 workspace 的 POSIX 路径（写进索引/RunResult）。"""
+    ensure_xhx_dirs(workspace)
+    path = transcript_path(workspace, run_id)
+    path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path.relative_to(workspace).as_posix()
+
+
+def load_transcript_messages(workspace: Path, rel_path: str | None) -> list[dict] | None:
+    """按相对路径读回整段历史；缺文件/空路径返回 None（让上层回退摘要续接）。"""
+    if not rel_path:
+        return None
+    path = workspace / rel_path
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def record_session(workspace: Path, task: str, result: RunResult) -> SessionEntry:
-    """Append a one-line summary of ``result`` to the session history."""
+    """Append a one-line summary of ``result`` to the session history (+ persist full transcript when present)."""
 
     ensure_xhx_dirs(workspace)
+    rel_transcript = getattr(result, "transcript_path", None)
+    messages = getattr(result, "messages", None)
+    if rel_transcript is None and messages:
+        rel_transcript = save_transcript(workspace, result.run_id, messages)
     entry = SessionEntry(
         run_id=result.run_id,
         task=task,
@@ -39,6 +68,8 @@ def record_session(workspace: Path, task: str, result: RunResult) -> SessionEntr
         verification=result.verification,
         changed_files=list(result.changed_files),
         summary_path=result.summary_path,
+        transcript_path=rel_transcript,
+        mode=getattr(result, "mode", "") or "",
     )
     with session_history_path(workspace).open("a", encoding="utf-8") as handle:
         handle.write(entry.model_dump_json() + "\n")
