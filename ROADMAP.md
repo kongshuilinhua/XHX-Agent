@@ -83,6 +83,7 @@
 - **Phase 1**（✅ 已实现）：**tool-calling 基础设施 + `loop`(ReAct) MVP** —— 客户端 + **声明式工具接口**（schema + 风险档 + readonly/destructive + executor）+ 消息历史 + mock 模拟；支持**对话 + `read_file`/`search`/`apply_patch`**（读+写）。详见 [设计文档](docs/superpowers/specs/2026-06-10-agent-tool-calling-conversation-design.md)。
 - **Phase 1 终审遗留 ✅ 已完成（切片 2a，2026-06-10）**：① TUI 渲染 `RunResult.answer` ✅；② schema 单一来源（`ToolDefinition` 纳入 runner + 自写 schema 派生校验，替换 `_validate_arguments`）✅；③ `read_only/destructive` 接 `decide_tool` 风险门控 ✅。另：`loop` 只读 tool_calls 并发 ✅。（confirm 回路随 Phase 2b 的 terminal 一起做。）
 - **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发 + **会话持久化**（落盘 `loop` 完整消息历史，`--continue`/`--resume` 还原整段对话）。详见 §8。
+- **Phase 2b ✅ 已完成（2026-06-10）**：受控 `terminal` 工具（命令级 `decide_terminal` 门控：SAFE 自动/CONFIRM 确认/DENY 拦截 + 120s 看门狗）+ `verify` 工具（默认项目测试命令）+ **confirm 回路落地**（CONFIRM 档经 `confirm_callback`）。真实联调：DeepSeek 经 `loop` 调 terminal 跑 `git status` 过闸门并总结。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
