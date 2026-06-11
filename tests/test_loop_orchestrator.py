@@ -133,3 +133,29 @@ def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("delete", profile_name="mock", mode="loop")
     assert res.status == "success" and res.answer == "ok"
+
+
+def test_loop_persists_full_transcript(tmp_path, monkeypatch):
+    import json
+    from xhx_agent.models.types import ChatResult, ToolCall
+    import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.runtime.app import RuntimeApp
+    seq = [
+        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="read_file",
+                   arguments={"path": "README.md"})]),
+        ChatResult(content="done reading", tool_calls=[]),
+    ]
+    class _Fake:
+        def __init__(self): self.i = 0
+        def chat(self, messages, tools):
+            r = seq[self.i]; self.i += 1; return r
+    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    RuntimeApp(tmp_path).init_project()
+    res = RuntimeApp(tmp_path).run_task("read it", profile_name="mock", mode="loop")
+    assert res.status == "success" and res.answer == "done reading"
+    assert res.transcript_path is not None
+    saved = json.loads((tmp_path / res.transcript_path).read_text(encoding="utf-8"))
+    roles = [m["role"] for m in saved]
+    assert roles[0] == "system" and "user" in roles and "tool" in roles
+    # 最终 assistant 回答必须在历史里（修复"漏存最后一句"）
+    assert saved[-1] == {"role": "assistant", "content": "done reading"}

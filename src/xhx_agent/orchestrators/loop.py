@@ -9,6 +9,7 @@ from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import emit_event
+from xhx_agent.runtime.session import save_transcript
 
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RunResult
@@ -64,6 +65,7 @@ class LoopOrchestrator:
 
             if not result.tool_calls:
                 answer = result.content or ""
+                messages.append({"role": "assistant", "content": answer})
                 emit_event(ctx.event_callback, "model_plan", f"loop answer [turn {turn}]",
                            turn=turn, step_count=0, status="done")
                 break
@@ -130,13 +132,15 @@ class LoopOrchestrator:
             plan=[f"loop paradigm: {turns_used} turn(s)."],
             changed_files=sorted(set(changed_files)), commands=[],
             verification="not_executed", risks=risks)
+        transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         return RunResult(
             run_id=ctx.run_id, status=status, turns=turns_used,
             changed_files=sorted(set(changed_files)), commands=[],
             verification="not_executed",
             summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks, mode=ctx.mode or "loop", answer=answer)
+            risk_summary=risks, mode=ctx.mode or "loop", answer=answer,
+            transcript_path=transcript_rel)
 
 
 def _default_verify_command(scan: Any) -> str:

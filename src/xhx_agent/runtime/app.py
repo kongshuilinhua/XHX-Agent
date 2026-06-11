@@ -81,6 +81,7 @@ class RunResult(BaseModel):
     metrics: RunMetrics | None = None
     mode: str = ""
     answer: str | None = None
+    transcript_path: str | None = None
 
 
 class PlanPreview(BaseModel):
