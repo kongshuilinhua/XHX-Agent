@@ -174,3 +174,27 @@ def test_plan_checkpoint_on_success(tmp_path, monkeypatch):
     assert res.verification == "passed"
     assert res.checkpoint_path is not None and (workspace / res.checkpoint_path).exists()
     assert res.restore_plan_path is None  # 成功不生成 restore plan
+
+
+def test_plan_with_fenced_unified_diff_patch(tmp_path, monkeypatch):
+    workspace = _python_bug_workspace(tmp_path)
+    # unified diff wrapped in ```diff fence
+    unified_patch = (
+        "```diff\n"
+        "--- a/src/calc.py\n"
+        "+++ b/src/calc.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        " def add(a: int, b: int) -> int:\n"
+        "-    return a - b  # TODO_BUG\n"
+        "+    return a + b\n"
+        "```"
+    )
+    _fake_chat_factory(monkeypatch, [unified_patch, None])
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test", profile_name="mock", mode="plan", assume_yes=True
+    )
+    assert res.status == "success"
+    assert "src/calc.py" in res.changed_files
+    assert res.verification == "passed"
+    assert (workspace / "src" / "calc.py").read_text(encoding="utf-8") == "def add(a: int, b: int) -> int:\n    return a + b\n"
+
