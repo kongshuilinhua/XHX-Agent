@@ -143,7 +143,22 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     ),
     "apply_patch": ToolDefinition(
         name="apply_patch",
-        description="用 *** Begin Patch/*** End Patch 格式对文件做增量修改。会改文件。",
+        description=(
+            "对工作区文件进行增量修改或创建新文件。支持标准 unified diff 格式（推荐）或旧版信封格式。\n"
+            "修改文件示例：\n"
+            "--- a/src/utils.py\n"
+            "+++ b/src/utils.py\n"
+            "@@ -10,6 +10,6 @@\n"
+            " def add(a, b):\n"
+            "-    return a - b\n"
+            "+    return a + b\n\n"
+            "新建文件示例：\n"
+            "--- /dev/null\n"
+            "+++ b/src/new_file.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+def hello():\n"
+            "+    print(\"hello\")"
+        ),
         parameters={
             "type": "object",
             "properties": {"patch": {"type": "string", "description": "完整 patch 文本"}},
