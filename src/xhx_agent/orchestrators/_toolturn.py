@@ -13,6 +13,21 @@ _MAX_TOOL_RESULT_CHARS = 8000
 def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str], dict | None]:
     """同 execute_tool_call，但额外带回 meta（结构化工具成功时含 evidence_kind/source/summary/trace_id；否则 None）。"""
     emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name)
+    if tc.name == "dispatch":
+        from xhx_agent.orchestrators.subagent import run_subagent
+
+        try:
+            content = run_subagent(
+                ctx,
+                description=str(tc.arguments.get("description", "")),
+                prompt=str(tc.arguments.get("prompt", "")),
+                agent_type=str(tc.arguments.get("agent_type") or "explore"),
+                turn=turn,
+            )
+            return tc, content, [], None
+        except Exception as exc:  # noqa: BLE001
+            ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": "dispatch", "error": str(exc)})
+            return tc, f"[dispatch error] {exc}", [], None
     d = ctx.kernel.tool_registry.definition(tc.name)
     if d is not None and d.is_command:
         command = str(tc.arguments.get("command") or _default_verify_command(ctx.scan))

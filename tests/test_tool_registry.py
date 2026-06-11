@@ -84,9 +84,12 @@ def test_tool_registry_apply_patch_returns_structured_failure(tmp_path: Path) ->
 
 
 def test_definitions_carry_runner():
-    # structured (non-command) tools must carry a runner; command tools (terminal/verify) do not
-    assert all(d.runner is not None for d in TOOL_DEFINITIONS.values() if not d.is_command)
-    assert all(d.runner is None for d in TOOL_DEFINITIONS.values() if d.is_command)
+    # structured tools carry a runner; specially-routed tools (command tools terminal/verify + dispatch) do not
+    def _specially_routed(d):
+        return d.is_command or d.name == "dispatch"
+
+    assert all(d.runner is not None for d in TOOL_DEFINITIONS.values() if not _specially_routed(d))
+    assert all(d.runner is None for d in TOOL_DEFINITIONS.values() if _specially_routed(d))
 
 
 def test_registry_definition_lookup():

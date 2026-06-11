@@ -195,6 +195,23 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         },
         is_command=True,
     ),
+    "dispatch": ToolDefinition(
+        name="dispatch",
+        description=(
+            "把一个聚焦的探索子任务委派给隔离子 agent：它有自己的上下文与受限工具、限定轮数，"
+            "跑完只回浓缩结论。用于不污染主上下文地深入调查某个问题。"
+            "当前 agent_type 仅支持 'explore'（只读：search/read_file）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "子任务一句话描述（给人看的）"},
+                "prompt": {"type": "string", "description": "给子 agent 的完整指令"},
+                "agent_type": {"type": "string", "enum": ["explore"], "default": "explore"},
+            },
+            "required": ["prompt"],
+        },
+    ),
 }
 
 
