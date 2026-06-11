@@ -40,7 +40,7 @@
 
 | 范式 | 概念 | 模型介入方式 | 适合 | 状态 |
 |:--|:--|:--|:--|:--|
-| `plan` | Plan-and-Execute | 前置规划一次→批量执行→必要时 replan；模型一轮产出**一组** `tool_calls` | 步骤清晰、少 LLM 调用的批量任务 | 🚧 由现有 `loop`/`linear` 迁移 |
+| `plan` | Plan-and-Execute | 前置规划一次→批量执行→必要时 replan；模型一轮产出**一组** `tool_calls` | 步骤清晰、少 LLM 调用的批量任务 | ✅ tool-calling 已落地（3a，`--mode plan`）；`linear`/默认收敛 → 3b |
 | `graph` | 多 agent 工作流（LangGraph） | coordinator → execute → review，条件重执行（≤2 轮），各节点内用 tool-calling | 规划/执行/复核分离 | 🚧 由现有 `graph`/`dag` 迁移 |
 | `loop` | ReAct tool-use loop（Claude Code 式） | 每步问模型，看到每个工具结果再决定下一步；回文本=对话，回 `tool_calls`=执行再循环 | 对话 + 真实改代码，最好用 | 🚧 新建（Phase 1 主攻） |
 
@@ -68,7 +68,7 @@
 - 🚧 模型协议：手写 plan-JSON `{summary,status,steps}` 全退役 → **原生 `tool_calls` + 消息历史**
 - 🚧 `mock` provider：改成**模拟 `tool_calls`**，保证离线/CI 仍可跑
 - ✅ 会话管理：现有 `--continue`/`--resume` 从"**摘要续接**"升级为"**完整消息历史持久化**"（落盘 `loop` 的 H，真正还原整段对话）；与长期记忆（§7）分工——会话=单次完整状态，记忆=跨会话事实（Phase 2c 已落地，缺 transcript 的老会话回退摘要）
-- 🚧 现有 `loop`/`linear` → `plan` 范式；现有 `graph`/`dag` → `graph` 范式
+- 🚧 现有 `loop`/`linear` → `plan` 范式（**plan 部分已落地（3a）**：`--mode plan` 已走 tool-calling 批量规划+验证路由+有界修复；`linear`/默认收敛留 3b）；现有 `graph`/`dag` → `graph` 范式
 - ⚠️ 取舍：依赖模型支持 function calling（DeepSeek 支持；放弃对不支持 tool-calling 模型的兼容）
 
 **新增**
@@ -85,7 +85,8 @@
 - **Phase 2**：`loop` 安全对齐（risk/confirm/worktree/evidence）+ **暴露受控 `terminal`/bash 工具**（过 `decide_terminal` 风险闸门）+ `verify` 工具 + 只读并发 + **会话持久化**（落盘 `loop` 完整消息历史，`--continue`/`--resume` 还原整段对话）。详见 §8。**（会话持久化已落地，见 Phase 2c。）**
 - **Phase 2b ✅ 已完成（2026-06-10）**：受控 `terminal` 工具（命令级 `decide_terminal` 门控：SAFE 自动/CONFIRM 确认/DENY 拦截 + 120s 看门狗）+ `verify` 工具（默认项目测试命令）+ **confirm 回路落地**（CONFIRM 档经 `confirm_callback`）。真实联调：DeepSeek 经 `loop` 调 terminal 跑 `git status` 过闸门并总结。
 - **Phase 2c ✅ 已完成（2026-06-11）**：会话持久化升级为**完整消息历史**——`loop` 每次结束把整段对话（含最终 assistant 回答）落盘到 `.xhx/sessions/<run_id>.json`，索引新增 `transcript_path`/`mode`；`--continue`/`--resume` 优先全量还原（新 system + 历史去旧 system + 新 task 经 `prior_messages` 注入），缺 transcript 的老会话回退摘要续接。
-- **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。
+- **Phase 3a ✅ 已完成（2026-06-11）**：`plan` 范式迁 tool-calling（批量规划 + 执行 + 验证路由 + 有界自修复回喂）。新 `PlanOrchestrator` 走原生 tool-calling 自主多轮（批量规划、只读 tool_calls 并发、回纯文本即停），改动后经 `infer_verification` 路由验证；失败且 `--auto-repair` 时把"Verification failed"回喂同一 tool-calling 循环让模型修（`decide_repair` 门控、≤2 轮）。本切片**仅重指 `--mode plan`**；默认 `linear`/`dag`/`graph` 与 ModelPlan 路径不变。共享 `execute_tool_call`（`_toolturn.py`）由 `loop`/`plan` 共用，`loop` 行为零变更。`linear`/默认收敛留 3b。
+- **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。**（plan 部分已落地，见 Phase 3a；剩 `linear`/默认收敛 → 3b。）**
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
 - **Phase 6**：长期记忆 / 跨会话上下文（`.xhx/memory/` 4 类型事实 + 建议-确认写入 + 确定性召回入 context-pack）。详见 §7。
