@@ -10,9 +10,8 @@ from xhx_agent.runtime.events import emit_event
 _MAX_TOOL_RESULT_CHARS = 8000
 
 
-def execute_tool_call(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str]]:
-    """执行单个 tool_call：命令工具走 kernel.run_command_tool，结构化工具走 kernel.execute_tool；
-    逐工具 try/except，错误转成可回喂模型的文本。返回 (tc, content, changed_files)。"""
+def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str], dict | None]:
+    """同 execute_tool_call，但额外带回 meta（结构化工具成功时含 evidence_kind/source/summary/trace_id；否则 None）。"""
     emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name)
     d = ctx.kernel.tool_registry.definition(tc.name)
     if d is not None and d.is_command:
@@ -26,19 +25,33 @@ def execute_tool_call(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str
                 event_callback=ctx.event_callback,
                 turn=turn,
             )
-            return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
+            return tc, _render_tool_content(exec_result), list(exec_result.changed_files), None
         except Exception as exc:  # noqa: BLE001
             ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
-            return tc, f"[{tc.name} error] {exc}", []
+            return tc, f"[{tc.name} error] {exc}", [], None
     step = ToolStep(tool=tc.name, arguments=tc.arguments)
     try:
-        exec_result, _trace, policy = ctx.kernel.execute_tool(ctx.tool_context, step, turn, ctx.event_callback)
+        exec_result, trace, policy = ctx.kernel.execute_tool(ctx.tool_context, step, turn, ctx.event_callback)
         if exec_result is None:
-            return tc, f"Tool denied/blocked: {policy.reason}", []
-        return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
+            return tc, f"Tool denied/blocked: {policy.reason}", [], None
+        meta = None
+        if trace is not None and exec_result.evidence_kind and exec_result.evidence_source and exec_result.evidence_summary:
+            meta = {
+                "evidence_kind": exec_result.evidence_kind,
+                "evidence_source": exec_result.evidence_source,
+                "evidence_summary": exec_result.evidence_summary,
+                "trace_id": trace.id,
+            }
+        return tc, _render_tool_content(exec_result), list(exec_result.changed_files), meta
     except Exception as exc:  # noqa: BLE001
         ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
-        return tc, f"[{tc.name} error] {exc}", []
+        return tc, f"[{tc.name} error] {exc}", [], None
+
+
+def execute_tool_call(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str]]:
+    """对外契约不变（loop 用）：丢弃 meta，返回 3 元组。"""
+    tc_, content, changed, _meta = _execute_tool_call_rich(ctx, tc, turn)
+    return tc_, content, changed
 
 
 def _default_verify_command(scan: Any) -> str:
