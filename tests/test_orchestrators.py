@@ -87,14 +87,34 @@ def test_select_orchestrator_defaults_and_errors() -> None:
         select_orchestrator("nope")
 
 
-def test_graph_mode_runs_via_langgraph(tmp_path) -> None:
+def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_calc.py").write_text("def test_add():\n    assert True\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()
+
+    # tool-calling graph：coordinator(LLM 拆子任务) -> worker(apply_patch 真改) -> reviewer(PASS)。
+    class _Fake:
+        def __init__(self) -> None:
+            self.w = 0
+
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "COORDINATOR" in system:
+                return ChatResult(content="- tweak calc.py")
+            if "REVIEWER" in system:
+                return ChatResult(content="PASS")
+            self.w += 1
+            if self.w == 1:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="w1", name="apply_patch", arguments={
+                    "patch": "*** Begin Patch\n*** Update File: src/calc.py\n@@\n"
+                             "-    return a + b\n+    return a + b  # tweaked\n*** End Patch\n"})])
+            return ChatResult(content="done")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: _Fake())
     events = []
 
     result = RuntimeApp(tmp_path).run_task("refactor math", assume_yes=True, mode="graph", event_callback=events.append)
