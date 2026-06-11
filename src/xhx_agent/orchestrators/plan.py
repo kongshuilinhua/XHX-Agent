@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from xhx_agent.models import build_chat_client
 from xhx_agent.models.types import ModelClientError
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, execute_tool_call
+from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -52,7 +52,7 @@ class PlanOrchestrator:
         )
         answer = state["answer"]
 
-        verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used = (
+        verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, checkpoint_path, restore_plan_path = (
             self._verify_and_repair(
                 ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state
             )
@@ -69,6 +69,8 @@ class PlanOrchestrator:
             verification=verification,
             risks=risks,
             verification_results=verification_results,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
             repair=repair_decision,
             repair_attempts=repair_attempts,
         )
@@ -82,6 +84,8 @@ class PlanOrchestrator:
             commands=commands_run,
             verification=verification,
             verification_results=verification_results,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
             repair=repair_decision,
             repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
@@ -103,9 +107,13 @@ class PlanOrchestrator:
         status: str,
         turns_used: int,
         state: dict[str, Any],
-    ) -> tuple[str, list[Any], list[str], int, Any, int]:
+    ) -> tuple[str, list[Any], list[str], int, Any, int, str | None, str | None]:
         """plan 招牌：执行产生 changed_files 后跑验证；失败且 auto_repair 时把失败回喂模型继续修（≤2 轮）。"""
-        from xhx_agent.runtime.verify_loop import _refresh_repo_intel_index
+        from xhx_agent.runtime.verify_loop import (
+            _refresh_repo_intel_index,
+            checkpoint_path_value,
+            restore_plan_path_value,
+        )
         from xhx_agent.safety.repair import decide_repair
 
         verification = "skipped_no_changes"
@@ -113,8 +121,9 @@ class PlanOrchestrator:
         commands_run: list[str] = []
         repair_attempts = 0
         repair_decision = None
+        checkpoint = None
         if not changed_files or status in {"failed", "cancelled"}:
-            return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used
+            return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, None, None
 
         from xhx_agent.verification.router import infer_verification
 
@@ -124,6 +133,16 @@ class PlanOrchestrator:
             if not vplan.commands:
                 verification = vplan.skip_reason or "not_executed"
                 break
+
+            checkpoint = ctx.kernel.create_checkpoint(sorted(set(changed_files)))
+            emit_event(
+                ctx.event_callback,
+                "checkpoint",
+                "Checkpoint created.",
+                checkpoint_id=checkpoint.id,
+                changed_files=sorted(set(changed_files)),
+            )
+
             verification_results = []
             ok = True
             requires_confirmation = False
@@ -186,7 +205,16 @@ class PlanOrchestrator:
             if status in {"failed", "cancelled"}:
                 break
 
-        return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used
+        restore_plan_created = False
+        if verification == "failed" and checkpoint is not None:
+            ctx.kernel.create_restore_plan(checkpoint)
+            restore_plan_created = True
+            emit_event(ctx.event_callback, "restore_plan", "Restore plan created.", run_id=ctx.run_id)
+
+        checkpoint_path = str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint is not None else None
+        restore_plan_path = str(restore_plan_path_value(ctx.original_workspace, ctx.run_id)) if restore_plan_created else None
+
+        return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, checkpoint_path, restore_plan_path
 
     def _drive(
         self,
@@ -253,7 +281,7 @@ class PlanOrchestrator:
             )
 
             def _run(tc, turn=turn):
-                return execute_tool_call(ctx, tc, turn)
+                return _execute_tool_call_rich(ctx, tc, turn)
 
             reg = ctx.kernel.tool_registry
 
@@ -277,9 +305,27 @@ class PlanOrchestrator:
             else:
                 outcomes = [_run(tc) for tc in result.tool_calls]
 
-            for tc, content, changed in outcomes:
+            for tc, content, changed, meta in outcomes:
                 emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
                 changed_files.extend(changed)
+                if meta:
+                    entry = ctx.evidence.write_evidence(
+                        meta["evidence_kind"],
+                        meta["evidence_source"],
+                        meta["evidence_summary"],
+                        f"trace://{meta['trace_id']}",
+                        confidence=0.9 if meta["evidence_kind"] == "patch" else 0.8,
+                    )
+                    if meta["evidence_kind"] == "patch":
+                        ctx.evidence.write_trace(
+                            "patch_evidence_binding",
+                            {
+                                "turn": turn,
+                                "tool_trace_id": meta["trace_id"],
+                                "evidence_id": entry.id,
+                                "changed_files": list(changed),
+                            },
+                        )
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
         else:
             status = "failed"

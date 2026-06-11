@@ -134,3 +134,43 @@ def test_plan_no_repair_when_disabled_keeps_failure(tmp_path, monkeypatch) -> No
     assert res.verification == "failed"
     assert res.repair_attempts == 0
     assert any(r.status == "failed" for r in res.verification_results)
+
+
+def test_plan_writes_patch_evidence_and_binding(tmp_path, monkeypatch):
+    import json
+    workspace = _python_bug_workspace(tmp_path)  # 复用 3a helper
+    _fake_chat_factory(monkeypatch, [_FIX_PATCH, None])  # 复用 3a：apply_patch 修好 -> done
+    res = RuntimeApp(workspace).run_task("fix the failing test", profile_name="mock", mode="plan", assume_yes=True)
+    assert res.status == "success" and "src/calc.py" in res.changed_files
+    ev_files = list((workspace / ".xhx" / "evidence").glob("*.jsonl"))
+    tr_files = list((workspace / ".xhx" / "traces").glob("*.jsonl"))
+    assert ev_files and tr_files
+    evidence = [json.loads(line) for line in ev_files[0].read_text(encoding="utf-8").splitlines() if line.strip()]
+    traces = [json.loads(line) for line in tr_files[0].read_text(encoding="utf-8").splitlines() if line.strip()]
+    patch_ev = next(e for e in evidence if e["kind"] == "patch")
+    binding = next(t for t in traces if t["type"] == "patch_evidence_binding")
+    assert binding["payload"]["evidence_id"] == patch_ev["id"]
+    assert binding["payload"]["changed_files"] == ["src/calc.py"]
+
+
+def test_plan_creates_checkpoint_and_restore_on_failure(tmp_path, monkeypatch):
+    workspace = _python_bug_workspace(tmp_path)
+    # 改成仍错（a*b）且不开 auto_repair：验证失败 -> 应生成 checkpoint + restore plan。
+    _fake_chat_factory(monkeypatch, [_STILL_WRONG_PATCH, None])
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test", profile_name="mock", mode="plan", assume_yes=True, auto_repair=False
+    )
+    assert res.verification == "failed"
+    assert res.checkpoint_path is not None and (workspace / res.checkpoint_path).exists()
+    assert res.restore_plan_path is not None and (workspace / res.restore_plan_path).exists()
+
+
+def test_plan_checkpoint_on_success(tmp_path, monkeypatch):
+    workspace = _python_bug_workspace(tmp_path)
+    _fake_chat_factory(monkeypatch, [_FIX_PATCH, None])
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test", profile_name="mock", mode="plan", assume_yes=True
+    )
+    assert res.verification == "passed"
+    assert res.checkpoint_path is not None and (workspace / res.checkpoint_path).exists()
+    assert res.restore_plan_path is None  # 成功不生成 restore plan
