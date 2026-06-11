@@ -20,6 +20,8 @@ PLAN_SYSTEM_PROMPT = (
     "COMPLETE batch of tool calls to accomplish it in as few model turns as possible (read/search to gather "
     "evidence, then apply_patch for every edit). Use relative paths only; all writes go through apply_patch. "
     "After your edits the system will run verification; if it reports a failure, fix the code and continue. "
+    "For a focused multi-file investigation that would clutter your plan, delegate it to an isolated "
+    "read-only sub-agent via the `dispatch` tool (agent_type='explore') and use its conclusion. "
     "When the task is fully done, reply with a short natural-language summary and no tool calls."
 )
 

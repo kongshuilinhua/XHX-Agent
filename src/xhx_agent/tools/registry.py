@@ -198,8 +198,10 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "dispatch": ToolDefinition(
         name="dispatch",
         description=(
-            "把一个聚焦的探索子任务委派给隔离子 agent：它有自己的上下文与受限工具、限定轮数，"
-            "跑完只回浓缩结论。用于不污染主上下文地深入调查某个问题。"
+            "把一个【聚焦、需读多个文件的多步调查】委派给隔离子 agent：它有自己的上下文、受限只读工具、"
+            "限定轮数，跑完只回浓缩结论，从而不污染你的主上下文。"
+            "适合：摸清不熟悉的模块、并行探索多个独立问题。"
+            "不适合：读单个已知文件（直接用 read_file 即可）。"
             "当前 agent_type 仅支持 'explore'（只读：search/read_file）。"
         ),
         parameters={

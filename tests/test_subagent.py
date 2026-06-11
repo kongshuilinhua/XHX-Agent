@@ -233,3 +233,14 @@ def test_subagent_plan_supports_dispatch(tmp_path, monkeypatch):
 
     assert res.status == "success"
     assert res.answer == "Plan done"
+
+
+def test_system_prompts_advertise_dispatch():
+    # loop/plan 的系统提示与 dispatch 描述要把"何时委派 / 何时直接读"告诉模型，提升真模型采纳率。
+    from xhx_agent.orchestrators.loop import LOOP_SYSTEM_PROMPT
+    from xhx_agent.orchestrators.plan import PLAN_SYSTEM_PROMPT
+
+    assert "dispatch" in LOOP_SYSTEM_PROMPT
+    assert "dispatch" in PLAN_SYSTEM_PROMPT
+    desc = default_tool_registry().definition("dispatch").description
+    assert "read_file" in desc  # 指引"单个已知文件直接读"，避免过度委派
