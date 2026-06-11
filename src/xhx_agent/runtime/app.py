@@ -134,6 +134,7 @@ class RuntimeApp:
         event_callback: EventCallback | None = None,
         cancel_check: CancelCheck | None = None,
         mode: str | None = None,
+        prior_messages: list[dict] | None = None,
     ) -> RunResult:
         """任务总入口：worktree 隔离 → 选编排器 → 运行 → 成功则同步回主工作区。"""
         start_time = time.time()
@@ -206,6 +207,7 @@ class RuntimeApp:
                     cancel_check=cancel_check,
                     event_callback=event_callback,
                     metrics_tracker=metrics_tracker,
+                    prior_messages=prior_messages,
                 )
                 orchestrator = select_orchestrator(mode or execution_mode_to_key(execution_mode))
                 result = orchestrator.run(ctx)

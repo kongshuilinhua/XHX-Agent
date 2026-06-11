@@ -16,6 +16,7 @@ from xhx_agent.runtime.session import (
     list_sessions,
     load_latest_session,
     load_session,
+    load_transcript_messages,
     record_session,
 )
 from xhx_agent.safety.policy import PolicyDecision
@@ -114,17 +115,32 @@ def run(
                 console.print(f"  - {risk}")
         return
     effective_task = task
+    prior_messages = None
+    resume_mode = mode
     if cont or resume:
         previous = load_latest_session(runtime.workspace) if cont else load_session(runtime.workspace, resume or "")
         if previous is not None:
-            effective_task = format_follow_up(previous) + "\n\n" + task
+            restored = load_transcript_messages(runtime.workspace, previous.transcript_path)
             verb = "Continuing" if cont else "Resuming"
-            console.print(f"{verb} from run {previous.run_id} ({previous.status}).")
+            if restored:
+                prior_messages = restored
+                resume_mode = mode or (previous.mode or None)
+                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — full transcript restored.")
+            else:
+                effective_task = format_follow_up(previous) + "\n\n" + task
+                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — summary only.")
         else:
             target = "most recent session" if cont else f"session '{resume}'"
             console.print(f"No {target} found; starting fresh.")
     if json_output:
-        json_result = runtime.run_task(effective_task, profile, assume_yes=yes, auto_repair=auto_repair, mode=mode)
+        json_result = runtime.run_task(
+            effective_task,
+            profile,
+            assume_yes=yes,
+            auto_repair=auto_repair,
+            mode=resume_mode,
+            prior_messages=prior_messages,
+        )
         record_session(runtime.workspace, task, json_result)
         console.print(json_result.model_dump_json(indent=2))
         return
@@ -134,7 +150,8 @@ def run(
         assume_yes=yes,
         confirm_callback=_confirm_terminal_command,
         auto_repair=auto_repair,
-        mode=mode,
+        mode=resume_mode,
+        prior_messages=prior_messages,
     )
     record_session(runtime.workspace, task, result)
     console.print(f"status: {result.status}")

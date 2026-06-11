@@ -39,8 +39,10 @@ class LoopOrchestrator:
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": LOOP_SYSTEM_PROMPT + "\n\n" + render_xhx_md(ctx.scan)},
-            {"role": "user", "content": ctx.task},
         ]
+        if ctx.prior_messages:
+            messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")
+        messages.append({"role": "user", "content": ctx.task})
         changed_files: list[str] = []
         risks: list[str] = []
         max_turns = load_config(ctx.original_workspace).max_loop_turns

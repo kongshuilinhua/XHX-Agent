@@ -63,6 +63,7 @@ class OrchestratorContext:
     cancel_check: CancelCheck | None = None
     event_callback: EventCallback | None = None
     metrics_tracker: dict[str, int] = field(default_factory=lambda: {"tokens": 0})
+    prior_messages: list[dict] | None = None
 
 
 class Orchestrator(Protocol):

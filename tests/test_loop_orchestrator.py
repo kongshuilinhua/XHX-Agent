@@ -159,3 +159,30 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
     assert roles[0] == "system" and "user" in roles and "tool" in roles
     # 最终 assistant 回答必须在历史里（修复"漏存最后一句"）
     assert saved[-1] == {"role": "assistant", "content": "done reading"}
+
+
+def test_loop_restores_prior_messages(tmp_path, monkeypatch):
+    from xhx_agent.models.types import ChatResult
+    import xhx_agent.orchestrators.loop as loopmod
+    from xhx_agent.runtime.app import RuntimeApp
+    seen = {}
+    class _Fake:
+        def chat(self, messages, tools):
+            seen["roles"] = [m["role"] for m in messages]
+            seen["contents"] = [m.get("content") for m in messages]
+            return ChatResult(content="continued", tool_calls=[])
+    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    RuntimeApp(tmp_path).init_project()
+    prior = [
+        {"role": "system", "content": "OLD SYSTEM — must be dropped"},
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ]
+    res = RuntimeApp(tmp_path).run_task(
+        "follow up", profile_name="mock", mode="loop", prior_messages=prior)
+    assert res.status == "success" and res.answer == "continued"
+    # 恰好一个 system（新的），旧 system 被丢弃；历史 user/assistant 在；新 task 在末尾
+    assert seen["roles"].count("system") == 1
+    assert "OLD SYSTEM — must be dropped" not in seen["contents"]
+    assert "earlier question" in seen["contents"]
+    assert seen["roles"][-1] == "user" and seen["contents"][-1] == "follow up"
