@@ -893,7 +893,10 @@ def test_should_stop_after_turn_respects_autonomous_flag() -> None:
     assert _should_stop_after_turn(mock, [], [object()], stop_on_first_change=False) is True
 
 
-def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
+def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path, monkeypatch) -> None:
+    import xhx_agent.orchestrators.plan as planmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+
     RuntimeApp(tmp_path).init_project()
     profiles_path(tmp_path).write_text(
         ProfilesFile(
@@ -911,43 +914,55 @@ def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    app = RuntimeApp(tmp_path)
-    plans = [
-        ModelPlan(
-            summary="add a",
-            steps=[
-                ToolStep(
-                    tool="apply_patch",
+    seq = [
+        ChatResult(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="apply_patch",
                     arguments={"patch": "*** Begin Patch\n*** Add File: a.py\n+x = 1\n*** End Patch\n"},
                 )
             ],
         ),
-        ModelPlan(
-            summary="add b",
-            steps=[
-                ToolStep(
-                    tool="apply_patch",
+        ChatResult(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c2",
+                    name="apply_patch",
                     arguments={"patch": "*** Begin Patch\n*** Add File: b.py\n+y = 2\n*** End Patch\n"},
                 )
             ],
         ),
-        ModelPlan(summary="done", status="done", steps=[]),
+        ChatResult(content="done", tool_calls=[]),
     ]
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
-        return plans.pop(0)
+    class _Fake:
+        def __init__(self):
+            self.i = 0
 
-    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+        def chat(self, messages, tools):
+            r = seq[self.i]
+            self.i += 1
+            return r
+
+    monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
 
     # mode="plan" is autonomous: it must NOT stop after the first change.
-    result = app.run_task("build stuff", profile_name="real", mode="plan")
+    result = RuntimeApp(tmp_path).run_task("build stuff", profile_name="real", mode="plan")
 
+    assert result.status == "success"
+    # Executed at least two change turns (not first-change-then-stop), plus the final text turn.
     assert result.turns == 3
     assert (tmp_path / "a.py").exists()
     assert (tmp_path / "b.py").exists()
 
 
-def test_plan_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
+def test_plan_concurrently_executes_readonly_steps(tmp_path: Path, monkeypatch) -> None:
+    import xhx_agent.orchestrators.plan as planmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+
     (tmp_path / "a.txt").write_text("AAA\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("BBB\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()
@@ -967,25 +982,30 @@ def test_plan_concurrently_executes_readonly_steps(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    app = RuntimeApp(tmp_path)
-    plans = [
-        ModelPlan(
-            summary="read both files",
-            steps=[
-                ToolStep(tool="read_file", arguments={"path": "a.txt"}),
-                ToolStep(tool="read_file", arguments={"path": "b.txt"}),
+    seq = [
+        ChatResult(
+            content=None,
+            tool_calls=[
+                ToolCall(id="c1", name="read_file", arguments={"path": "a.txt"}),
+                ToolCall(id="c2", name="read_file", arguments={"path": "b.txt"}),
             ],
         ),
-        ModelPlan(summary="done", status="done", steps=[]),
+        ChatResult(content="done", tool_calls=[]),
     ]
 
-    def fake_build_plan(_task: str, _profile: ModelProfile, _context: ContextPack, *args, **kwargs) -> ModelPlan:
-        return plans.pop(0)
+    class _Fake:
+        def __init__(self):
+            self.i = 0
 
-    app._build_plan = fake_build_plan  # type: ignore[method-assign]
+        def chat(self, messages, tools):
+            r = seq[self.i]
+            self.i += 1
+            return r
+
+    monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
     events = []
 
-    result = app.run_task("explore files", profile_name="real", mode="plan", event_callback=events.append)
+    result = RuntimeApp(tmp_path).run_task("explore files", profile_name="real", mode="plan", event_callback=events.append)
 
     assert result.status == "success"
     assert any(event.type == "subagent_concurrent" for event in events)
