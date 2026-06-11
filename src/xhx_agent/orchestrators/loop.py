@@ -4,7 +4,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from xhx_agent.models import build_chat_client
-from xhx_agent.models.types import ModelClientError, ToolStep
+from xhx_agent.models.types import ModelClientError
+from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, execute_tool_call
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -20,7 +21,6 @@ LOOP_SYSTEM_PROMPT = (
     "Use relative paths only. All writes go through apply_patch. If evidence is insufficient, "
     "read_file/search first before patching. Do not assume unread files."
 )
-_MAX_TOOL_RESULT_CHARS = 8000
 
 
 class LoopOrchestrator:
@@ -93,37 +93,8 @@ class LoopOrchestrator:
                 }
             )
 
-            def _exec_one(tc, turn=turn):
-                emit_event(
-                    ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name
-                )
-                d = ctx.kernel.tool_registry.definition(tc.name)
-                if d is not None and d.is_command:
-                    command = str(tc.arguments.get("command") or _default_verify_command(ctx.scan))
-                    try:
-                        exec_result = ctx.kernel.run_command_tool(
-                            command,
-                            evidence_kind="test" if tc.name == "verify" else "command",
-                            assume_yes=ctx.assume_yes,
-                            confirm_callback=ctx.confirm_callback,
-                            event_callback=ctx.event_callback,
-                            turn=turn,
-                        )
-                        return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
-                    except Exception as exc:  # noqa: BLE001
-                        ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
-                        return tc, f"[{tc.name} error] {exc}", []
-                step = ToolStep(tool=tc.name, arguments=tc.arguments)
-                try:
-                    exec_result, _trace, policy = ctx.kernel.execute_tool(
-                        ctx.tool_context, step, turn, ctx.event_callback
-                    )
-                    if exec_result is None:
-                        return tc, f"Tool denied/blocked: {policy.reason}", []
-                    return tc, _render_tool_content(exec_result), list(exec_result.changed_files)
-                except Exception as exc:  # noqa: BLE001
-                    ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": tc.name, "error": str(exc)})
-                    return tc, f"[{tc.name} error] {exc}", []
+            def _run(tc, turn=turn):
+                return execute_tool_call(ctx, tc, turn)
 
             reg = ctx.kernel.tool_registry
 
@@ -136,9 +107,9 @@ class LoopOrchestrator:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
-                    outcomes = list(pool.map(_exec_one, result.tool_calls))
+                    outcomes = list(pool.map(_run, result.tool_calls))
             else:
-                outcomes = [_exec_one(tc) for tc in result.tool_calls]
+                outcomes = [_run(tc) for tc in result.tool_calls]
 
             for tc, content, changed in outcomes:
                 emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
@@ -173,22 +144,3 @@ class LoopOrchestrator:
             answer=answer,
             transcript_path=transcript_rel,
         )
-
-
-def _default_verify_command(scan: Any) -> str:
-    langs = getattr(scan, "detected_languages", []) or []
-    if "python" in langs:
-        return "python -m pytest"
-    if "javascript" in langs or "typescript" in langs:
-        return "npm test"
-    return "python -m pytest"
-
-
-def _render_tool_content(result: Any) -> str:
-    if result.status != "success":
-        return f"[{result.tool} failed] {result.error or result.summary}"
-    payload = result.trace_payload or {}
-    for key in ("content", "results"):
-        if key in payload:
-            return f"{result.summary}\n{json.dumps(payload[key], ensure_ascii=False)[:_MAX_TOOL_RESULT_CHARS]}"
-    return result.summary
