@@ -153,3 +153,77 @@ def test_apply_patch_rejects_add_existing_file(tmp_path: Path) -> None:
     assert result.changed_files == []
     assert "already exists" in result.stderr
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_apply_patch_unified_diff_update(tmp_path: Path) -> None:
+    target = tmp_path / "calc.py"
+    target.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    patch = """--- a/calc.py
++++ b/calc.py
+@@ -1,2 +1,2 @@
+ def add(a, b):
+-    return a - b
++    return a + b
+"""
+    result = apply_patch(tmp_path, patch)
+    assert result.status == "success"
+    assert result.changed_files == ["calc.py"]
+    assert target.read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+
+def test_apply_patch_unified_diff_add(tmp_path: Path) -> None:
+    patch = """--- /dev/null
++++ b/new_file.py
+@@ -0,0 +1,2 @@
++def hello():
++    print("hello")
+"""
+    result = apply_patch(tmp_path, patch)
+    assert result.status == "success"
+    assert result.changed_files == ["new_file.py"]
+    assert (tmp_path / "new_file.py").read_text(encoding="utf-8") == "def hello():\n    print(\"hello\")\n"
+
+
+def test_apply_patch_fences(tmp_path: Path) -> None:
+    # 1. Envelope inside ```diff
+    target1 = tmp_path / "file1.py"
+    target1.write_text("x = 1\n", encoding="utf-8")
+    patch1 = """```diff
+*** Begin Patch
+*** Update File: file1.py
+@@
+-x = 1
++x = 2
+*** End Patch
+```"""
+    result1 = apply_patch(tmp_path, patch1)
+    assert result1.status == "success"
+    assert target1.read_text(encoding="utf-8") == "x = 2\n"
+
+    # 2. Unified diff inside ```patch
+    target2 = tmp_path / "file2.py"
+    target2.write_text("y = 10\n", encoding="utf-8")
+    patch2 = """```patch
+--- a/file2.py
++++ b/file2.py
+@@ -1,1 +1,1 @@
+-y = 10
++y = 20
+```"""
+    result2 = apply_patch(tmp_path, patch2)
+    assert result2.status == "success"
+    assert target2.read_text(encoding="utf-8") == "y = 20\n"
+
+    # 3. Unified diff inside bare ```
+    target3 = tmp_path / "file3.py"
+    target3.write_text("z = 100\n", encoding="utf-8")
+    patch3 = """```
+--- a/file3.py
++++ b/file3.py
+@@ -1,1 +1,1 @@
+-z = 100
++z = 200
+```"""
+    result3 = apply_patch(tmp_path, patch3)
+    assert result3.status == "success"
+    assert target3.read_text(encoding="utf-8") == "z = 200\n"
