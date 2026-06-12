@@ -93,7 +93,7 @@ def run(
     ] = None,
     mode: Annotated[
         str | None,
-        typer.Option("--mode", help="Orchestrator paradigm: loop | graph | linear | dag (default: auto-classified)."),
+        typer.Option("--mode", help="Orchestrator paradigm: loop | plan | graph (linear | dag = auto-classify fallback; default: auto-classified)."),
     ] = None,
 ) -> None:
     runtime = RuntimeApp()

@@ -161,7 +161,7 @@ class CommandConsole:
     def orchestrator_mode(self) -> str | None:
         """Explicit orchestrator paradigm to use, or None to auto-classify.
 
-        ``/mode loop|graph|linear|dag`` selects a paradigm; any other label (the
+        ``/mode loop|plan|graph`` (or the ``linear|dag`` fallback) selects a paradigm; any other label (the
         default ``linear-edit``) means auto-classification, preserving behaviour.
         """
         return self.mode if self.mode in {"plan", "loop", "graph", "linear", "dag"} else None

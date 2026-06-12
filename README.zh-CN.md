@@ -12,19 +12,20 @@
 
 </div>
 
-> 一个**上下文预算化的本地编码 agent 运行时**，带**可插拔的双范式编排器**：同一个任务，既可以作为单一自主 **`loop`**（类 Claude Code 风格）驱动，也可以作为多 agent **`graph`**（基于 LangGraph）驱动——两者共用同一套安全 / 上下文 / 代码智能基座。
+> 一个**上下文预算化的本地编码 agent 运行时**，带**可插拔的三范式编排器**：同一个任务，既可以作为单一自主 **`loop`**（ReAct，类 Claude Code 风格）驱动，也可以作为批量规划的 **`plan`**（Plan-Execute）驱动，还可以作为多 agent **`graph`**（基于 LangGraph）驱动——三者都说**同一套原生 tool-calling 协议**，共用同一套安全 / 上下文 / 代码智能基座。
 
-`xhx-agent` 直接运行在本地仓库内部。它在每一次模型调用前编译一份按 token 预算裁剪的上下文包（context pack），通过安全执行内核对 shell 命令进行分级与拦截，在隔离的 git worktree 中改代码，运行定向测试，并记录可回放的证据链路。同一个任务可以由两种可互换的控制流范式驱动，运行时即可选择。
+`xhx-agent` 直接运行在本地仓库内部。它在每一次模型调用前编译一份按 token 预算裁剪的上下文包（context pack），通过安全执行内核对 shell 命令进行分级与拦截，在隔离的 git worktree 中改代码，运行定向测试，并记录可回放的证据链路。同一个任务可以由三种可互换的控制流范式驱动，运行时即可选择——于是 loop、plan、graph 之间的设计取舍变得具体、可对比，并且**用真实数字做了 benchmark**。
 
 ---
 
 ## 这个项目有意思在哪
 
-- **可插拔的双范式编排器。** 一套 `Orchestrator` 抽象，两个真实实现：自主 **`loop`**（读 → 改 → 验证，反复迭代直到完成）和基于 LangGraph `StateGraph` 的 **`graph`**（coordinator → execute → review）。两者共用完全相同的工具、安全、上下文、代码智能层——只有顶层控制流不同。这让 loop 与 graph 的设计取舍变得具体、可直接对比。
+- **一套协议，三种范式。** 一套 `Orchestrator` 抽象，三个真实实现，全部通过**原生 tool-calling** 驱动模型（不再有自定义的「model plan」DSL）：自主 **`loop`**（读 → 改 → 验证，反复迭代直到完成）、**`plan`**（批量规划 → 执行 → 验证，带有界自我修复）、以及基于 LangGraph `StateGraph` 的 **`graph`**（coordinator → worker → reviewer，带条件重试回路）。三者共用完全相同的工具、安全、上下文、代码智能层——只有顶层控制流不同。三者都**针对真实模型（DeepSeek）做了端到端验证**，不只是离线 mock。
+- **量化，而非空谈。** 内置的 [benchmark 台架](#benchmark量化三范式) 把一批夹具任务分别用三种范式跑一遍，输出对比报告（轮数 / token / 墙钟 / 成功率 / 改动文件）为 Markdown + JSON。token 计量把多 agent 开销变成一个数字：`graph` 完成同样的工作，花费约为单 agent `loop`/`plan` 的 **3 倍 token**。
 - **按 token 预算的上下文包。** 每一次模型调用都喂入一份确定性预算化的上下文包（项目地图 / 任务 / 源码 / 证据 / 错误），用 `tiktoken`（`cl100k_base`）精确计数，溢出时按优先级裁剪。长自主循环中的历史被压缩而非丢弃。
 - **安全执行内核。** shell 命令经 `shlex` 分词后被分为 `safe` / `confirm` / `deny` 三档，配合可执行文件黑名单、shell 元字符拦截、内联解释器检测作为纵深防御。编辑在隔离的 git worktree 中进行，只有成功时才同步回原工作区。
 - **代码智能。** 由 Python `ast` 与 tree-sitter（用于 JS/TS）构建的符号 / import / 引用 / 调用索引，以 JSON 主索引 + SQLite 镜像落盘，并在文件变更时增量刷新。
-- **诚实的实现状态。** 下方的[实现状态](#实现状态)小节明确区分「已完整实现」与「简化 / 部分实现」——不把路线图功能写成已交付。
+- **诚实的实现状态。** [实现状态](#实现状态)小节明确区分「已完整实现」与「简化 / 部分实现」；[工程手记](#工程手记构建过程教会我的事)则记录了哪些东西在真实模型下崩了、以及光靠一段提示词*解决不了*什么。
 
 ---
 
@@ -37,11 +38,12 @@ graph TD
     classDef base fill:#14302a,stroke:#2e8b57,stroke-width:1px,color:#e0eee0;
 
     E["入口<br/>CLI run · REPL · TUI · JSON-RPC"]:::entry
-    S["编排器选择<br/>--mode loop / graph / linear / dag<br/>（或按意图自动分类）"]:::orch
-    L["loop 范式<br/>单一自主 agent<br/>读 → 改 → 验证，直到完成"]:::orch
-    G["graph 范式（LangGraph）<br/>coordinator → execute → review<br/>带条件重执行回路"]:::orch
+    S["编排器选择<br/>--mode loop / plan / graph<br/>（linear · dag = auto-classify 回退）"]:::orch
+    L["loop 范式<br/>单一自主 agent（ReAct）<br/>读 → 改 → 验证，直到完成"]:::orch
+    P["plan 范式<br/>批量规划 → 执行 → 验证<br/>有界自我修复（≤2 轮）"]:::orch
+    G["graph 范式（LangGraph）<br/>coordinator → worker → reviewer<br/>带条件重试回路"]:::orch
 
-    subgraph base_box["共享基座"]
+    subgraph base_box["共享基座 — 原生 tool-calling"]
         B["上下文包编译器<br/>（tiktoken 预算 + 压缩）"]:::base
         R["代码智能<br/>（ast + tree-sitter，JSON + SQLite）"]:::base
         K["安全执行内核<br/>（风险分级 · worktree 隔离）"]:::base
@@ -52,10 +54,14 @@ graph TD
 
     E --> S
     S -->|loop| L
+    S -->|plan| P
     S -->|graph| G
     L --> B
+    P --> B
     G --> B
 ```
+
+三种范式发出的是**同一批工具调用**（`search`、`read_file`、`apply_patch`、`verify`、`dispatch`……），走的是**同一个内核**——区别纯粹在于*谁来决定下一步调什么*：一个 agent（`loop`）、一个先规划后执行的控制器（`plan`）、还是一支 coordinator/worker/reviewer 团队（`graph`）。
 
 ---
 
@@ -105,8 +111,9 @@ trace: .xhx/traces/dry-run-...jsonl
 用 `--mode` 显式指定编排器范式：
 
 ```bash
-uv run xhx run "refactor the math helpers" --profile mock --mode loop    # 自主 loop
-uv run xhx run "refactor the math helpers" --profile mock --mode graph   # LangGraph 工作流
+uv run xhx run "refactor the math helpers" --profile mock --mode loop    # 自主 ReAct 循环
+uv run xhx run "refactor the math helpers" --profile mock --mode plan    # 规划 → 执行 → 验证
+uv run xhx run "refactor the math helpers" --profile mock --mode graph   # LangGraph 多 agent
 ```
 
 打开交互式 REPL 或全屏看板：
@@ -118,19 +125,55 @@ uv run xhx tui --fullscreen  # Textual 看板
 
 ---
 
-## 两种执行范式
+## 三种执行范式
 
-两者跑在完全相同的工具 / 安全 / 上下文 / 代码智能基座之上——只有控制流不同。
+三者跑在完全相同的工具 / 安全 / 上下文 / 代码智能基座、以及同一套原生 tool-calling 协议之上——只有控制流不同。
 
-| | `loop`（默认） | `graph` |
-|:--|:--|:--|
-| **风格** | 单一自主 agent，类 Claude Code | 多 agent 工作流，LangGraph `StateGraph` |
-| **控制流** | 一个模型持续迭代 读 → 改 → 验证，最多 `max_loop_turns` 轮（默认 20），直到它报告完成 | 显式节点：coordinator → execute → review，带条件重执行回路（最多 2 轮 review） |
-| **并发** | 一轮内的只读步骤并发执行（subagent 风格） | 通过图做节点级编排 |
-| **适合** | 开放式编辑任务、探索性工作 | 需要明确「计划/复核」分离的任务 |
-| **选择方式** | `--mode loop` / `/mode loop` | `--mode graph` / `/mode graph` |
+| | `loop`（默认） | `plan` | `graph` |
+|:--|:--|:--|:--|
+| **风格** | 单一自主 agent（ReAct） | Plan-Execute 控制器 | 多 agent 工作流（LangGraph `StateGraph`） |
+| **控制流** | 一个模型持续迭代 读 → 改 → 验证，最多 `max_loop_turns` 轮，直到它报告完成 | 先把整个任务批量规划，执行各步，验证，失败时跑有界自我修复 | 显式角色：coordinator 拆任务 → 可写的 worker 执行每个子任务 → reviewer 判 PASS/FAIL，带条件重执行回路 |
+| **任务分解** | 隐式、逐轮 | 批量、前置 | coordinator 驱动，拆成子任务 |
+| **适合** | 开放式编辑、探索性工作 | 需要明确「计划 + 验证门」的任务 | 需要「计划 / 执行 / 复核」跨角色分离的任务 |
+| **真实模型开销** | 最低（1 个 agent） | 低（1 个 agent + 验证） | 最高（约 3× token——多 agent 通信） |
+| **选择方式** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode graph` / `/mode graph` |
 
-省略 `--mode` 时的自动分类回退，会按意图路由到 `direct` / `research-only` / `linear-edit` / `dag-execute`。
+省略 `--mode` 时，意图分类器会把任务经一条轻量的 `linear` / `dag` 回退路径路由（`direct` / `research-only` / `linear-edit` / `dag-execute`）。这两者是 **auto-classify 路径的支撑机制**，并非头条范式——对任何非平凡任务，请显式选 `loop`、`plan` 或 `graph`。
+
+---
+
+## Benchmark：量化三范式
+
+核心论点——*一套基座、三种可互换范式*——只有用数字才有说服力。`xhx benchmark` 把一批夹具任务分别用各范式跑一遍，写出对比报告（`.xhx/benchmark/report.md` + `report.json`）：
+
+```bash
+uv run xhx benchmark --modes loop,plan,graph                 # 离线、确定性（mock）
+uv run xhx benchmark --modes loop,plan,graph --profile default  # 真实模型（DeepSeek）
+```
+
+**离线 `mock` 跑**（确定性、可复现、CI 友好——三个只读研究夹具）：
+
+| 范式 | 任务数 | 平均轮数 | 平均 tokens | 平均墙钟(s) |
+|:--|:--:|:--:|:--:|:--:|
+| `loop` | 3 | 1.0 | ~978 | 0.40 |
+| `plan` | 3 | 1.0 | ~986 | 0.38 |
+| `graph` | 3 | 2.0 | ~2919 | 0.77 |
+
+最值得看的是 **token 这一列**：多 agent 的 `graph` 覆盖同样的工作量，花费约为单 agent `loop`/`plan` 的 **3 倍 token**——coordinator + worker + reviewer 各自携带自己的上下文。这就是显式角色分离的代价，如今是**测出来的**，而非嘴上说的。
+
+> `mock` profile 是确定性的，但并不触发 `graph` 所依赖的 LLM 协调/复核，所以 `graph` 的成功率只有在真实模型下才有意义。在 DeepSeek 下，`graph` 能完成同样的夹具并通过复核（通常一轮）；`loop` 与 `plan` 在数轮内收敛。用上面的 `--profile default` 命令自己复现真实模型表（需要环境变量里有 `DEEPSEEK_API_KEY`）。
+
+---
+
+## 工程手记：构建过程教会我的事
+
+三个比「测试全绿」更有价值的发现——每一个都是*真实*模型与舒适的离线 mock 分道扬镳的地方。
+
+**1 · `apply_patch` 撞上真实模型。** patch 工具最初是围绕自定义的 `*** Begin Patch … *** End Patch` 信封构建的，离线 mock 也老老实实产出它。换成真实 DeepSeek 后，*每一次*编辑都失败：`Patch must start with *** Begin Patch`。真实模型产出的是 **unified diff**——常常还裹在 ```` ```diff ```` 围栏里——而不是那个自定义信封。修复办法是让解析器**按格式分派**：信封、unified diff（`---` / `+++` / `@@`，其中 `/dev/null` 表示新建文件）、以及一道剥围栏的预处理。**教训：** mock 对齐不等于真实对齐。真实模型的输出分布*本身*就是你必须解析的规格。
+
+**2 · 提示词不是银弹。** 我加了一个 `dispatch` 工具，让 agent 能把聚焦的、跨多文件的调查交给一个隔离的只读子 agent——保持父上下文干净。这个能力已接好、有门控、也正确。但即便给了明确的提示词引导，真实模型也压倒性地更愿意自己直接读文件，很少去用 `dispatch`。与其粉饰，我如实记下：**改变模型行为往往需要比系统提示词里一段话更强的机制**——而知道这个差别，本身就是这份工作的一部分。
+
+**3 · 给「协调」标个价。** 一个小小的 token 计量器包住每一次模型调用，把出站上下文的 `tiktoken` 估算累加进运行指标。正是它把「graph 开销更大」变成了上表里的「graph 花约 3× token」。构建成本很低，却把一个架构直觉变成了 reviewer 可以核对的东西。
 
 ---
 
@@ -145,7 +188,7 @@ uv run xhx run "<task>" [options]
 | 选项 | 说明 |
 |:--|:--|
 | `--profile <name>` | 来自 `.xhx/profiles.json` 的 LLM profile（`mock` 离线运行）。 |
-| `--mode <loop\|graph\|linear\|dag>` | 选择编排器范式（默认：按意图自动分类）。 |
+| `--mode <loop\|plan\|graph\|linear\|dag>` | 选择编排器范式（默认：按意图自动分类）。 |
 | `--auto-repair` | 定向验证失败时，启用最多 2 轮自我修复。 |
 | `--dry-run` | 预览计划、token 预算与风险后退出。 |
 | `-y`, `--yes` | 预先批准 `confirm` 档命令（非交互）。 |
@@ -166,7 +209,9 @@ uv run xhx run "<task>" [options]
 如实陈述，绝不把能力与路线图混为一谈。
 
 **已完整实现**
-- 可插拔双范式编排器：`loop`（自主）与 `graph`（LangGraph），已接入全部三个入口（CLI `--mode`、REPL/TUI `/mode`）。
+- 一套原生 tool-calling 协议上的三范式编排器：`loop`（自主 ReAct）、`plan`（Plan-Execute，带有界自我修复）、`graph`（LangGraph coordinator → worker → reviewer）——全部接入每个入口（CLI `--mode`、REPL/TUI `/mode`），且全部针对真实模型做了端到端验证。
+- 经 `dispatch` 工具的隔离只读子 agent（聚焦探索，有自己的消息历史与受限工具集）。
+- 三范式 benchmark 台架（`xhx benchmark --modes …`），输出 Markdown + JSON 对比报告，带逐调用 token 计量。
 - 上下文包编译器：`tiktoken` 预算、优先级裁剪、历史压缩（启发式；自主模式下用 LLM 摘要，出错回退启发式）。
 - 安全执行内核：风险分级、黑名单 + 元字符 + 内联解释器拦截、git worktree 隔离、就地 Restore Plan 回退。
 - 代码智能：符号 / import / 引用 / 调用索引——Python 走 `ast`，JS/TS 符号走 tree-sitter——以 JSON 主索引 + SQLite 镜像落盘，文件变更时增量刷新。
@@ -174,10 +219,11 @@ uv run xhx run "<task>" [options]
 - REPL（prompt-toolkit）与全屏 TUI（Textual）；JSON-RPC 2.0 stdio 接口；离线 `mock` profile；benchmark + replay。
 
 **简化 / 部分实现（有意为之）**
-- `dag-execute` 的节点生成是启发式基线；尚未实现对任意请求的 LLM 驱动分解。开放式编辑建议走 `loop`。
+- `linear` / `dag` 作为轻量的 auto-classify 回退保留（仅在省略 `--mode` 时使用）；头条的分解工作发生在 `plan` 与 `graph`，二者经 tool-calling 由 LLM 驱动。
+- `graph` 范式是刻意精简的 coordinator → worker → reviewer 工作流，为与 `loop`/`plan` 形成干净对照而保持最小。
+- `dispatch` 覆盖只读的 `explore` 子 agent；可写与并行子 agent 属于后续工作。
 - 引用索引是文本级 symbol name 匹配，非语义解析。
 - JS/TS 的 import 与 call 提取用正则（只有 JS/TS *符号* 用 tree-sitter）；Python 用完整 `ast`。
-- `graph` 范式是刻意精简的 3 节点工作流，为与 `loop` 形成干净对照而保持最小。
 
 详见 [`docs/implementation/20-implementation-baseline.md`](docs/implementation/20-implementation-baseline.md) 和 [`docs/01-architecture.md`](docs/01-architecture.md)。
 
@@ -187,14 +233,15 @@ uv run xhx run "<task>" [options]
 
 ```text
 src/xhx_agent/
-  orchestrators/   loop · graph · linear · dag，统一在一个 Orchestrator 协议之下
+  orchestrators/   loop · plan · graph（主）+ linear · dag（回退），统一在一个 Orchestrator 协议之下
   context/         上下文包编译器 + token 预算 + 压缩
   repo_intel/      符号 / import / 引用 / 调用索引（ast + tree-sitter，JSON + SQLite）
   safety/          风险分级 · 策略 · worktree · 检查点 · 修复
   planner/         意图分类器 · 执行模式 · reviewer · agents
   verification/    定向测试路由
+  evals/           benchmark 台架 + RunMetrics
   evidence/        trace 存储 + 报告生成
-  runtime/         应用主循环 · 会话 · 配置 · DAG runner
+  runtime/         应用主循环 · 会话 · 配置
   models/          mock + OpenAI 兼容 profile
   cli/ · tui/      REPL、全屏看板、JSON-RPC
 ```
