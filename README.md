@@ -21,7 +21,7 @@
 ## Why this project is interesting
 
 - **One protocol, three paradigms.** A single `Orchestrator` abstraction with three real implementations that all drive the model through **native tool-calling** (no bespoke "model plan" DSL): an autonomous **`loop`** (read → edit → verify, iterating until done), a **`plan`** (batch-plan → execute → verify with bounded self-repair), and a **`graph`** built on a LangGraph `StateGraph` (coordinator → worker → reviewer, with a conditional retry loop). They share the exact same tool, safety, context, and code-intelligence layers — only the top-level control flow differs. All three are **verified end-to-end against a real model** (DeepSeek), not just the offline mock.
-- **Quantified, not hand-waved.** A built-in [benchmark harness](#benchmark-quantifying-the-paradigms) runs a fixture task-set across all three paradigms and emits a comparison report (turns / tokens / wall-clock / success / files changed) as Markdown + JSON. The token meter makes the multi-agent overhead a number: `graph` spends **~3× the tokens** of single-agent `loop`/`plan` for the same work.
+- **Quantified, not hand-waved.** A built-in [benchmark harness](#benchmark-quantifying-the-paradigms) runs a fixture task-set across all three paradigms and emits a comparison report (turns / tokens / wall-clock / success / files changed) as Markdown + JSON. The token meter makes the multi-agent overhead a number: on a real model (DeepSeek), `graph` spends **~4× the tokens** of single-agent `loop`/`plan` for the same work — and isn't automatically more reliable.
 - **Token-budgeted Context Pack.** Each model turn is fed a deterministically-budgeted context pack (project map / task / source / evidence / errors), measured with `tiktoken` (`cl100k_base`) and pruned by priority when it overflows. Long autonomous histories are compacted rather than dropped.
 - **Safe Execution Kernel.** Shell commands are tokenized (`shlex`) and classified into `safe` / `confirm` / `deny` tiers, with a denylisted-executable set, shell-metacharacter blocking, and inline-interpreter detection as defense-in-depth. Edits run in an isolated git worktree and are synced back only on success.
 - **Repo intelligence.** A symbol / import / reference / call index built from Python's `ast` and tree-sitter (for JS/TS), persisted as JSON with a SQLite mirror, refreshed incrementally on file changes.
@@ -135,7 +135,7 @@ All three run over the identical tool / safety / context / code-intelligence bas
 | **Control flow** | One model iterates read → edit → verify across up to `max_loop_turns` until it reports done | Plans the whole task up front, executes the steps, verifies, and runs bounded self-repair on failure | Explicit roles: coordinator splits the task → a write-capable worker executes each sub-task → reviewer judges PASS/FAIL, with a conditional re-execute loop |
 | **Decomposition** | Implicit, per-turn | Batch, up front | Coordinator-driven, into sub-tasks |
 | **Best for** | Open-ended edits, exploratory work | Tasks that benefit from an explicit plan + verification gate | Tasks where plan / execute / review separation across roles is valuable |
-| **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~3× tokens — multi-agent chatter) |
+| **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~4× tokens, ~3× time — multi-agent chatter) |
 | **Select via** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode graph` / `/mode graph` |
 
 When `--mode` is omitted, an intent classifier routes the task through a lightweight `linear` / `dag` fallback (`direct` / `research-only` / `linear-edit` / `dag-execute`). These two are **supporting mechanisms for the auto-classify path**, not headline paradigms — for any non-trivial task, pick `loop`, `plan`, or `graph` explicitly.
@@ -147,11 +147,27 @@ When `--mode` is omitted, an intent classifier routes the task through a lightwe
 The core thesis — *one base, three interchangeable paradigms* — is only convincing with numbers. `xhx benchmark` runs a fixture task-set across the paradigms and writes a comparison report (`.xhx/benchmark/report.md` + `report.json`):
 
 ```bash
-uv run xhx benchmark --modes loop,plan,graph                 # offline, deterministic (mock)
 uv run xhx benchmark --modes loop,plan,graph --profile default  # real model (DeepSeek)
+uv run xhx benchmark --modes loop,plan,graph                    # offline, deterministic (mock)
 ```
 
-**Offline `mock` run** (deterministic, reproducible, CI-friendly — three read-only research fixtures):
+**Real model** (DeepSeek `deepseek-chat`) — three read-only research fixtures, per-paradigm means:
+
+| Paradigm | Success | Mean turns | Mean tokens | Mean wall-clock (s) |
+|:--|:--:|:--:|:--:|:--:|
+| `loop` | 3/3 | 4.7 (tool iterations) | ~14.3K | 14.1 |
+| `plan` | 3/3 | 4.0 (tool iterations) | ~15.0K | 13.0 |
+| `graph` | 2/3 | 1.7 (review rounds) | **~58.9K** | 44.6 |
+
+Two things jump out:
+
+- **The multi-agent `graph` costs ~4× the tokens and ~3× the wall-clock** of the single-agent `loop`/`plan` — coordinator, worker(s), and reviewer each carry their own full context. (Its lower "turn" count is a *different unit* — review rounds, not tool iterations.)
+- **More agents did not mean a better outcome here:** `graph` succeeded on only 2 of 3 fixtures (one reviewer returned FAIL), while `loop` and `plan` completed all three. Role separation buys explicit plan/review structure — it does not come for free, and it is not automatically more reliable.
+
+The offline `mock` profile reproduces the *same shape* deterministically (`graph` ~3× the tokens of `loop`/`plan`) for CI and zero-key demos, though it doesn't exercise the LLM coordination `graph` depends on — so success rate there is only meaningful under a real model. Reproduce either table with the commands above (`--profile default` requires a `DEEPSEEK_API_KEY`).
+
+<details>
+<summary>Offline <code>mock</code> table (deterministic, reproducible)</summary>
 
 | Paradigm | Tasks | Mean turns | Mean tokens | Mean wall-clock (s) |
 |:--|:--:|:--:|:--:|:--:|
@@ -159,9 +175,7 @@ uv run xhx benchmark --modes loop,plan,graph --profile default  # real model (De
 | `plan` | 3 | 1.0 | ~986 | 0.38 |
 | `graph` | 3 | 2.0 | ~2919 | 0.77 |
 
-The headline is the **token column**: the multi-agent `graph` spends roughly **3× the tokens** of the single-agent `loop`/`plan` to cover the same ground — coordinator + worker + reviewer each carry their own context. That is the price of explicit role separation, now measured instead of asserted.
-
-> The `mock` profile is deterministic but does not exercise the LLM coordination/review that `graph` depends on, so `graph`'s success rate is only meaningful under a real model. Against DeepSeek, `graph` completes the same fixtures and passes review (typically in a single round); `loop` and `plan` converge in a handful of turns. Reproduce the real-model table yourself with the `--profile default` command above (requires a `DEEPSEEK_API_KEY` in your environment).
+</details>
 
 ---
 
@@ -173,7 +187,7 @@ Three findings worth more than a green test suite — each is a place where a *r
 
 **2 · A prompt is not a silver bullet.** I added a `dispatch` tool so the agent could hand a focused, multi-file investigation to an isolated read-only sub-agent — keeping the parent's context clean. The capability is wired, gated, and correct. But even with explicit prompt guidance, the real model overwhelmingly prefers to just read the files itself and rarely reaches for `dispatch`. Rather than dress that up, I'm recording it plainly: **changing model behavior often needs a stronger mechanism than a paragraph in the system prompt** — and knowing the difference is part of the job.
 
-**3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "graph has more overhead" into "graph costs ~3× the tokens" in the table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
+**3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "graph has more overhead" into "graph costs ~4× the tokens" in the real-model table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
 
 ---
 
