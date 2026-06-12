@@ -4,6 +4,7 @@
 可注入 context-pack / 编排器 system prompt 的记忆块。无 LLM 调用、可复现。
 """
 
+from xhx_agent.memory.extract import parse_memory_candidates, propose_memories
 from xhx_agent.memory.recall import recall_memories, render_recalled_memories
 from xhx_agent.memory.store import (
     MEMORY_TYPES,
@@ -22,7 +23,9 @@ __all__ = [
     "delete_memory",
     "list_memories",
     "memory_dir",
+    "parse_memory_candidates",
     "parse_memory_file",
+    "propose_memories",
     "recall_memories",
     "render_recalled_memories",
     "slugify",

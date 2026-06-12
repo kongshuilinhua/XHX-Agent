@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from xhx_agent.cli.completion import XhxCompleter
+from xhx_agent.memory.store import MemoryRecord
 from xhx_agent.runtime.app import DiffSummary, ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import RuntimeEvent
@@ -72,6 +73,7 @@ class CommandConsole:
         self.profile_name: str | None = None
         self.auto_repair = False
         self.assume_yes = False
+        self.auto_memory = True
         self.last_result: RunResult | None = None
         self.last_manual_verification: ManualVerificationResult | None = None
         self.last_manual_repair: ManualRepairResult | None = None
@@ -213,6 +215,7 @@ class CommandConsole:
         self.last_result = result
         self.state.apply_result(result)
         self.print_run_result(result)
+        self._maybe_suggest_memories(result)
         self.print_dashboard()
 
     @contextmanager
@@ -730,4 +733,54 @@ class CommandConsole:
         for m in memories:
             table.add_row(m.name, m.mtype, m.description)
         self.console.print(table)
+
+    def _maybe_suggest_memories(self, result: RunResult) -> None:
+        """跑完（成功）后自动抽取候选记忆并逐条请用户确认（suggest-confirm）。
+
+        增益功能：任何环节失败都**静默跳过**，绝不影响任务结果或既有输出；只在真正写入时才打印。
+        mock profile 下抽取确定性返回空 → 无任何提示。用 ``/automem off`` 关闭。
+        """
+        if not self.auto_memory or result.status != "success":
+            return
+        try:
+            from xhx_agent.memory import list_memories, propose_memories, write_memory
+            from xhx_agent.memory.store import slugify
+            from xhx_agent.models import build_chat_client
+            from xhx_agent.runtime.config import load_config
+            from xhx_agent.runtime.profiles import get_profile
+
+            task = self.last_user_task or self.last_runtime_task or ""
+            answer = (getattr(result, "answer", None) or "").strip()
+            digest = f"Assistant: {answer}" if answer else f"Run status: {result.status}"
+            config = load_config(self.workspace)
+            profile = get_profile(self.workspace, self.profile_name or config.default_profile)
+            client = build_chat_client(profile)
+            existing = {slugify(record.name) for record in list_memories(self.workspace)}
+            candidates = propose_memories(client, task, digest, existing_names=existing)
+            for candidate in candidates:
+                if self._confirm_memory(candidate):
+                    write_memory(
+                        self.workspace,
+                        name=candidate.name,
+                        description=candidate.description,
+                        mtype=candidate.mtype,
+                        body=candidate.body,
+                    )
+                    self.console.print(f"[green]Remembered: [bold]{candidate.name}[/bold][/green]")
+        except Exception:
+            # 自动记忆是 best-effort 增益，绝不打断主流程。
+            return
+
+    def _confirm_memory(self, record: MemoryRecord) -> bool:
+        """展示候选记忆并询问是否长期记住（默认否）。非交互/异常一律视为否。"""
+        self.console.print(
+            Panel(
+                f"[{record.mtype}] {record.description}\n{record.body}".strip(),
+                title="Remember this across sessions? (suggested)",
+            )
+        )
+        try:
+            return bool(typer.confirm("Save to long-term memory?", default=False))
+        except Exception:
+            return False
 
