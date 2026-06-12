@@ -332,3 +332,21 @@ def benchmark(
     except Exception as e:
         console.print(f"[red]Error running benchmarks: {e}[/red]")
         raise typer.Exit(code=1)
+
+
+@app.command("memory")
+def memory() -> None:
+    from xhx_agent.memory import list_memories
+    memories = list_memories(Path.cwd())
+    if not memories:
+        console.print("No memories recorded yet.")
+        return
+    from rich.table import Table
+    table = Table(title="Memories")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Description")
+    for m in memories:
+        table.add_row(m.name, m.mtype, m.description)
+    console.print(table)
+

@@ -19,6 +19,8 @@ class XhxCompleter:
             "/diff",
             "/skills",
             "/clear",
+            "/remember",
+            "/memory",
         ]
         self._index = None
 

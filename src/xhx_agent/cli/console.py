@@ -54,6 +54,8 @@ SLASH_COMMANDS = {
     "/cancel",
     "/clear",
     "/exit",
+    "/remember",
+    "/memory",
 }
 
 
@@ -153,6 +155,10 @@ class CommandConsole:
         elif command == "/clear":
             self.console.clear()
             self.print_dashboard()
+        elif command == "/remember":
+            self.handle_remember(argument.strip())
+        elif command == "/memory":
+            self.handle_memory()
         else:
             self.console.print(f"Unknown command: {command}. Type /help.")
         return True
@@ -326,6 +332,8 @@ class CommandConsole:
             ("/live [on|off]", "Toggle Rich Live dashboard refresh."),
             ("/cancel", "Request cancellation at the next safe runtime boundary."),
             ("/clear", "Clear terminal."),
+            ("/remember <text>", "Remember a fact across sessions."),
+            ("/memory", "List remembered facts."),
             ("/exit", "Exit console."),
         ]
         for command, behavior in rows:
@@ -687,3 +695,39 @@ class CommandConsole:
         self.console.print(table)
         if result.risk_summary:
             self.console.print(Panel("\n".join(result.risk_summary), title="Risks"))
+
+    def handle_remember(self, text: str) -> None:
+        text_stripped = text.strip()
+        if not text_stripped:
+            self.console.print("[red]Please specify the memory text: /remember <text>[/red]")
+            return
+        first_line = text_stripped.splitlines()[0]
+        name = first_line[:30].strip()
+        import re
+        parts = re.split(r'[。\.!\?？！\n]', text_stripped)
+        first_sentence = parts[0].strip() if parts else first_line
+        if len(first_sentence) > 80:
+            first_sentence = first_sentence[:77] + "..."
+        description = first_sentence or first_line[:80]
+
+        from xhx_agent.memory import write_memory
+        try:
+            write_memory(self.workspace, name=name, description=description, mtype="project", body=text_stripped)
+            self.console.print(f"[green]Remembered: [bold]{name}[/bold] — {description}[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Failed to write memory: {e}[/red]")
+
+    def handle_memory(self) -> None:
+        from xhx_agent.memory import list_memories
+        memories = list_memories(self.workspace)
+        if not memories:
+            self.console.print("No memories recorded yet.")
+            return
+        table = Table(title="Memories")
+        table.add_column("Name")
+        table.add_column("Type")
+        table.add_column("Description")
+        for m in memories:
+            table.add_row(m.name, m.mtype, m.description)
+        self.console.print(table)
+
