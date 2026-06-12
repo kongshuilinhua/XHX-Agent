@@ -1575,3 +1575,49 @@ def test_state_reduce_token_usage_tracks_cumulative_total() -> None:
     assert state.tokens_total == 32
 
 
+def test_textual_timeline_translates_runtime_events_into_messages(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    app.handle_runtime_event(
+        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1})
+    )
+    app.handle_runtime_event(
+        RuntimeEvent(
+            type="tool_result",
+            message="",
+            payload={"tool": "search", "status": "success", "summary": "0 hits", "turn": 1},
+        )
+    )
+    app.handle_runtime_event(
+        RuntimeEvent(type="graph_review", message="round 1: passed", payload={"round": 1})
+    )
+    app.handle_runtime_event(
+        RuntimeEvent(type="verification_start", message="", payload={"command": "python -m pytest"})
+    )
+    app.handle_runtime_event(
+        RuntimeEvent(
+            type="verification_result",
+            message="",
+            payload={"command": "python -m pytest", "status": "failed", "exit_code": 1},
+        )
+    )
+
+    joined = "\n".join(app.messages)
+    assert "⟶ tool  search" in joined
+    assert "✓ tool  search → 0 hits" in joined
+    assert "▸ agent  review  round 1: passed" in joined
+    assert "⚙ verify  python -m pytest" in joined
+    assert "→ failed(exit 1)" in joined
+
+
+def test_textual_timeline_skips_non_visible_events(tmp_path) -> None:
+    """run_start/run_end/cancel_requested 等已有专门处理或不该进时间线，避免打乱 messages 索引。"""
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    before = len(app.messages)
+    app.handle_runtime_event(
+        RuntimeEvent(type="run_start", message="", payload={"run_id": "r1", "task": "t", "profile": "mock"})
+    )
+    app.handle_runtime_event(RuntimeEvent(type="model_delta", message="hello", payload={"turn": 1}))
+    assert len(app.messages) == before
+
+

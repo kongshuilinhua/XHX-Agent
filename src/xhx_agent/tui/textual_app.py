@@ -1092,8 +1092,45 @@ class TextualCommandConsoleApp(App[None]):
         self.append_message("system> diff: " + detail)
         self.set_detail("diff", detail)
 
+    def _timeline_line_for_event(self, event: RuntimeEvent) -> str | None:
+        """把运行时事件翻译成一行时间线文本；不可见事件返回 None。
+
+        只翻译当前不产生消息行的事件，避免与已有 append 重复或打乱 messages 索引。
+        policy_decision 故意不在此（权限可见性已由 picker + permission 消息覆盖）。
+        """
+        et = event.type
+        p = event.payload or {}
+        if et == "tool_start":
+            return f"  ⟶ tool  {p.get('tool', '?')}"
+        if et == "tool_result":
+            summary = (p.get("summary") or event.message or "").strip().replace("\n", " ")
+            if len(summary) > 80:
+                summary = summary[:80] + "…"
+            glyph = "✗" if str(p.get("status")) in {"failed", "error"} else "✓"
+            tail = f" → {summary}" if summary else ""
+            return f"  {glyph} tool  {p.get('tool', '?')}{tail}"
+        if et in {"graph_coordinator", "graph_worker", "graph_execute", "graph_review"}:
+            role = et.removeprefix("graph_")
+            msg = (event.message or "").strip().replace("\n", " ")
+            if len(msg) > 100:
+                msg = msg[:100] + "…"
+            return f"▸ agent  {role}  {msg}".rstrip()
+        if et == "verification_start":
+            return f"  ⚙ verify  {p.get('command', '')}"
+        if et == "verification_result":
+            code = p.get("exit_code")
+            tail = f"(exit {code})" if code is not None else ""
+            return f"  ⚙ verify  {p.get('command', '')} → {p.get('status', '')}{tail}"
+        if et == "model_plan":
+            return f"plan> {event.message}"
+        return None
+
     def apply_runtime_event(self, event: RuntimeEvent) -> None:
         self.state.reduce(event)
+        line = self._timeline_line_for_event(event)
+        if line is not None:
+            # 单一有序流：事件行与 user>/assistant>/system> 共用 self.messages，时序天然正确。
+            self.messages.append(line)
         self.refresh_snapshot()
 
     def can_wait_for_interactive_confirmation(self) -> bool:
