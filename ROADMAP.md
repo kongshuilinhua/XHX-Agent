@@ -97,6 +97,7 @@
 - **Phase 8a ✅ 已完成（2026-06-12）**：三范式 benchmark 矩阵 —— `run_matrix` + `render_benchmark_report`（按范式聚合 + 逐任务明细，markdown + JSON），CLI `benchmark --modes loop,plan,graph`，落 `.xhx/benchmark/report.md|json`。
 - **Phase 8b ✅ 已完成（2026-06-12）**：token 计量 —— `chat_and_count`/`_estimate_message_tokens` 包住每次模型调用，把 tiktoken 估算累加进 `metrics_tracker`，`loop`/`plan`/`graph`/`subagent` 全接入，`loop`/`plan` 设 `RunMetrics`；benchmark token 列可区分范式（真模型下 `graph` ~4× `loop`/`plan`）。
 - **Phase 8**：三范式 benchmark —— 量化对比台架（任务集 × 范式矩阵，测成功率/token/轮数/时间，出对比报告）。详见 §9。
+- **Phase 9 ✅ 已完成（2026-06-12）**：多模型路由 + fallback —— `config.routing`（`roles: role→profile` + `fallback` 降级链，默认空→零行为变更）+ `models/routing.py`（`resolve_profile_for_role` + `FallbackChatClient` 按序重试 `ModelClientError`、主成功则后续不调用 + `build_routed_client`）；loop/plan/graph/subagent 改走 `build_routed_client`（**explore 子 agent 可路由到便宜 profile**），token 仍只计一次。**真 DeepSeek 验证**：坏主 profile（key 未设）→ 自动降级到真模型返回答案。验收时撤掉 Gemini 为过 MagicMock 测试加的防御性 isinstance 护栏（改为测试传真实 workspace）。
 - **Phase 9**：多模型路由 —— 按角色/子 agent 选模型（便宜探索、强模型改代码）+ fallback 降级。详见 §9。
 - **Phase 10 ✅ 已完成（2026-06-12）**：README 改写为三范式（`loop`/`plan`/`graph`，原生 tool-calling）对比叙事 + 真实 DeepSeek benchmark 表（`graph` ~4× token / ~3× 墙钟、2/3 成功——"多 agent ≠ 更好"）+ 工程手记（`apply_patch` 真模型修复 / 提示词非银弹 / token 计量）；中英双语；顺修 CLI `--mode` 帮助文本滞后。
 - **Phase 10**：README 三范式对比叙事（用 Phase 8 数据）+ 经验文档收尾 + 测试覆盖打磨。
