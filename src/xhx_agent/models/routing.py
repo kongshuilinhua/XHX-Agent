@@ -25,6 +25,12 @@ class FallbackChatClient:
         self.clients = clients
         self.on_fallback = on_fallback
 
+    def set_delta_callback(self, callback: Any) -> None:
+        """把流式增量回调转发给所有支持的被包客户端（streaming 与 fallback 正交）。"""
+        for client in self.clients:
+            if hasattr(client, "set_delta_callback"):
+                client.set_delta_callback(callback)
+
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> Any:
         last_error = None
         for idx, client in enumerate(self.clients):

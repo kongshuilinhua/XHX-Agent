@@ -22,6 +22,7 @@ def build_chat_client(profile: ModelProfile):
             api_key_env=profile.api_key_env,
             model=profile.model,
             temperature=profile.temperature,
+            stream=profile.stream,
         )
     from xhx_agent.models.types import ModelClientError
 

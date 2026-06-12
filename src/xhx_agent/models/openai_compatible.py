@@ -68,6 +68,13 @@ class OpenAICompatibleClient:
         self.temperature = temperature
         self.stream = stream
         self.http_client = http_client or httpx.Client(timeout=timeout_seconds)
+        # 外部（orchestrator）可挂一个回调来接 tool-calling chat() 的流式 content 增量；
+        # 只有同时 stream=True 且挂了回调时 chat() 才走流式路径——否则与非流式结果完全一致（零行为变更）。
+        self.delta_callback: ModelDeltaCallback | None = None
+
+    def set_delta_callback(self, callback: ModelDeltaCallback | None) -> None:
+        """挂载流式 content 增量回调（loop 用来把 token 实时喂给 Live 状态行）。"""
+        self.delta_callback = callback
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ChatResult:
         api_key = os.getenv(self.api_key_env)
@@ -81,6 +88,12 @@ class OpenAICompatibleClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        # 仅当 profile stream=True 且挂了 delta 回调时才流式，否则与非流式结果完全一致。
+        if self.stream and self.delta_callback is not None:
+            return self._chat_stream(payload, api_key)
+        return self._chat_nonstream(payload, api_key)
+
+    def _chat_nonstream(self, payload: dict[str, Any], api_key: str) -> ChatResult:
         try:
             response = self.http_client.post(
                 f"{self.base_url}/chat/completions",
@@ -105,23 +118,73 @@ class OpenAICompatibleClient:
                 message="Chat response missing choices[0].message.",
                 details={"body": response.text[:1000]},
             ) from exc
-        tool_calls: list[ToolCall] = []
-        for tc in message.get("tool_calls") or []:
-            fn = tc.get("function", {})
-            raw_args = fn.get("arguments", {})
-            args = raw_args
-            if isinstance(raw_args, str):
-                try:
-                    args = json.loads(raw_args) if raw_args.strip() else {}
-                except json.JSONDecodeError as exc:
+        return _message_to_chat_result(message)
+
+    def _chat_stream(self, payload: dict[str, Any], api_key: str) -> ChatResult:
+        """流式 tool-calling chat：实时把 content 增量喂给 delta_callback，并按 index 拼装分片的 tool_calls。"""
+        stream_payload = {**payload, "stream": True}
+        content_parts: list[str] = []
+        tool_frags: dict[int, dict[str, str]] = {}
+        try:
+            with self.http_client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=stream_payload,
+            ) as response:
+                if response.status_code >= 400:
                     raise ModelClientError(
-                        code="invalid_tool_arguments",
-                        message=f"tool_call arguments not valid JSON: {raw_args[:200]}",
-                        details={"arguments": raw_args[:1000]},
-                    ) from exc
-            tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args or {}))
-        content = message.get("content")
-        return ChatResult(content=content if isinstance(content, str) else None, tool_calls=tool_calls)
+                        code="http_error",
+                        message=f"Chat request returned HTTP {response.status_code}.",
+                        details={
+                            "status_code": response.status_code,
+                            "body": response.read().decode("utf-8", errors="replace")[:1000],
+                        },
+                    )
+                for raw_line in response.iter_lines():
+                    if not raw_line or not raw_line.startswith("data:"):
+                        continue
+                    line = raw_line.removeprefix("data:").strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue  # 容忍 keep-alive / 注释 / 半行
+                    self._consume_stream_delta(data, content_parts, tool_frags)
+        except ModelClientError:
+            raise
+        except httpx.HTTPError as exc:
+            raise ModelClientError(
+                code="network_error", message=f"Chat request failed: {exc}", details={"error": str(exc)}
+            ) from exc
+        return _assemble_stream_chat(content_parts, tool_frags)
+
+    def _consume_stream_delta(
+        self, data: dict[str, Any], content_parts: list[str], tool_frags: dict[int, dict[str, str]]
+    ) -> None:
+        try:
+            delta = data["choices"][0].get("delta", {})
+        except (KeyError, IndexError, TypeError):
+            return
+        if not isinstance(delta, dict):
+            return
+        text = _normalize_chat_content(delta.get("content"))
+        if text:
+            content_parts.append(text)
+            if self.delta_callback is not None:
+                self.delta_callback(text)
+        for frag in delta.get("tool_calls") or []:
+            if not isinstance(frag, dict):
+                continue
+            slot = tool_frags.setdefault(int(frag.get("index", 0) or 0), {"id": "", "name": "", "args": ""})
+            if frag.get("id"):
+                slot["id"] = frag["id"]
+            fn = frag.get("function") or {}
+            if fn.get("name"):
+                slot["name"] = fn["name"]
+            if fn.get("arguments"):
+                slot["args"] += fn["arguments"]
 
     def plan(
         self,
@@ -357,6 +420,48 @@ def _extract_stream_delta(data: dict[str, Any]) -> str:
         return ""
     content = delta.get("content")
     return _normalize_chat_content(content)
+
+
+def _message_to_chat_result(message: dict[str, Any]) -> ChatResult:
+    """把非流式 choices[0].message 转成 ChatResult（content + 解析后的 tool_calls）。"""
+    tool_calls: list[ToolCall] = []
+    for tc in message.get("tool_calls") or []:
+        fn = tc.get("function", {})
+        raw_args = fn.get("arguments", {})
+        args = raw_args
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            except json.JSONDecodeError as exc:
+                raise ModelClientError(
+                    code="invalid_tool_arguments",
+                    message=f"tool_call arguments not valid JSON: {raw_args[:200]}",
+                    details={"arguments": raw_args[:1000]},
+                ) from exc
+        tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args or {}))
+    content = message.get("content")
+    return ChatResult(content=content if isinstance(content, str) else None, tool_calls=tool_calls)
+
+
+def _assemble_stream_chat(content_parts: list[str], tool_frags: dict[int, dict[str, str]]) -> ChatResult:
+    """把流式累积的 content 片段与按 index 拼接的 tool_call 片段组装成最终 ChatResult。"""
+    tool_calls: list[ToolCall] = []
+    for index in sorted(tool_frags):
+        slot = tool_frags[index]
+        if not slot["name"]:
+            continue
+        raw = slot["args"]
+        try:
+            args = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ModelClientError(
+                code="invalid_tool_arguments",
+                message=f"streamed tool_call arguments not valid JSON: {raw[:200]}",
+                details={"arguments": raw[:1000]},
+            ) from exc
+        tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
+    content = "".join(content_parts)
+    return ChatResult(content=content or None, tool_calls=tool_calls)
 
 
 def _parse_plan_content(content: str) -> ModelPlan:
