@@ -23,12 +23,28 @@ def _estimate_message_tokens(messages: list[dict]) -> int:
 
 
 def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], schemas: list[dict]) -> Any:
-    """调 client.chat，并把本轮发送的上下文 token 估算累加进 ctx.metrics_tracker['tokens']。
+    """调 client.chat，累加 token 指标并在拿到 provider usage 时 emit token_usage 事件。
 
-    与 legacy 路径"每轮计入整段上下文"语义一致——给三范式一个可对比的 token 吞吐量指标。
+    - 估算路径（_estimate_message_tokens）保持不变：run_end 的 tokens_estimate 与回退仍可用。
+    - 若 ChatResult 带 provider usage，则把真实 total 累加进 metrics_tracker['tokens_real']，
+      并 emit 'token_usage'（cumulative_total 供状态条实时显示）。
     """
     ctx.metrics_tracker["tokens"] = ctx.metrics_tracker.get("tokens", 0) + _estimate_message_tokens(messages)
-    return client.chat(messages, schemas)
+    result = client.chat(messages, schemas)
+    usage = getattr(result, "usage", None)
+    if usage is not None:
+        cumulative = ctx.metrics_tracker.get("tokens_real", 0) + int(usage.total or 0)
+        ctx.metrics_tracker["tokens_real"] = cumulative
+        emit_event(
+            ctx.event_callback,
+            "token_usage",
+            "Token usage updated.",
+            prompt=int(usage.prompt or 0),
+            completion=int(usage.completion or 0),
+            total=int(usage.total or 0),
+            cumulative_total=cumulative,
+        )
+    return result
 
 
 def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str], dict | None]:

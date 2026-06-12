@@ -89,3 +89,49 @@ def test_rich_returns_patch_evidence_meta(tmp_path):
     assert meta["evidence_kind"] == "patch"
     assert meta["evidence_source"] == "apply_patch"
     assert meta["trace_id"] is not None
+
+
+def test_chat_and_count_emits_real_token_usage():
+    from types import SimpleNamespace
+    from xhx_agent.models.types import ChatResult, TokenUsage
+    from xhx_agent.orchestrators._toolturn import chat_and_count
+
+    events = []
+    ctx = SimpleNamespace(metrics_tracker={"tokens": 0}, event_callback=lambda e: events.append(e))
+
+    class FakeClient:
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok", usage=TokenUsage(prompt=10, completion=6, total=16))
+
+    result = chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [])
+
+    assert result.content == "ok"
+    token_events = [e for e in events if e.type == "token_usage"]
+    assert len(token_events) == 1
+    assert token_events[0].payload["total"] == 16
+    assert token_events[0].payload["cumulative_total"] == 16
+    assert ctx.metrics_tracker["tokens_real"] == 16
+
+    # 第二次调用应累加 cumulative_total
+    chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "again"}], [])
+    token_events = [e for e in events if e.type == "token_usage"]
+    assert token_events[-1].payload["cumulative_total"] == 32
+
+
+def test_chat_and_count_no_usage_emits_no_token_event():
+    from types import SimpleNamespace
+    from xhx_agent.models.types import ChatResult
+    from xhx_agent.orchestrators._toolturn import chat_and_count
+
+    events = []
+    ctx = SimpleNamespace(metrics_tracker={"tokens": 0}, event_callback=lambda e: events.append(e))
+
+    class FakeClient:
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok")  # usage None（provider 未返回）
+
+    chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [])
+
+    assert [e for e in events if e.type == "token_usage"] == []
+    # 估算路径仍然累加，保证回退可用
+    assert ctx.metrics_tracker["tokens"] > 0
