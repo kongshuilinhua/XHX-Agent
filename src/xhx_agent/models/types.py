@@ -55,6 +55,14 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class TokenUsage(BaseModel):
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
 class ChatResult(BaseModel):
     content: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    usage: TokenUsage | None = None
+

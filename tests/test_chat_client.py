@@ -76,3 +76,17 @@ def test_mock_chat_edit_then_done():
     msgs += [{"role": "tool", "tool_call_id": r1.tool_calls[0].id, "content": "file content"}]
     r2 = client.chat(msgs, tools=[])
     assert r2.content and not r2.tool_calls
+
+
+def test_chat_result_carries_optional_token_usage() -> None:
+    from xhx_agent.models.types import ChatResult, TokenUsage
+
+    empty = ChatResult()
+    assert empty.usage is None
+
+    used = ChatResult(usage=TokenUsage(prompt=10, completion=4, total=14))
+    assert used.usage is not None
+    assert used.usage.prompt == 10
+    assert used.usage.completion == 4
+    assert used.usage.total == 14
+
