@@ -948,3 +948,78 @@ def test_textual_apply_run_result_surfaces_loop_answer(tmp_path) -> None:
     app._apply_run_result(result)
 
     assert any("loop 的回答" in message for message in app.messages)
+
+
+def test_textual_snapshot_status_line() -> None:
+    state = ConsoleState()
+    state.status = "running"
+    state.mode = "loop"
+    state.context_turn = 3
+    state.model_delta_count = 120
+    state.is_streaming = True  # type: ignore[attr-defined]
+
+    snapshot = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+    assert "state: running" in snapshot.status_line
+    assert "mode: loop" in snapshot.status_line
+    assert "turn: 3" in snapshot.status_line
+    assert "tokens: 120" in snapshot.status_line
+    assert "streaming: yes" in snapshot.status_line
+
+    state.is_streaming = False  # type: ignore[attr-defined]
+    snapshot_non_streaming = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+    assert "streaming: no" in snapshot_non_streaming.status_line
+
+
+def test_textual_snapshot_streaming_conversation() -> None:
+    state = ConsoleState()
+    state.task = "fix coding bug"
+    state.model_output = "import os"
+    state.is_streaming = True  # type: ignore[attr-defined]
+
+    snapshot = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+    assert "model (streaming…)> import os▌" in snapshot.conversation
+
+    state.is_streaming = False  # type: ignore[attr-defined]
+    snapshot_non_streaming = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+    assert "model> import os" in snapshot_non_streaming.conversation
+    assert "▌" not in snapshot_non_streaming.conversation
+
+
+def test_textual_statusline_widget(tmp_path) -> None:
+    from textual.widgets import Static
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            statusline_widget = pilot.app.query_one("#statusline", Static)
+            assert statusline_widget is not None
+            pilot.app.refresh_snapshot()
+            assert "state: idle" in str(statusline_widget.content)
+
+    import asyncio
+    asyncio.run(run_app())
