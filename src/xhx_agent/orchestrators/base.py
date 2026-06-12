@@ -64,6 +64,8 @@ class OrchestratorContext:
     event_callback: EventCallback | None = None
     metrics_tracker: dict[str, int] = field(default_factory=lambda: {"tokens": 0})
     prior_messages: list[dict] | None = None
+    # 写型子 agent 串行合并用：rel_path → 最先改它的子 agent 标签；用于跨子 agent 的冲突检测（先到先得）。
+    subagent_claims: dict[str, str] = field(default_factory=dict)
 
 
 class Orchestrator(Protocol):

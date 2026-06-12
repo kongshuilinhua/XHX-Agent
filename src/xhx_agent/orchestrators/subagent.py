@@ -17,15 +17,24 @@ from xhx_agent.runtime.events import emit_event
 if TYPE_CHECKING:
     from xhx_agent.orchestrators.base import OrchestratorContext
 
-# agent_type → 允许的（只读）工具集。MVP 仅 explore。
+# agent_type → 允许的工具集。explore=只读；edit=可写（在隔离 worktree 里）。
 AGENT_TOOLSETS: dict[str, set[str]] = {
     "explore": {"search", "read_file"},
+    "edit": {"search", "read_file", "apply_patch"},
 }
+# 写型 agent_type：跑在自己的 git worktree 里、改完串行合并回父工作区。
+WRITE_AGENT_TYPES: set[str] = {"edit"}
 MAX_SUBAGENT_TURNS = 4
 SUBAGENT_SYSTEM_PROMPT = (
     "You are a focused sub-agent dispatched by a parent coding agent. Use ONLY the provided read-only "
     "tools to investigate, then reply with a concise, self-contained conclusion (a few sentences). "
     "Do not attempt to write files. Stop as soon as you can answer."
+)
+WRITE_SUBAGENT_SYSTEM_PROMPT = (
+    "You are a focused WRITE sub-agent dispatched by a parent coding agent, working in an ISOLATED copy of "
+    "the repository. Accomplish ONLY the assigned sub-task: read what you need, then make every edit with "
+    "apply_patch (relative paths, unified diff). When the sub-task is done, reply with a one-line summary "
+    "and no tool calls. Keep your changes minimal and scoped to the sub-task."
 )
 
 
@@ -87,3 +96,115 @@ def run_subagent(
 
     emit_event(ctx.event_callback, "subagent_done", "Sub-agent finished.", turn=turn, agent_type=agent_type)
     return f"[sub-agent {agent_type}] {answer}".strip()
+
+
+def run_write_subagent(
+    ctx: OrchestratorContext,
+    *,
+    description: str,
+    prompt: str,
+    turn: int = 0,
+) -> tuple[str, list[str]]:
+    """跑一个隔离【可写】子循环（自己的 git worktree），改完**串行合并回父工作区**（冲突先到先得）。
+
+    返回 (浓缩结论, 已合并进父工作区的文件列表)。父工作区 = ctx.tool_context.workspace。
+    非 git 仓库时降级为就地执行（无隔离，但仍记 claim 做冲突检测）。
+    """
+    import dataclasses
+
+    from xhx_agent.safety.worktree import WorktreeContext
+
+    allowed = AGENT_TOOLSETS["edit"]
+    label = (description or prompt[:40] or "edit").strip()
+    sub_run_id = f"{ctx.run_id}-edit{turn}-{len(ctx.subagent_claims)}"
+    emit_event(ctx.event_callback, "subagent_start", f"dispatch[edit]: {label}", turn=turn, agent_type="edit")
+
+    with WorktreeContext(ctx.original_workspace, sub_run_id) as wt:
+        run_ctx = ctx
+        if wt.is_active:
+            sub_tool_context = ctx.tool_context.model_copy(update={"workspace": wt.active_path})
+            run_ctx = dataclasses.replace(ctx, tool_context=sub_tool_context)
+        answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)
+        merge_root = wt.active_path if wt.is_active else ctx.tool_context.workspace
+        applied, conflicts = _merge_into_parent(ctx, merge_root, changed, label)
+
+    parts = [f"[sub-agent edit] {answer or 'edit sub-agent finished.'}"]
+    if applied:
+        parts.append(f"merged {len(applied)} file(s): {', '.join(sorted(set(applied)))}")
+    if conflicts:
+        parts.append(
+            "CONFLICT on "
+            f"{len(conflicts)} file(s) — kept the earlier sub-agent's version: {', '.join(sorted(set(conflicts)))}"
+        )
+    emit_event(
+        ctx.event_callback, "subagent_done",
+        f"edit sub-agent: merged {len(applied)} file(s), {len(conflicts)} conflict(s).",
+        turn=turn, agent_type="edit", merged=sorted(set(applied)), conflicts=sorted(set(conflicts)),
+    )
+    return " | ".join(parts), sorted(set(applied))
+
+
+def _drive_write_loop(ctx: OrchestratorContext, prompt: str, allowed: set[str], turn: int) -> tuple[str, list[str]]:
+    """写型子循环：受限 tool-calling（含 apply_patch），收集本子 agent 改动的相对路径。"""
+    from xhx_agent.orchestrators._toolturn import _execute_tool_call_rich, chat_and_count
+
+    client = build_routed_client(
+        ctx.original_workspace, role="edit", base_profile_name=ctx.profile.name,
+        event_callback=ctx.event_callback, build_client_func=build_chat_client,
+    )
+    schemas = [s for s in ctx.kernel.tool_registry.tool_schemas() if s["function"]["name"] in allowed]
+    messages: list[dict] = [
+        {"role": "system", "content": WRITE_SUBAGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    answer = ""
+    changed: list[str] = []
+    for _ in range(MAX_SUBAGENT_TURNS):
+        result = chat_and_count(ctx, client, messages, schemas)
+        if not result.tool_calls:
+            answer = result.content or ""
+            break
+        messages.append({
+            "role": "assistant", "content": result.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
+                for tc in result.tool_calls
+            ],
+        })
+        for tc in result.tool_calls:
+            if tc.name not in allowed:
+                content = f"[dispatch] tool '{tc.name}' is not allowed for this sub-agent."
+            else:
+                _tc, content, ch, _meta = _execute_tool_call_rich(ctx, tc, turn)
+                changed.extend(ch)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:4000]})
+    else:
+        answer = answer or "Edit sub-agent reached its turn limit."
+    return answer, changed
+
+
+def _merge_into_parent(
+    ctx: OrchestratorContext, merge_root, changed_rel: list[str], label: str
+) -> tuple[list[str], list[str]]:
+    """串行把 merge_root 里改动的文件合并进父工作区（ctx.tool_context.workspace）；同文件被别的子 agent 占用即冲突。"""
+    import shutil
+
+    target = ctx.tool_context.workspace
+    applied: list[str] = []
+    conflicts: list[str] = []
+    for rel in dict.fromkeys(changed_rel):  # 去重保序
+        if not rel:
+            continue
+        owner = ctx.subagent_claims.get(rel)
+        if owner is not None and owner != label:
+            conflicts.append(rel)
+            continue
+        src = merge_root / rel
+        dest = target / rel
+        if merge_root != target and src.exists() and src.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        ctx.subagent_claims[rel] = label
+        applied.append(rel)
+    return applied, conflicts

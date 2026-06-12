@@ -261,14 +261,16 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "限定轮数，跑完只回浓缩结论，从而不污染你的主上下文。"
             "适合：摸清不熟悉的模块、并行探索多个独立问题。"
             "不适合：读单个已知文件（直接用 read_file 即可）。"
-            "当前 agent_type 仅支持 'explore'（只读：search/read_file）。"
+            "agent_type='explore'（只读：search/read_file）做调查；"
+            "agent_type='edit'（可写：search/read_file/apply_patch）在隔离 git worktree 里改代码，"
+            "改完自动串行合并回工作区并对冲突文件做检测——适合可并行、互不重叠的修改子任务。"
         ),
         parameters={
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "子任务一句话描述（给人看的）"},
                 "prompt": {"type": "string", "description": "给子 agent 的完整指令"},
-                "agent_type": {"type": "string", "enum": ["explore"], "default": "explore"},
+                "agent_type": {"type": "string", "enum": ["explore", "edit"], "default": "explore"},
             },
             "required": ["prompt"],
         },

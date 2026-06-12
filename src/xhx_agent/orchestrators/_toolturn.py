@@ -35,16 +35,16 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
     """同 execute_tool_call，但额外带回 meta（结构化工具成功时含 evidence_kind/source/summary/trace_id；否则 None）。"""
     emit_event(ctx.event_callback, "tool_start", f"Tool execution started: {tc.name}", turn=turn, tool=tc.name)
     if tc.name == "dispatch":
-        from xhx_agent.orchestrators.subagent import run_subagent
+        from xhx_agent.orchestrators.subagent import WRITE_AGENT_TYPES, run_subagent, run_write_subagent
 
+        agent_type = str(tc.arguments.get("agent_type") or "explore")
+        description = str(tc.arguments.get("description", ""))
+        prompt = str(tc.arguments.get("prompt", ""))
         try:
-            content = run_subagent(
-                ctx,
-                description=str(tc.arguments.get("description", "")),
-                prompt=str(tc.arguments.get("prompt", "")),
-                agent_type=str(tc.arguments.get("agent_type") or "explore"),
-                turn=turn,
-            )
+            if agent_type in WRITE_AGENT_TYPES:
+                content, changed = run_write_subagent(ctx, description=description, prompt=prompt, turn=turn)
+                return tc, content, changed, None
+            content = run_subagent(ctx, description=description, prompt=prompt, agent_type=agent_type, turn=turn)
             return tc, content, [], None
         except Exception as exc:  # noqa: BLE001
             ctx.evidence.write_trace("tool_error", {"turn": turn, "tool": "dispatch", "error": str(exc)})
