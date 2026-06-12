@@ -22,6 +22,9 @@
 
 - **One protocol, three paradigms.** A single `Orchestrator` abstraction with three real implementations that all drive the model through **native tool-calling** (no bespoke "model plan" DSL): an autonomous **`loop`** (read → edit → verify, iterating until done), a **`plan`** (batch-plan → execute → verify with bounded self-repair), and a **`graph`** built on a LangGraph `StateGraph` (coordinator → worker → reviewer, with a conditional retry loop). They share the exact same tool, safety, context, and code-intelligence layers — only the top-level control flow differs. All three are **verified end-to-end against a real model** (DeepSeek), not just the offline mock.
 - **Quantified, not hand-waved.** A built-in [benchmark harness](#benchmark-quantifying-the-paradigms) runs a fixture task-set across all three paradigms and emits a comparison report (turns / tokens / wall-clock / success / files changed) as Markdown + JSON. The token meter makes the multi-agent overhead a number: on a real model (DeepSeek), `graph` spends **~4× the tokens** of single-agent `loop`/`plan` for the same work — and isn't automatically more reliable.
+- **Cross-session memory — the fourth axis of context management.** Beyond per-turn budgeting, in-loop history compaction, and sub-agent delegation, `xhx-agent` keeps a `.xhx/memory/` of durable facts (`user` / `feedback` / `project` / `reference`). Recall is **deterministic** (keyword/token overlap on each fact's description — no extra LLM call) and injected into the system prompt under the token budget; a freshness check skips memories that name files no longer on disk. Writes are explicit (`/remember`) or **suggest-confirm** (the agent proposes after a run, you approve with one keypress). Verified end-to-end: a fact that exists *only* in memory is recalled and used by the real model.
+- **Multi-model routing + graceful fallback.** A run can route different roles to different profiles — cheap models for exploration/summarization, a strong model for edits — and **falls back down a profile chain** when the primary errors or rate-limits (à la Claude Code's `fallbackModel`). Routing and streaming are orthogonal: the fallback wrapper forwards the streaming callback to whichever client serves.
+- **Streaming, with the budget intact.** The tool-calling loop streams the model's output **token-by-token** to a thin live status line (reassembling fragmented `tool_calls` as they arrive over SSE), while long histories are kept in budget by **microcompact** — summarizing the older middle of the conversation into one note *without ever orphaning a tool result from its call*.
 - **Token-budgeted Context Pack.** Each model turn is fed a deterministically-budgeted context pack (project map / task / source / evidence / errors), measured with `tiktoken` (`cl100k_base`) and pruned by priority when it overflows. Long autonomous histories are compacted rather than dropped.
 - **Safe Execution Kernel.** Shell commands are tokenized (`shlex`) and classified into `safe` / `confirm` / `deny` tiers, with a denylisted-executable set, shell-metacharacter blocking, and inline-interpreter detection as defense-in-depth. Edits run in an isolated git worktree and are synced back only on success.
 - **Repo intelligence.** A symbol / import / reference / call index built from Python's `ast` and tree-sitter (for JS/TS), persisted as JSON with a SQLite mirror, refreshed incrementally on file changes.
@@ -44,24 +47,25 @@ graph TD
     G["graph paradigm (LangGraph)<br/>coordinator → worker → reviewer<br/>conditional retry loop"]:::orch
 
     subgraph base_box["Shared base — native tool-calling"]
+        M["Long-term Memory<br/>(.xhx/memory · deterministic recall)"]:::base
         B["Context Pack Compiler<br/>(tiktoken budget + compaction)"]:::base
         R["Repo Intelligence<br/>(ast + tree-sitter, JSON + SQLite)"]:::base
         K["Safe Execution Kernel<br/>(risk tiers · worktree isolation)"]:::base
         V["Verification + bounded Auto-Repair<br/>(targeted pytest, max 2 rounds)"]:::base
         EV["Evidence Trail<br/>(replayable traces + reports)"]:::base
-        B --> R --> K --> V --> EV
+        M --> B --> R --> K --> V --> EV
     end
 
     E --> S
     S -->|loop| L
     S -->|plan| P
     S -->|graph| G
-    L --> B
-    P --> B
-    G --> B
+    L --> M
+    P --> M
+    G --> M
 ```
 
-All three paradigms issue the same tool calls (`search`, `read_file`, `apply_patch`, `verify`, `dispatch`, …) through the same kernel — the difference is purely *who decides what to call next*: one agent (`loop`), a plan-then-execute controller (`plan`), or a coordinator/worker/reviewer team (`graph`).
+All three paradigms issue the same tool calls (`search`, `read_file`, `apply_patch`, `repo_query`, `verify`, `terminal`, `dispatch`, …) through the same kernel — the difference is purely *who decides what to call next*: one agent (`loop`), a plan-then-execute controller (`plan`), or a coordinator/worker/reviewer team (`graph`). Orthogonal to the paradigm, each run **routes roles to model profiles with a fallback chain**, **streams** output token-by-token, and keeps long histories in budget via **microcompact**.
 
 ---
 
@@ -122,6 +126,8 @@ Open the interactive REPL or the full-screen dashboard:
 uv run xhx chat              # prompt-toolkit REPL with slash commands
 uv run xhx tui --fullscreen  # Textual dashboard
 ```
+
+In the REPL the model's answer **streams token-by-token** into a thin status line (`state · mode · turn · tokens · streaming`). Teach it durable facts with `/remember <fact>`, list them with `/memory`, and toggle the post-run **suggest-confirm** auto-extraction with `/automem on|off`. To route roles to cheaper/stronger models and add a fallback chain, edit the `routing` block in `.xhx/config.json` (`roles: {explore: cheap, …}`, `fallback: [strong, …]`).
 
 ---
 
@@ -189,6 +195,8 @@ Three findings worth more than a green test suite — each is a place where a *r
 
 **3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "graph has more overhead" into "graph costs ~4× the tokens" in the real-model table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
 
+**4 · An injection feature isn't real until a memory-only fact moves the output.** Cross-session recall is easy to *wire* and easy to fool yourself about. So the test wasn't "does the recall function return rows" — it was: write a fact that exists **only** in `.xhx/memory/` (the project mascot is a blue axolotl named Pacha), ask the real model an otherwise-unanswerable question, and confirm the recalled fact both reached the system prompt and shaped the answer. **Lesson:** for anything that silently injects context, verify end-to-end with a fact the model could not otherwise know — not with a unit test of the retriever.
+
 ---
 
 ## Commands
@@ -210,11 +218,11 @@ uv run xhx run "<task>" [options]
 | `--continue` | Resume from the most recent session, injecting its summary as context. |
 | `--resume <run-id>` | Resume from a specific past session (`xhx sessions` lists them). |
 
-Other commands: `init`, `repo-index`, `sessions`, `chat`, `tui`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`.
+Other commands: `init`, `repo-index`, `sessions`, `chat`, `tui`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`.
 
 ### REPL slash commands
 
-`/help` · `/model` · `/mode` · `/status` · `/plan` · `/evidence` · `/context` · `/verify` · `/repair` · `/diff` · `/skills` · `/clear` · `/exit`
+`/help` · `/model` · `/mode` · `/status` · `/plan` · `/evidence` · `/context` · `/verify` · `/repair` · `/diff` · `/skills` · `/remember` · `/memory` · `/automem` · `/dashboard` · `/live` · `/cancel` · `/clear` · `/exit`
 
 ---
 
@@ -226,6 +234,10 @@ Stated plainly so capability is never confused with roadmap.
 - Tri-paradigm orchestrator on one native tool-calling protocol: `loop` (autonomous ReAct), `plan` (Plan-Execute with bounded self-repair), and `graph` (LangGraph coordinator → worker → reviewer) — all wired into every entry point (CLI `--mode`, REPL/TUI `/mode`) and all verified end-to-end against a real model.
 - Isolated read-only sub-agents via the `dispatch` tool (focused exploration with its own message history and a restricted toolset).
 - Three-paradigm benchmark harness (`xhx benchmark --modes …`) emitting a Markdown + JSON comparison report, with per-call token metering.
+- Long-term memory: `.xhx/memory/` of 4-type facts with deterministic recall injected into the system prompt under budget, a freshness check against current files, explicit `/remember` writes, and post-run **suggest-confirm** auto-extraction (`/automem`) — verified end-to-end against a real model.
+- Multi-model routing: per-role `role → profile` mapping plus an ordered **fallback chain** that degrades gracefully on a primary error/rate-limit; orthogonal to streaming.
+- Streaming tool-calling output to a thin live status line (with fragmented `tool_calls` reassembled over SSE), plus validity-preserving **microcompact** of long loop histories.
+- `repo_query` read-only tool exposing the symbol / reference index to the model through the same risk-gated kernel.
 - Context Pack compiler with `tiktoken` budgeting, priority pruning, and history compaction (heuristic, or LLM summary in autonomous mode with heuristic fallback).
 - Safe Execution Kernel: risk tiering, denylist + metacharacter + inline-interpreter blocking, git-worktree isolation, in-place Restore Plan fallback.
 - Repo intelligence: symbol / import / reference / call index — Python via `ast`, JS/TS symbols via tree-sitter — persisted as JSON with a SQLite mirror and incremental refresh on file change.
@@ -247,7 +259,8 @@ See [`docs/implementation/20-implementation-baseline.md`](docs/implementation/20
 
 ```text
 src/xhx_agent/
-  orchestrators/   loop · plan · graph (primary) + linear · dag (fallback), behind one Orchestrator protocol
+  orchestrators/   loop · plan · graph (primary) + linear · dag (fallback) · sub-agent · microcompact
+  memory/          long-term facts: store + deterministic recall + suggest-confirm extraction
   context/         Context Pack compiler + token budgeting + compaction
   repo_intel/      symbol / import / reference / call index (ast + tree-sitter, JSON + SQLite)
   safety/          risk classification · policy · worktree · checkpoints · repair
@@ -255,8 +268,8 @@ src/xhx_agent/
   verification/    targeted test router
   evals/           benchmark harness + RunMetrics
   evidence/        trace store + report generation
-  runtime/         app loop · sessions · config
-  models/          mock + OpenAI-compatible profiles
+  runtime/         app loop · sessions · config (incl. routing)
+  models/          mock + OpenAI-compatible (streaming) + multi-model routing & fallback
   cli/ · tui/      REPL, full-screen dashboard, JSON-RPC
 ```
 
