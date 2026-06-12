@@ -232,7 +232,7 @@ Stated plainly so capability is never confused with roadmap.
 
 **Fully implemented**
 - Tri-paradigm orchestrator on one native tool-calling protocol: `loop` (autonomous ReAct), `plan` (Plan-Execute with bounded self-repair), and `graph` (LangGraph coordinator → worker → reviewer) — all wired into every entry point (CLI `--mode`, REPL/TUI `/mode`) and all verified end-to-end against a real model.
-- Isolated read-only sub-agents via the `dispatch` tool (focused exploration with its own message history and a restricted toolset).
+- Sub-agents via the `dispatch` tool: a read-only `explore` agent (its own message history + restricted toolset) and a **write-capable `edit` agent** that edits inside its own git worktree and **merges back serially with first-wins conflict detection**.
 - Three-paradigm benchmark harness (`xhx benchmark --modes …`) emitting a Markdown + JSON comparison report, with per-call token metering.
 - Long-term memory: `.xhx/memory/` of 4-type facts with deterministic recall injected into the system prompt under budget, a freshness check against current files, explicit `/remember` writes, and post-run **suggest-confirm** auto-extraction (`/automem`) — verified end-to-end against a real model.
 - Multi-model routing: per-role `role → profile` mapping plus an ordered **fallback chain** that degrades gracefully on a primary error/rate-limit; orthogonal to streaming.
@@ -247,7 +247,7 @@ Stated plainly so capability is never confused with roadmap.
 **Simplified / partial (by design)**
 - `linear` / `dag` are retained as the lightweight auto-classify fallback (used only when `--mode` is omitted); the headline decomposition work happens in `plan` and `graph`, which are LLM-driven via tool-calling.
 - The `graph` paradigm is a deliberately lean coordinator → worker → reviewer workflow, kept minimal for a clean contrast against `loop`/`plan`.
-- `dispatch` covers a read-only `explore` sub-agent; write-capable and parallel sub-agents are future work.
+- Write `edit` sub-agents run sequentially, each isolated in its own worktree and merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution.
 - JS/TS import and call extraction uses regex (only JS/TS *symbols* use tree-sitter); Python uses full `ast`.
 

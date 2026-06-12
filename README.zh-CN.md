@@ -232,7 +232,7 @@ uv run xhx run "<task>" [options]
 
 **已完整实现**
 - 一套原生 tool-calling 协议上的三范式编排器：`loop`（自主 ReAct）、`plan`（Plan-Execute，带有界自我修复）、`graph`（LangGraph coordinator → worker → reviewer）——全部接入每个入口（CLI `--mode`、REPL/TUI `/mode`），且全部针对真实模型做了端到端验证。
-- 经 `dispatch` 工具的隔离只读子 agent（聚焦探索，有自己的消息历史与受限工具集）。
+- 经 `dispatch` 工具的子 agent：只读 `explore`（聚焦探索，有自己的消息历史与受限工具集）+ **可写 `edit`**（在自己的 git worktree 里改代码，改完**串行合并回工作区、先到先得冲突检测**）。
 - 三范式 benchmark 台架（`xhx benchmark --modes …`），输出 Markdown + JSON 对比报告，带逐调用 token 计量。
 - 长期记忆：`.xhx/memory/` 的 4 类型事实，确定性召回在预算内注入 system prompt，含对当前文件的新鲜度校验，显式 `/remember` 写入，以及跑后的**建议-确认**自动抽取（`/automem`）——已针对真实模型端到端验证。
 - 多模型路由：按角色的 `role → profile` 映射 + 一条有序 **fallback 链**，主模型出错/限流时优雅降级；与流式正交。
@@ -247,7 +247,7 @@ uv run xhx run "<task>" [options]
 **简化 / 部分实现（有意为之）**
 - `linear` / `dag` 作为轻量的 auto-classify 回退保留（仅在省略 `--mode` 时使用）；头条的分解工作发生在 `plan` 与 `graph`，二者经 tool-calling 由 LLM 驱动。
 - `graph` 范式是刻意精简的 coordinator → worker → reviewer 工作流，为与 `loop`/`plan` 形成干净对照而保持最小。
-- `dispatch` 覆盖只读的 `explore` 子 agent；可写与并行子 agent 属于后续工作。
+- 可写 `edit` 子 agent 串行执行，各自隔离在自己的 worktree 里、合并时带冲突检测；真·**并发**子 agent 执行属后续优化。
 - 引用索引是文本级 symbol name 匹配，非语义解析。
 - JS/TS 的 import 与 call 提取用正则（只有 JS/TS *符号* 用 tree-sitter）；Python 用完整 `ast`。
 
