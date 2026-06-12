@@ -487,3 +487,63 @@ def test_live_openai_plan_smoke() -> None:
 
     assert plan.summary
     assert plan.status in {"continue", "done"}
+
+
+def test_chat_captures_usage_nonstream(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok", "tool_calls": []}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 5, "total_tokens": 16},
+            },
+        )
+
+    client = OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = client.chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert result.usage is not None
+    assert result.usage.prompt == 11
+    assert result.usage.completion == 5
+    assert result.usage.total == 16
+
+
+def test_chat_stream_captures_usage_and_requests_include_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+    captured_body = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        captured_body.update(_json.loads(request.read().decode("utf-8")))
+        body = (
+            'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, text=body)
+
+    client = OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        stream=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    client.set_delta_callback(lambda _text: None)
+
+    result = client.chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert captured_body.get("stream") is True
+    assert captured_body.get("stream_options") == {"include_usage": True}
+    assert result.content == "hello"
+    assert result.usage is not None
+    assert result.usage.total == 9

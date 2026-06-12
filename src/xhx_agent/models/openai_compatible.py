@@ -16,7 +16,7 @@ import httpx
 from pydantic import ValidationError
 
 from xhx_agent.context.pack import ContextPack
-from xhx_agent.models.types import ChatResult, ModelClientError, ModelPlan, ToolCall
+from xhx_agent.models.types import ChatResult, ModelClientError, ModelPlan, TokenUsage, ToolCall
 
 ModelDeltaCallback = Callable[[str], None]
 
@@ -111,20 +111,23 @@ class OpenAICompatibleClient:
                 details={"status_code": response.status_code, "body": response.text[:1000]},
             )
         try:
-            message = response.json()["choices"][0]["message"]
+            data = response.json()
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ModelClientError(
                 code="invalid_response",
                 message="Chat response missing choices[0].message.",
                 details={"body": response.text[:1000]},
             ) from exc
-        return _message_to_chat_result(message)
+        result = _message_to_chat_result(message)
+        return result.model_copy(update={"usage": _parse_usage(data.get("usage"))})
 
     def _chat_stream(self, payload: dict[str, Any], api_key: str) -> ChatResult:
         """流式 tool-calling chat：实时把 content 增量喂给 delta_callback，并按 index 拼装分片的 tool_calls。"""
-        stream_payload = {**payload, "stream": True}
+        stream_payload = {**payload, "stream": True, "stream_options": {"include_usage": True}}
         content_parts: list[str] = []
         tool_frags: dict[int, dict[str, str]] = {}
+        usage_raw: Any = None
         try:
             with self.http_client.stream(
                 "POST",
@@ -151,6 +154,8 @@ class OpenAICompatibleClient:
                         data = json.loads(line)
                     except json.JSONDecodeError:
                         continue  # 容忍 keep-alive / 注释 / 半行
+                    if data.get("usage"):
+                        usage_raw = data["usage"]
                     self._consume_stream_delta(data, content_parts, tool_frags)
         except ModelClientError:
             raise
@@ -158,7 +163,7 @@ class OpenAICompatibleClient:
             raise ModelClientError(
                 code="network_error", message=f"Chat request failed: {exc}", details={"error": str(exc)}
             ) from exc
-        return _assemble_stream_chat(content_parts, tool_frags)
+        return _assemble_stream_chat(content_parts, tool_frags, usage_raw)
 
     def _consume_stream_delta(
         self, data: dict[str, Any], content_parts: list[str], tool_frags: dict[int, dict[str, str]]
@@ -422,6 +427,16 @@ def _extract_stream_delta(data: dict[str, Any]) -> str:
     return _normalize_chat_content(content)
 
 
+def _parse_usage(raw: Any) -> TokenUsage | None:
+    if not isinstance(raw, dict):
+        return None
+    return TokenUsage(
+        prompt=int(raw.get("prompt_tokens", 0) or 0),
+        completion=int(raw.get("completion_tokens", 0) or 0),
+        total=int(raw.get("total_tokens", 0) or 0),
+    )
+
+
 def _message_to_chat_result(message: dict[str, Any]) -> ChatResult:
     """把非流式 choices[0].message 转成 ChatResult（content + 解析后的 tool_calls）。"""
     tool_calls: list[ToolCall] = []
@@ -443,7 +458,9 @@ def _message_to_chat_result(message: dict[str, Any]) -> ChatResult:
     return ChatResult(content=content if isinstance(content, str) else None, tool_calls=tool_calls)
 
 
-def _assemble_stream_chat(content_parts: list[str], tool_frags: dict[int, dict[str, str]]) -> ChatResult:
+def _assemble_stream_chat(
+    content_parts: list[str], tool_frags: dict[int, dict[str, str]], usage_raw: Any = None
+) -> ChatResult:
     """把流式累积的 content 片段与按 index 拼接的 tool_call 片段组装成最终 ChatResult。"""
     tool_calls: list[ToolCall] = []
     for index in sorted(tool_frags):
@@ -461,7 +478,7 @@ def _assemble_stream_chat(content_parts: list[str], tool_frags: dict[int, dict[s
             ) from exc
         tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
     content = "".join(content_parts)
-    return ChatResult(content=content or None, tool_calls=tool_calls)
+    return ChatResult(content=content or None, tool_calls=tool_calls, usage=_parse_usage(usage_raw))
 
 
 def _parse_plan_content(content: str) -> ModelPlan:
