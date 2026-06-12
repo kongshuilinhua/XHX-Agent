@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 from typer.testing import CliRunner
+import click.testing
 
 from xhx_agent.cli.main import _confirm_terminal_command, app
 from xhx_agent.repo_intel.index import write_repo_intel_index
@@ -9,6 +10,7 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.risk import RiskLevel
 
 runner = CliRunner()
+runner.isolated_filesystem = click.testing.CliRunner().isolated_filesystem
 
 
 def strip_ansi(text: str) -> str:
@@ -121,7 +123,7 @@ def test_sessions_command_and_resume_by_id() -> None:
 
         listed = runner.invoke(app, ["sessions"])
         assert listed.exit_code == 0
-        assert "Sessions" in strip_ansi(listed.output)
+        assert "Conversations" in strip_ansi(listed.output)
 
         run_id = list_sessions(root)[-1].run_id
         resumed = runner.invoke(app, ["run", "keep going", "--profile", "mock", "--resume", run_id])
