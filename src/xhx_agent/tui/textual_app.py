@@ -53,6 +53,7 @@ class PendingConfirmation:
 @dataclass(frozen=True)
 class TextualSnapshot:
     header: str
+    status_line: str
     conversation: str
     runtime_state: str
     changed_files: str
@@ -76,6 +77,11 @@ class TextualSnapshot:
     ) -> TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
+        streaming = getattr(state, "is_streaming", False)
+        status_line = (
+            f"state: {state.status}  •  mode: {state.mode}  •  turn: {state.context_turn or 0}"
+            f"  •  tokens: {state.model_delta_count}  •  streaming: {'yes' if streaming else 'no'}"
+        )
         flags = []
         if auto_repair:
             flags.append("repair:on")
@@ -87,7 +93,11 @@ class TextualSnapshot:
         if state.plan_summary:
             conversation_lines.append(f"plan> {state.plan_summary}")
         if state.model_output:
-            conversation_lines.append(f"model> {' '.join(state.model_output.split())}")
+            model_text = " ".join(state.model_output.split())
+            if streaming:
+                conversation_lines.append(f"model (streaming…)> {model_text}▌")
+            else:
+                conversation_lines.append(f"model> {model_text}")
         if state.summary_path:
             conversation_lines.append(f"summary> {state.summary_path}")
         if state.cancel_requested:
@@ -133,6 +143,7 @@ class TextualSnapshot:
         commands = " ".join(SLASH_COMMAND_HINTS)
         return cls(
             header=header,
+            status_line=status_line,
             conversation="\n".join(conversation_lines),
             runtime_state=runtime_state,
             changed_files=changed_files,
@@ -147,6 +158,14 @@ class TextualCommandConsoleApp(App[None]):
     CSS = """
     Screen {
         layout: vertical;
+    }
+
+    #statusline {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        background: $panel;
+        padding: 0 1;
     }
 
     #body {
@@ -212,6 +231,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        yield Static(id="statusline")
         with Horizontal(id="body"):
             yield Static(id="conversation")
             with Vertical(id="side"):
@@ -249,6 +269,7 @@ class TextualCommandConsoleApp(App[None]):
         self.title = snapshot.header
         if not self.widgets_ready:
             return
+        self.query_one("#statusline", Static).update(snapshot.status_line)
         self.query_one("#conversation", Static).update(snapshot.conversation)
         self.query_one("#runtime", Static).update(snapshot.runtime_state)
         self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
