@@ -14,7 +14,7 @@ from xhx_agent.tools.patch import PatchResult, apply_patch
 from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
 
-ToolName = Literal["search", "read_file", "apply_patch"]
+ToolName = Literal["search", "read_file", "apply_patch", "repo_query"]
 
 
 class ToolExecutionResult(BaseModel):
@@ -96,6 +96,65 @@ def _run_apply_patch(context: ToolContext, arguments: dict[str, Any]) -> ToolExe
         evidence_summary=f"changed files: {', '.join(result.changed_files)}" if result.status == "success" else None,
         changed_files=result.changed_files,
         error=result.stderr if result.status != "success" else None,
+    )
+
+
+def _run_repo_query(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
+    from xhx_agent.repo_intel.index import load_repo_intel_index
+    from xhx_agent.repo_intel.references import search_references
+    from xhx_agent.repo_intel.symbols import search_symbols
+
+    query = str(arguments["query"])
+    kind = str(arguments.get("kind", "symbol"))
+    limit = int(arguments.get("limit", 20))
+
+    try:
+        index = load_repo_intel_index(context.workspace)
+    except Exception as e:
+        err_msg = f"Failed to load repository intelligence index: {e}."
+        return ToolExecutionResult(
+            tool="repo_query",
+            status="success",
+            summary="Failed to load repository index.",
+            trace_payload={
+                "tool": "repo_query",
+                "query": query,
+                "kind": kind,
+                "content": err_msg,
+            },
+            evidence_kind="file",
+            evidence_source="repo_query",
+            evidence_summary="Failed to load repository index.",
+        )
+
+    if kind == "symbol":
+        symbols = search_symbols(index.symbol_index, query, limit=limit)
+        if not symbols:
+            text = "No matching symbols found."
+        else:
+            text = "\n".join(f"{s.path}:{s.line}  {s.name} ({s.kind})" for s in symbols)
+        summary = f"repo_query (symbol) found {len(symbols)} symbol(s)"
+    else:  # reference
+        references = search_references(index.reference_index, query, limit=limit)
+        if not references:
+            text = "No matching references found."
+        else:
+            text = "\n".join(f"{r.path}:{r.line}  {r.name}: {r.excerpt}" for r in references)
+        summary = f"repo_query (reference) found {len(references)} reference(s)"
+
+    return ToolExecutionResult(
+        tool="repo_query",
+        status="success",
+        summary=summary,
+        trace_payload={
+            "tool": "repo_query",
+            "query": query,
+            "kind": kind,
+            "content": text,
+        },
+        evidence_kind="file",
+        evidence_source="repo_query",
+        evidence_summary=summary,
     )
 
 
@@ -213,6 +272,26 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "required": ["prompt"],
         },
+    ),
+    "repo_query": ToolDefinition(
+        name="repo_query",
+        description="Query symbol definitions or references in the repository index. Read-only.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The symbol or word query string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["symbol", "reference"],
+                    "default": "symbol",
+                    "description": "Whether to query symbol definitions or references",
+                },
+                "limit": {"type": "integer", "default": 20, "description": "Maximum number of results to return"},
+            },
+            "required": ["query"],
+        },
+        read_only=True,
+        runner=_run_repo_query,
     ),
 }
 

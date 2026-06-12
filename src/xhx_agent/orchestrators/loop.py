@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Any
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
-from xhx_agent.models.routing import build_routed_client
+from xhx_agent.models.routing import build_routed_client, resolve_profile_for_role
 from xhx_agent.models.types import ModelClientError
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
 from xhx_agent.orchestrators.base import OrchestratorContext
+from xhx_agent.orchestrators.compaction import compact_messages
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import emit_event
@@ -53,6 +54,10 @@ class LoopOrchestrator:
         # 流式：把模型 content 增量实时 emit 成 model_delta 事件，喂给 Live 状态行。
         if hasattr(client, "set_delta_callback"):
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
+        summarizer = build_chat_client(
+            resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name)
+        )
+        summarize_fn = getattr(summarizer, "summarize", None)
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
             {
@@ -79,6 +84,19 @@ class LoopOrchestrator:
                 status = "cancelled"
                 risks.append("Run cancelled before model call.")
                 break
+            if summarize_fn:
+                len_before = len(messages)
+                messages = compact_messages(messages, summarize_fn)
+                len_after = len(messages)
+                if len_after < len_before:
+                    emit_event(
+                        ctx.event_callback,
+                        "compaction",
+                        f"Compacted messages from {len_before} to {len_after}.",
+                        turn=turn,
+                        before=len_before,
+                        after=len_after,
+                    )
             try:
                 result = chat_and_count(ctx, client, messages, schemas)
             except ModelClientError as exc:
