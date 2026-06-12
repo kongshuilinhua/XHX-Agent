@@ -15,6 +15,11 @@ from pydantic import BaseModel, Field
 from xhx_agent.runtime.paths import ensure_xhx_dirs, xhx_dir
 
 
+class RoutingConfig(BaseModel):
+    roles: dict[str, str] = Field(default_factory=dict)
+    fallback: list[str] = Field(default_factory=list)
+
+
 class ProjectConfig(BaseModel):
     """.xhx/config.json 的结构；每个字段都是一个运行时旋钮。"""
 
@@ -25,6 +30,7 @@ class ProjectConfig(BaseModel):
     max_loop_turns: int = 20  # loop 自主循环的硬上限，防模型无限迭代
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"  # 只允许结构化补丁写，杜绝任意文件写
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
 
 def default_config() -> ProjectConfig:
@@ -45,6 +51,8 @@ def write_default_config(workspace: Path) -> bool:
 
 
 def load_config(workspace: Path) -> ProjectConfig:
+    if not isinstance(workspace, (Path, str)):
+        return default_config()
     path = config_path(workspace)
     if not path.exists():
         return default_config()

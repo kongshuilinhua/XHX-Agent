@@ -20,6 +20,7 @@ from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
+from xhx_agent.models.routing import build_routed_client
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
@@ -143,7 +144,13 @@ class GraphOrchestrator:
     def run(self, ctx: OrchestratorContext) -> RunResult:
         from xhx_agent.runtime.app import RunResult
 
-        client = build_chat_client(ctx.profile)
+        client = build_routed_client(
+            ctx.original_workspace,
+            role="graph",
+            base_profile_name=ctx.profile.name,
+            event_callback=ctx.event_callback,
+            build_client_func=build_chat_client,
+        )
         max_rounds = min(MAX_REVIEW_ROUNDS, load_config(ctx.original_workspace).max_loop_turns)
 
         def coordinator(state: _GraphState) -> dict[str, Any]:

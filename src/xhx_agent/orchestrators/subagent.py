@@ -11,6 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from xhx_agent.models import build_chat_client
+from xhx_agent.models.routing import build_routed_client
 from xhx_agent.runtime.events import emit_event
 
 if TYPE_CHECKING:
@@ -43,7 +44,13 @@ def run_subagent(
     if allowed is None:
         return f"[dispatch] unknown agent_type '{agent_type}'. Supported: {sorted(AGENT_TOOLSETS)}."
 
-    client = build_chat_client(ctx.profile)
+    client = build_routed_client(
+        ctx.original_workspace,
+        role="explore",
+        base_profile_name=ctx.profile.name,
+        event_callback=ctx.event_callback,
+        build_client_func=build_chat_client,
+    )
     schemas = [s for s in ctx.kernel.tool_registry.tool_schemas() if s["function"]["name"] in allowed]
     messages: list[dict] = [
         {"role": "system", "content": SUBAGENT_SYSTEM_PROMPT},

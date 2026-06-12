@@ -52,6 +52,8 @@ def write_default_profiles(workspace: Path) -> bool:
 
 
 def load_profiles(workspace: Path) -> ProfilesFile:
+    if not isinstance(workspace, (Path, str)):
+        return ProfilesFile()
     path = profiles_path(workspace)
     if not path.exists():
         return ProfilesFile()
@@ -60,6 +62,8 @@ def load_profiles(workspace: Path) -> ProfilesFile:
 
 def get_profile(workspace: Path, name: str) -> ModelProfile:
     profiles = load_profiles(workspace).profiles
+    if not isinstance(name, str):
+        return profiles[0] if profiles else ModelProfile()
     for profile in profiles:
         if profile.name == name:
             return profile

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
+from xhx_agent.models.routing import build_routed_client
 from xhx_agent.models.types import ModelClientError
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
 from xhx_agent.orchestrators.base import OrchestratorContext
@@ -42,7 +43,13 @@ class LoopOrchestrator:
         from xhx_agent.evidence.report import write_report
         from xhx_agent.runtime.app import RunResult
 
-        client = build_chat_client(ctx.profile)
+        client = build_routed_client(
+            ctx.original_workspace,
+            role="loop",
+            base_profile_name=ctx.profile.name,
+            event_callback=ctx.event_callback,
+            build_client_func=build_chat_client,
+        )
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
             {
