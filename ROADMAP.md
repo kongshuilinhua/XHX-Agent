@@ -90,6 +90,7 @@
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。**（plan 部分已落地，见 Phase 3a；剩 `linear`/默认收敛 → 3b。）**
 - **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
+- **Phase 6a ✅ 已完成（2026-06-12）**：长期记忆 MVP —— `memory/store.py`（`.xhx/memory/` frontmatter 事实 + `MEMORY.md` 索引，4 类型，容错解析）+ `memory/recall.py`（**确定性** token 重叠召回，desc/name 权重>正文、中文按字，生命周期校验跳过点名失踪文件的陈旧记忆，渲染块空时返回 `""`→零回归）；注入 `compile_context_pack`（`memory:<type>` 来源，priority 88）+ 三编排器（loop/plan/graph）system prompt；REPL `/remember`·`/memory` + `xhx memory` CLI。**真 DeepSeek 端到端验证**：只存在于记忆的事实经召回注入 system prompt 后被真模型答出。suggest-confirm 自动抽取留 6b。
 - **Phase 6**：长期记忆 / 跨会话上下文（`.xhx/memory/` 4 类型事实 + 建议-确认写入 + 确定性召回入 context-pack）。详见 §7。
 - **Phase 7**：流式渲染 + **TUI/交互重做**（追加式滚屏 + 细状态行 + Textual 富视图，详见 §10）+ 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
 - **Phase 8a ✅ 已完成（2026-06-12）**：三范式 benchmark 矩阵 —— `run_matrix` + `render_benchmark_report`（按范式聚合 + 逐任务明细，markdown + JSON），CLI `benchmark --modes loop,plan,graph`，落 `.xhx/benchmark/report.md|json`。
