@@ -91,7 +91,7 @@ def test_command_console_refreshes_live_dashboard_on_events(tmp_path: Path) -> N
             self.auto_repair = auto_repair
             self.assume_yes = assume_yes
 
-        def refresh(self) -> None:
+        def refresh(self, refresh: bool = True) -> None:
             self.refreshed += 1
 
     dashboard = FakeDashboard()

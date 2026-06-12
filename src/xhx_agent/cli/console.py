@@ -621,15 +621,7 @@ class CommandConsole:
             auto_repair=self.auto_repair,
             assume_yes=self.assume_yes,
         )
-        import inspect
-        sig = inspect.signature(self.live_dashboard.refresh)
-        has_refresh = "refresh" in sig.parameters or any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-        if has_refresh:
-            self.live_dashboard.refresh(refresh=refresh)
-        else:
-            self.live_dashboard.refresh()
+        self.live_dashboard.refresh(refresh=refresh)
 
     def print_dashboard(self) -> None:
         self.console.print(
