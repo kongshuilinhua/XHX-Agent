@@ -57,6 +57,7 @@ SLASH_COMMANDS = {
     "/exit",
     "/remember",
     "/memory",
+    "/automem",
 }
 
 
@@ -161,6 +162,8 @@ class CommandConsole:
             self.handle_remember(argument.strip())
         elif command == "/memory":
             self.handle_memory()
+        elif command == "/automem":
+            self.set_auto_memory(argument.strip())
         else:
             self.console.print(f"Unknown command: {command}. Type /help.")
         return True
@@ -337,6 +340,7 @@ class CommandConsole:
             ("/clear", "Clear terminal."),
             ("/remember <text>", "Remember a fact across sessions."),
             ("/memory", "List remembered facts."),
+            ("/automem [on|off]", "Toggle auto memory suggest-confirm or show status."),
             ("/exit", "Exit console."),
         ]
         for command, behavior in rows:
@@ -733,6 +737,14 @@ class CommandConsole:
         for m in memories:
             table.add_row(m.name, m.mtype, m.description)
         self.console.print(table)
+
+    def set_auto_memory(self, argument: str) -> None:
+        lowered = argument.lower()
+        if lowered in {"on", "true", "1"}:
+            self.auto_memory = True
+        elif lowered in {"off", "false", "0"}:
+            self.auto_memory = False
+        self.console.print(f"auto_memory: {str(self.auto_memory).lower()}")
 
     def _maybe_suggest_memories(self, result: RunResult) -> None:
         """跑完（成功）后自动抽取候选记忆并逐条请用户确认（suggest-confirm）。
