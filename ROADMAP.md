@@ -92,8 +92,11 @@
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。
 - **Phase 6**：长期记忆 / 跨会话上下文（`.xhx/memory/` 4 类型事实 + 建议-确认写入 + 确定性召回入 context-pack）。详见 §7。
 - **Phase 7**：流式渲染 + **TUI/交互重做**（追加式滚屏 + 细状态行 + Textual 富视图，详见 §10）+ 消息历史压缩（对标 microcompact）+ repo-intel 作为工具。
+- **Phase 8a ✅ 已完成（2026-06-12）**：三范式 benchmark 矩阵 —— `run_matrix` + `render_benchmark_report`（按范式聚合 + 逐任务明细，markdown + JSON），CLI `benchmark --modes loop,plan,graph`，落 `.xhx/benchmark/report.md|json`。
+- **Phase 8b ✅ 已完成（2026-06-12）**：token 计量 —— `chat_and_count`/`_estimate_message_tokens` 包住每次模型调用，把 tiktoken 估算累加进 `metrics_tracker`，`loop`/`plan`/`graph`/`subagent` 全接入，`loop`/`plan` 设 `RunMetrics`；benchmark token 列可区分范式（真模型下 `graph` ~4× `loop`/`plan`）。
 - **Phase 8**：三范式 benchmark —— 量化对比台架（任务集 × 范式矩阵，测成功率/token/轮数/时间，出对比报告）。详见 §9。
 - **Phase 9**：多模型路由 —— 按角色/子 agent 选模型（便宜探索、强模型改代码）+ fallback 降级。详见 §9。
+- **Phase 10 ✅ 已完成（2026-06-12）**：README 改写为三范式（`loop`/`plan`/`graph`，原生 tool-calling）对比叙事 + 真实 DeepSeek benchmark 表（`graph` ~4× token / ~3× 墙钟、2/3 成功——"多 agent ≠ 更好"）+ 工程手记（`apply_patch` 真模型修复 / 提示词非银弹 / token 计量）；中英双语；顺修 CLI `--mode` 帮助文本滞后。
 - **Phase 10**：README 三范式对比叙事（用 Phase 8 数据）+ 经验文档收尾 + 测试覆盖打磨。
 
 > 落地顺序可微调；总思路：先把 tool-calling 基础 + `loop`（Phase 1–2）跑通，再迁 `plan`/`graph`（Phase 3–4，顺带把 `linear`/`dag` 收敛为支撑机制），子 agent / 记忆等增量功能其后。
