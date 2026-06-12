@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.suggester import Suggester
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Footer, Header, Input, Static, OptionList
+from textual.widgets.option_list import Option
+from textual import events
 
 from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
@@ -80,31 +83,50 @@ class TextualSnapshot:
         streaming = getattr(state, "is_streaming", False)
         status_line = (
             f"state: {state.status}  •  mode: {state.mode}  •  turn: {state.context_turn or 0}"
-            f"  •  tokens: {state.model_delta_count}  •  streaming: {'yes' if streaming else 'no'}"
+            f"  •  tokens: {state.tokens_total}"
+            f"  •  ctx: {state.context_used_tokens_estimate}/{state.context_budget_tokens or 0}"
+            f"  •  verify: {state.verification}  •  changed: {len(state.changed_files)}"
+            f"  •  streaming: {'yes' if streaming else 'no'}"
         )
         flags = []
         if auto_repair:
             flags.append("repair:on")
         if assume_yes:
             flags.append("yes:on")
-        conversation_lines = []
-        if state.task:
-            conversation_lines.append(f"user> {state.task}")
-        if state.plan_summary:
-            conversation_lines.append(f"plan> {state.plan_summary}")
-        if state.model_output:
-            model_text = " ".join(state.model_output.split())
-            if streaming:
-                conversation_lines.append(f"model (streaming…)> {model_text}▌")
-            else:
-                conversation_lines.append(f"model> {model_text}")
-        if state.summary_path:
-            conversation_lines.append(f"summary> {state.summary_path}")
-        if state.cancel_requested:
-            conversation_lines.append(f"cancel> {state.cancel_reason or 'requested'}")
+        # Conversation has a single source of truth: the append-only message history.
+        # An in-flight model answer is shown as ONE ephemeral `model (streaming…)>` line that
+        # disappears once the turn commits its `assistant>` line to history — so the answer is
+        # never rendered twice. Only when there is no history yet (e.g. a snapshot built directly
+        # from runtime events, as in unit tests) do we reconstruct a preview from state.
         textual_messages = getattr(state, "textual_messages", None)
+        conversation_lines: list[str] = []
         if textual_messages:
             conversation_lines.extend(str(item) for item in textual_messages)
+            if streaming and state.model_output:
+                model_text = " ".join(state.model_output.split())
+                conversation_lines.append(f"model (streaming…)> {model_text}▌")
+        else:
+            if state.task:
+                task_text = state.task
+                if task_text.startswith("Follow-up task in the same console session."):
+                    if "\nUser request:\n" in task_text:
+                        parts = task_text.split("\nUser request:\n", 1)
+                        if len(parts) > 1:
+                            subparts = parts[1].split("\n\nPrevious run context:", 1)
+                            task_text = subparts[0].strip()
+                conversation_lines.append(f"user> {task_text}")
+            if state.plan_summary:
+                conversation_lines.append(f"plan> {state.plan_summary}")
+            if state.model_output:
+                model_text = " ".join(state.model_output.split())
+                if streaming:
+                    conversation_lines.append(f"model (streaming…)> {model_text}▌")
+                else:
+                    conversation_lines.append(f"model> {model_text}")
+            if state.summary_path:
+                conversation_lines.append(f"summary> {state.summary_path}")
+            if state.cancel_requested:
+                conversation_lines.append(f"cancel> {state.cancel_reason or 'requested'}")
         if not conversation_lines:
             conversation_lines.append("No conversation yet.")
         permission_state = "next confirm: default-deny"
@@ -152,6 +174,72 @@ class TextualSnapshot:
         )
 
 
+def get_clipboard_text() -> str | None:
+    import sys
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+        kernel32.GlobalLock.restype = wintypes.LPVOID
+        kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+        CF_UNICODETEXT = 13
+
+        if not user32.OpenClipboard(None):
+            return None
+        try:
+            handle = user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return None
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                return None
+            try:
+                text = ctypes.wstring_at(ptr)
+                if text and len(text) > 65536:
+                    text = text[:65536]
+                return text
+            finally:
+                kernel32.GlobalUnlock(handle)
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return None
+
+
+class WrappingOptionList(OptionList):
+    """OptionList whose cursor wraps around at both ends.
+
+    The single home for wrap-around navigation: pressing up on the first option jumps to the
+    last, and down on the last returns to the first. Used by every picker — modal pickers focus
+    this widget (so its native bindings give wrap for free), while the inline autocomplete picker
+    keeps input focus and drives the very same ``action_cursor_*`` methods from ``on_key``.
+    """
+
+    def action_cursor_up(self) -> None:
+        count = self.option_count
+        if count:
+            self.highlighted = count - 1 if self.highlighted in (None, 0) else self.highlighted - 1
+
+    def action_cursor_down(self) -> None:
+        count = self.option_count
+        if count:
+            self.highlighted = 0 if (self.highlighted is None or self.highlighted >= count - 1) else self.highlighted + 1
+
+
 class TextualCommandConsoleApp(App[None]):
     """Fullscreen v0.5 shell that renders ConsoleState without owning Runtime internals."""
 
@@ -172,9 +260,14 @@ class TextualCommandConsoleApp(App[None]):
         height: 1fr;
     }
 
-    #conversation {
+    #conversation_scroll {
         width: 2fr;
         border: solid $primary;
+    }
+
+    #conversation {
+        width: 100%;
+        height: auto;
         padding: 1;
     }
 
@@ -186,6 +279,25 @@ class TextualCommandConsoleApp(App[None]):
 
     #input {
         height: 3;
+    }
+
+    #interactive_container {
+        height: auto;
+        max-height: 12;
+        margin-top: 1;
+        display: none;
+    }
+
+    #active_options {
+        border: solid $accent;
+        height: auto;
+        background: $panel;
+    }
+
+    OptionList > .option-list--option-highlighted {
+        background: $accent;
+        color: $text;
+        text-style: bold;
     }
     """
 
@@ -217,10 +329,19 @@ class TextualCommandConsoleApp(App[None]):
         self.last_manual_repair: ManualRepairResult | None = None
         self.next_confirm_response: bool | None = None
         self.messages: list[str] = []
+        # The real model-facing conversation history (full message dicts) carried across turns so
+        # the model actually remembers the dialogue. None until the first turn/resume populates it.
+        self.prior_messages: list[dict] | None = None
+        # Stable id for the current conversation; every turn records under it so the resume picker
+        # shows one entry per conversation instead of one per turn.
+        self.conversation_id: str = uuid.uuid4().hex
         self.exit_requested = False
         self.cancel_requested = False
         self.pending_steer: str | None = None
         self.pending_confirmation: PendingConfirmation | None = None
+        # When a picker is active, holds the callback to run with the chosen option id
+        # (or None if dismissed). This replaces stringly-typed active_detail dispatch.
+        self._picker_on_select: Callable[[str | None], None] | None = None
         self.permission_timeout_seconds = permission_timeout_seconds
         self.active_detail = "overview"
         self.detail_text = (
@@ -229,11 +350,21 @@ class TextualCommandConsoleApp(App[None]):
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
 
+    @property
+    def clipboard(self) -> str:
+        text = get_clipboard_text()
+        if text is not None:
+            # Replace newlines with spaces for single-line input pasting
+            return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        return getattr(self, "_clipboard", "")
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static(id="statusline")
         with Horizontal(id="body"):
-            yield Static(id="conversation")
+            with VerticalScroll(id="conversation_scroll"):
+                yield Static(id="conversation")
+                yield Vertical(id="interactive_container")
             with Vertical(id="side"):
                 yield Static(id="runtime")
                 yield Static(id="changed")
@@ -251,6 +382,10 @@ class TextualCommandConsoleApp(App[None]):
         self.ui_thread_id = threading.get_ident()
         self.widgets_ready = True
         self.refresh_snapshot()
+        try:
+            self.query_one("#input", Input).focus()
+        except Exception:
+            pass
 
     def refresh_snapshot(self) -> None:
         self.state.textual_messages = list(self.messages)  # type: ignore[attr-defined]
@@ -269,16 +404,32 @@ class TextualCommandConsoleApp(App[None]):
         self.title = snapshot.header
         if not self.widgets_ready:
             return
-        self.query_one("#statusline", Static).update(snapshot.status_line)
-        self.query_one("#conversation", Static).update(snapshot.conversation)
-        self.query_one("#runtime", Static).update(snapshot.runtime_state)
-        self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
-        self.query_one("#details", Static).update("details:\n" + snapshot.details)
-        self.query_one("#commands", Static).update(snapshot.commands)
+        try:
+            self.query_one("#statusline", Static).update(snapshot.status_line)
+            self.query_one("#conversation", Static).update(snapshot.conversation)
+            self.query_one("#runtime", Static).update(snapshot.runtime_state)
+            self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
+            self.query_one("#details", Static).update("details:\n" + snapshot.details)
+            self.query_one("#commands", Static).update(snapshot.commands)
+        except Exception:
+            pass
+
+        # Only scroll to end when conversation text grows, and defer it after layout pass
+        conv_text = snapshot.conversation
+        last_len = getattr(self, "_last_conv_len", 0)
+        if len(conv_text) > last_len:
+            self._last_conv_len = len(conv_text)
+            self.call_after_refresh(self.query_one("#conversation_scroll").scroll_end, animate=False)
+        elif len(conv_text) < last_len:
+            self._last_conv_len = len(conv_text)
 
     def action_clear(self) -> None:
         self.state = ConsoleState()
         self.messages.clear()
+        # Start a fresh conversation: drop the model-facing history and start a new conversation id.
+        self.prior_messages = None
+        self.last_result = None
+        self.conversation_id = uuid.uuid4().hex
         self.active_detail = "overview"
         self.detail_text = (
             "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
@@ -286,11 +437,64 @@ class TextualCommandConsoleApp(App[None]):
         self.refresh_snapshot()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        stripped = event.value.strip()
+        if stripped.startswith("/"):
+            parts = stripped.split(" ", 1)
+            cmd = parts[0]
+            valid_commands = {
+                "/help", "/model", "/status", "/plan", "/context", "/evidence",
+                "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
+                "/cancel", "/live", "/allow", "/deny", "/clear", "/sessions",
+                "/resume", "/exit"
+            }
+            if cmd in valid_commands:
+                self.hide_interactive_container()
+                event.input.value = ""
+                should_continue = self.handle_text_input(stripped, use_worker=True)
+                self.refresh_snapshot()
+                if not should_continue:
+                    self.exit()
+                return
+
+        try:
+            container = self.query_one("#interactive_container")
+            if container.styles.display == "block":
+                active_options = self.query_one("#active_options", OptionList)
+                if active_options.highlighted is not None:
+                    opt = active_options.get_option_at_index(active_options.highlighted)
+                    event.input.value = ""
+                    self.resolve_interactive_selection(opt.id)
+                    return
+        except Exception:
+            pass
+
         event.input.value = ""
         should_continue = self.handle_text_input(event.value, use_worker=True)
         self.refresh_snapshot()
         if not should_continue:
             self.exit()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.value.startswith("/"):
+            valid_commands = {
+                "/help", "/model", "/status", "/plan", "/context", "/evidence",
+                "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
+                "/cancel", "/live", "/allow", "/deny", "/clear", "/sessions",
+                "/resume", "/exit"
+            }
+            if event.value in valid_commands:
+                self.hide_interactive_container()
+            else:
+                self.show_slash_commands(event.value)
+        else:
+            if self.active_detail == "commands":
+                self.hide_interactive_container()
+
+    def on_input_blur(self, event: events.Blur) -> None:
+        try:
+            self.query_one("#input", Input).focus()
+        except Exception:
+            pass
 
     def handle_text_input(self, text: str, *, use_worker: bool = False) -> bool:
         stripped = text.strip()
@@ -330,9 +534,15 @@ class TextualCommandConsoleApp(App[None]):
             self.cancel_requested = False
         if announce_user:
             self.append_message(f"user> {task}")
-        runtime_task = self.build_runtime_task(task)
-        if runtime_task != task:
-            self.append_message("system> follow-up context attached")
+        # When we already hold the real conversation history, pass the raw task as the new user
+        # turn and let prior_messages carry the memory. Only fall back to the metadata follow-up
+        # summary when there is no transcript to restore (e.g. an old session without one).
+        if self.prior_messages:
+            runtime_task = task
+        else:
+            runtime_task = self.build_runtime_task(task)
+            if runtime_task != task:
+                self.append_message("system> follow-up context attached")
         result = self.runtime.run_task(
             runtime_task,
             profile_name=self.profile,
@@ -342,12 +552,30 @@ class TextualCommandConsoleApp(App[None]):
             event_callback=self.handle_runtime_event,
             cancel_check=self.is_cancel_requested,
             mode=self.orchestrator_mode,
+            prior_messages=self.prior_messages,
         )
         self.last_result = result
-        record_session(self.workspace, task, result)
+        record_session(self.workspace, task, result, conversation_id=self.conversation_id)
         self.apply_run_result(result)
         self.append_message(f"system> run finished: {result.status}, verification: {result.verification}")
+        # Carry the full conversation forward: this run's transcript already includes the prior
+        # history we passed in, so the next turn restores complete context (real memory).
+        self._refresh_prior_messages(result)
         self.run_pending_steer()
+
+    def _refresh_prior_messages(self, result: RunResult) -> None:
+        """Reload the just-finished run's transcript so the next turn keeps full memory."""
+        path = getattr(result, "transcript_path", None)
+        if not path:
+            return
+        try:
+            from xhx_agent.runtime.session import load_transcript_messages
+
+            messages = load_transcript_messages(self.workspace, path)
+            if messages:
+                self.prior_messages = messages
+        except Exception:
+            pass
 
     def run_pending_steer(self) -> None:
         if self.pending_steer is None:
@@ -427,8 +655,30 @@ class TextualCommandConsoleApp(App[None]):
                 self.append_message("system> next permission prompt will be declined once")
             return True
         if command == "/help":
+            cmds_list = [
+                "/help      - Show help message and command details",
+                "/model     - List or switch active profile",
+                "/status    - Show current agent status",
+                "/plan      - Show active plan or preview a task plan",
+                "/context   - Show current context pack budget & files",
+                "/evidence  - Show recent safety policy evidence",
+                "/diff      - Show git diff summary for changes",
+                "/verify    - Run verification for changed files",
+                "/repair    - Repair codebase after failed verification",
+                "/skills    - List available skill directories",
+                "/mode      - Show or set orchestrator execution mode",
+                "/dashboard - Print detailed dashboard runtime state",
+                "/cancel    - Request task cancellation at safe boundary",
+                "/live      - Toggle live streaming dashboard render",
+                "/allow     - Answer allow to pending permission confirmation",
+                "/deny      - Answer deny to pending permission confirmation",
+                "/clear     - Clear conversation messages and details",
+                "/sessions  - List recent recorded agent sessions",
+                "/resume    - Switch follow-up context to a past session",
+                "/exit      - Exit the textual command console",
+            ]
             self.append_message(
-                "system> available commands: /help /model /status /plan /context /evidence /diff /verify /repair /skills /mode /dashboard /cancel /live /allow /deny /clear /exit"
+                "system> available commands:\n" + "\n".join(cmds_list)
             )
             self.set_detail(
                 "help",
@@ -443,6 +693,8 @@ class TextualCommandConsoleApp(App[None]):
                         "/repair [loop] - repair after failed verification",
                         "/allow or /deny - answer pending confirmation",
                         "/cancel - request safe-boundary cancellation",
+                        "/sessions - list past sessions",
+                        "/resume <run_id> - switch follow-up context to a past session",
                     ]
                 ),
             )
@@ -491,6 +743,12 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/cancel":
             self.request_cancel()
+            return True
+        if command == "/sessions":
+            self.handle_sessions()
+            return True
+        if command == "/resume":
+            self.handle_resume(argument)
             return True
         if command == "/status":
             self.append_message(
@@ -647,7 +905,22 @@ class TextualCommandConsoleApp(App[None]):
     def set_mode(self, argument: str) -> None:
         if argument:
             self.state.mode = argument
-        self.append_message(f"system> mode: {self.state.mode}")
+            self.append_message(f"system> mode: {self.state.mode}")
+            self.set_detail("mode", f"active mode: {self.state.mode}")
+            return
+        # No argument: show current mode plus a selectable picker (Arrow keys to navigate,
+        # Enter to apply directly). Mirrors the /model profile picker.
+        self.append_message(f"system> mode: {self.state.mode} (select to switch)")
+        # The three real paradigms only. linear/dag are converged supporting mechanisms
+        # (linear → plan's stop policy, dag → graph's execution layer), reachable via
+        # `--mode linear/dag` for the preserved legacy paths but not shown as paradigms here.
+        options = [
+            ("loop — ReAct tool-use loop (default)", "loop"),
+            ("plan — plan-and-execute (batch)", "plan"),
+            ("graph — multi-agent workflow", "graph"),
+        ]
+        self.set_detail("mode", "Select an orchestrator paradigm with Arrow keys + Enter.")
+        self.present_picker(options, on_select=self._select_mode, title="Select Mode")
 
     def print_model(self, profile_name: str | None = None) -> None:
         if profile_name:
@@ -656,22 +929,76 @@ class TextualCommandConsoleApp(App[None]):
             self.set_detail("model", f"active profile: {self.profile}")
             return
         profiles = load_profiles(self.workspace).profiles
+        if not profiles:
+            self.append_message("system> profiles: none")
+            self.set_detail("model", "none")
+            return
         items = []
         for profile in profiles:
             marker = "*" if profile.name == self.profile else ""
             items.append(f"{profile.name}{marker} [{profile.provider}/{profile.model or ''}]")
-        self.append_message("system> profiles: " + (" | ".join(items) if items else "none"))
-        self.set_detail("model", "\n".join(items) if items else "none")
+        self.append_message("system> profiles:\n" + "\n".join(items))
+        self.set_detail("model", "\n".join(items))
+
+        options = [(f"{p.name} [{p.provider}/{p.model or ''}]", p.name) for p in profiles]
+        self.present_picker(options, on_select=self._select_profile, title="Select Profile")
 
     def print_skills(self) -> None:
+        import re
         skill_root = self.workspace / ".xhx" / "skills"
         if not skill_root.exists():
             self.append_message("system> skills: none")
             self.set_detail("skills", "none")
             return
-        skills = [path.relative_to(self.workspace).as_posix() for path in sorted(skill_root.iterdir())]
-        self.append_message("system> skills: " + (" | ".join(skills) if skills else "none"))
-        self.set_detail("skills", "\n".join(skills) if skills else "none")
+
+        # Find folders and maximum length of /{folder_name}
+        folders = []
+        max_len = 0
+        for path in sorted(skill_root.iterdir()):
+            if path.is_dir():
+                name_str = f"/{path.name}"
+                folders.append((path, name_str))
+                max_len = max(max_len, len(name_str))
+
+        pad_width = max_len + 4  # align descriptions with 4 spaces padding
+
+        lines = []
+        for path, name_str in folders:
+            description = ""
+            md_path = path / "SKILL.md"
+            if md_path.exists():
+                try:
+                    content = md_path.read_text(encoding="utf-8")
+                    match = re.match(r"^---\s*(?:yaml)?\r?\n(.*?)\r?\n---\r?\n", content, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        yaml_text = match.group(1)
+                        desc_match = re.search(r"^description:\s*(.*)$", yaml_text, re.MULTILINE)
+                        if desc_match:
+                            desc_val = desc_match.group(1).strip()
+                            if (desc_val.startswith('"') and desc_val.endswith('"')) or (desc_val.startswith("'") and desc_val.endswith("'")):
+                                desc_val = desc_val[1:-1]
+                            description = desc_val
+                except Exception:
+                    pass
+            else:
+                json_path = path / "SKILL.json"
+                if json_path.exists():
+                    try:
+                        import json
+                        with open(json_path, encoding="utf-8") as f:
+                            data = json.load(f)
+                            description = data.get("description", "")
+                    except Exception:
+                        pass
+            
+            padded_name = f"{name_str:<{pad_width}}"
+            if description:
+                lines.append(f"{padded_name}{description}")
+            else:
+                lines.append(name_str)
+
+        self.append_message("system> skills:\n" + "\n".join(lines))
+        self.set_detail("skills", "\n".join(lines))
 
     def print_dashboard_summary(self) -> None:
         self.append_message(
@@ -775,6 +1102,11 @@ class TextualCommandConsoleApp(App[None]):
     def open_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
         self.pending_confirmation = confirmation
         self._append_message(f"system> permission required: {confirmation.summary}; use /allow or /deny")
+        self.present_picker(
+            [("Allow (Run Command)", "allow"), ("Deny (Cancel Command)", "deny")],
+            on_select=self._select_confirmation,
+            title="Permission Confirmation",
+        )
 
     def resolve_pending_confirmation(self, response: bool) -> bool:
         confirmation = self.pending_confirmation
@@ -796,6 +1128,15 @@ class TextualCommandConsoleApp(App[None]):
     def close_pending_confirmation(self, confirmation: PendingConfirmation) -> None:
         if self.pending_confirmation is confirmation:
             self.pending_confirmation = None
+            self._picker_on_select = None
+            self._dismiss_picker_widget()
+            try:
+                input_widget = self.query_one("#input", Input)
+                input_widget.disabled = False
+                input_widget.placeholder = "Type a task or slash command. Press Tab or Right arrow to complete."
+                input_widget.focus()
+            except Exception:
+                pass
             self.refresh_snapshot()
 
     def append_permission_result(self, command: str, decision: PolicyDecision, allowed: bool) -> None:
@@ -807,8 +1148,11 @@ class TextualCommandConsoleApp(App[None]):
 
     def _apply_run_result(self, result: RunResult) -> None:
         self.state.apply_result(result)
+        # Answer first (what the user asked for), then the run-log path as a trailing meta line.
         if result.answer:
             self._append_message(f"assistant> {result.answer}")
+        if result.summary_path:
+            self._append_message(f"summary> {result.summary_path}")
         self.refresh_snapshot()
 
     def append_message(self, message: str) -> None:
@@ -825,6 +1169,174 @@ class TextualCommandConsoleApp(App[None]):
         self.active_detail = title
         self.detail_text = text
         self.refresh_snapshot()
+
+    def show_slash_commands(self, filter_prefix: str = "/") -> None:
+        all_commands = [
+            ("/help", "Show help message and command details"),
+            ("/model", "List or switch active profile"),
+            ("/status", "Show current agent status"),
+            ("/plan", "Show active plan or preview a task plan"),
+            ("/context", "Show current context pack budget & files"),
+            ("/evidence", "Show recent safety policy evidence"),
+            ("/diff", "Show git diff summary for changes"),
+            ("/verify", "Run verification for changed files"),
+            ("/repair", "Repair codebase after failed verification"),
+            ("/skills", "List available skill directories"),
+            ("/mode", "Show or set orchestrator execution mode"),
+            ("/dashboard", "Print detailed dashboard runtime state"),
+            ("/cancel", "Request task cancellation at safe boundary"),
+            ("/live", "Toggle live streaming dashboard render"),
+            ("/allow", "Allow the pending terminal command policy"),
+            ("/deny", "Decline the pending terminal command policy"),
+            ("/clear", "Clear conversation messages and details"),
+            ("/sessions", "List recent recorded agent sessions"),
+            ("/resume", "Switch follow-up context to a past session"),
+            ("/exit", "Exit the textual command console"),
+        ]
+        filtered = [
+            (f"{cmd:<10} | {desc}", cmd)
+            for cmd, desc in all_commands
+            if cmd.startswith(filter_prefix)
+        ]
+        if not filtered:
+            self.hide_interactive_container()
+            return
+        self.active_detail = "commands"
+        self.detail_text = "Select a slash command from the interactive list."
+        self.present_picker(filtered, on_select=self._select_command, title="Select Command")
+
+    def _dismiss_picker_widget(self) -> None:
+        """Remove the active option list and hide its container. The single teardown used everywhere."""
+        try:
+            old = self.query_one("#active_options")
+            old.remove()
+            container = self.query_one("#interactive_container", Vertical)
+            container._nodes._remove(old)
+        except Exception:
+            pass
+        try:
+            self.query_one("#interactive_container", Vertical).styles.display = "none"
+        except Exception:
+            pass
+
+    def present_picker(
+        self,
+        options: list[tuple[str, str]],
+        *,
+        on_select: Callable[[str | None], None],
+        title: str = "Select",
+    ) -> None:
+        """Mount the one and only wrap-around picker. Every selectable list goes through here.
+
+        The input keeps focus; Arrow keys (handled in ``on_key``) drive the WrappingOptionList with
+        wrap-around, Enter selects the highlighted option, Esc dismisses. ``on_select`` is invoked
+        with the chosen option id (or None when dismissed) — replacing per-command branching.
+        """
+        if not self.widgets_ready:
+            return
+        self._dismiss_picker_widget()
+        self._picker_on_select = on_select
+        option_widgets = [Option(prompt, id=opt_id) for prompt, opt_id in options]
+        option_list = WrappingOptionList(*option_widgets, id="active_options")
+        container = self.query_one("#interactive_container", Vertical)
+        container.mount(option_list)
+        container.styles.display = "block"
+        option_list.highlighted = 0
+        input_widget = self.query_one("#input", Input)
+        input_widget.disabled = False
+        input_widget.placeholder = f"[{title}] ↑/↓ navigate · Enter select · Esc cancel"
+        input_widget.focus()
+        self.call_after_refresh(self.query_one("#conversation_scroll").scroll_end, animate=False)
+
+    def hide_interactive_container(self) -> None:
+        """Dismiss any active picker without selecting (used while typing slash commands)."""
+        self._picker_on_select = None
+        self._dismiss_picker_widget()
+        if self.active_detail == "commands":
+            self.active_detail = "overview"
+            self.detail_text = (
+                "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+            )
+        self.refresh_snapshot()
+
+    # --- Per-command selection callbacks (the only place that differs between pickers) ---
+
+    def _select_profile(self, selected_id: str | None) -> None:
+        if selected_id:
+            self.print_model(selected_id)
+
+    def _select_mode(self, selected_id: str | None) -> None:
+        if selected_id:
+            self.set_mode(selected_id)
+
+    def _select_session(self, selected_id: str | None) -> None:
+        if selected_id:
+            self.handle_resume(selected_id)
+
+    def _select_confirmation(self, selected_id: str | None) -> None:
+        # None (Esc/dismiss) or "deny" decline; only "allow" allows.
+        self.resolve_pending_confirmation(selected_id == "allow")
+
+    def _select_command(self, selected_id: str | None) -> None:
+        if not selected_id:
+            self.refresh_snapshot()
+            return
+        needs_args = selected_id in {"/model", "/plan", "/repair", "/mode", "/resume"}
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = selected_id + (" " if needs_args else "")
+        input_widget.focus()
+        self.refresh_snapshot()
+
+    def resolve_interactive_selection(self, selected_id: str | None) -> None:
+        """Single resolution point for every picker: tear down, restore input, run the callback."""
+        callback = self._picker_on_select
+        self._picker_on_select = None
+        self._dismiss_picker_widget()
+
+        try:
+            input_widget = self.query_one("#input", Input)
+            input_widget.disabled = False
+            input_widget.placeholder = "Type a task or slash command. Press Tab or Right arrow to complete."
+            input_widget.focus()
+        except Exception:
+            pass
+
+        if self.active_detail in {"sessions", "model", "commands", "mode"}:
+            self.active_detail = "overview"
+            self.detail_text = (
+                "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+            )
+
+        if callback is not None:
+            callback(selected_id)
+        else:
+            self.refresh_snapshot()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "active_options":
+            self.resolve_interactive_selection(event.option.id)
+
+    def on_key(self, event: events.Key) -> None:
+        # Unified wrap-around navigation for whichever picker is active. The list never holds
+        # focus (the input does), so Arrow keys bubble here; we drive the WrappingOptionList,
+        # whose action_cursor_* wrap at both ends.
+        if self._picker_on_select is None:
+            return
+        try:
+            active_options = self.query_one("#active_options", WrappingOptionList)
+        except Exception:
+            return
+        if event.key == "down":
+            active_options.action_cursor_down()
+            active_options.scroll_to_highlight()
+            event.stop()
+        elif event.key == "up":
+            active_options.action_cursor_up()
+            active_options.scroll_to_highlight()
+            event.stop()
+        elif event.key == "escape":
+            self.resolve_interactive_selection(None)
+            event.stop()
 
     def call_ui(self, callback: Callable[..., T], *args: object) -> T | None:
         if self.ui_thread_id is not None and threading.get_ident() != self.ui_thread_id:
@@ -844,6 +1356,85 @@ class TextualCommandConsoleApp(App[None]):
         if self.last_result and self.last_result.changed_files:
             return list(self.last_result.changed_files)
         return []
+
+    def handle_sessions(self) -> None:
+        from xhx_agent.runtime.session import list_conversations
+        # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
+        conversations = list_conversations(self.workspace)
+        if not conversations:
+            self.append_message("system> No sessions recorded yet.")
+            return
+
+        # Most recent first, capped at 10.
+        recent = list(reversed(conversations))[:10]
+
+        lines = [f"{entry.run_id} | {entry.status} | {entry.task[:40]}" for entry in recent]
+        self.append_message("system> recent conversations:\n" + "\n".join(lines))
+        self.set_detail("sessions", "\n".join(lines))
+
+        options = [
+            (f"{entry.status} | {entry.task[:40]}", entry.run_id)
+            for entry in recent
+        ]
+        self.present_picker(options, on_select=self._select_session, title="Select Conversation to Resume")
+
+    def handle_resume(self, run_id: str) -> None:
+        if not run_id:
+            # No id given: show the session picker (Arrow keys + Enter resumes directly).
+            self.handle_sessions()
+            return
+        from xhx_agent.runtime.session import load_session, load_transcript_messages
+        entry = load_session(self.workspace, run_id)
+        if not entry:
+            self.append_message(f"system> Session '{run_id}' not found.")
+            return
+        self.active_detail = "overview"
+        self.detail_text = (
+            "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+        )
+        from xhx_agent.runtime.app import RunResult
+        result = RunResult(
+            run_id=entry.run_id,
+            status=entry.status,
+            changed_files=list(entry.changed_files),
+            commands=[],
+            verification=entry.verification,
+            summary_path=entry.summary_path or "",
+            risk_summary=[],
+        )
+        self.last_result = result
+        self.state.apply_result(result)
+        self.state.task = entry.task
+        if entry.mode:
+            self.state.mode = entry.mode
+        # Continue the same conversation so further turns keep collapsing into one resume entry.
+        self.conversation_id = entry.conversation_id or self.conversation_id
+
+        messages = load_transcript_messages(self.workspace, entry.transcript_path)
+        if messages:
+            # Feed the real transcript to the model on the next turn (true memory), not just the UI.
+            self.prior_messages = messages
+            self.messages.clear()
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content")
+                if role == "system":
+                    continue
+                if role == "user":
+                    task_text = content
+                    if task_text.startswith("Follow-up task in the same console session."):
+                        if "\nUser request:\n" in task_text:
+                            parts = task_text.split("\nUser request:\n", 1)
+                            if len(parts) > 1:
+                                subparts = parts[1].split("\n\nPrevious run context:", 1)
+                                task_text = subparts[0].strip()
+                    self.messages.append(f"user> {task_text}")
+                elif role == "assistant":
+                    if content:
+                        self.messages.append(f"assistant> {content}")
+
+        self.append_message(f"system> Switched follow-up context to session: {run_id}")
+        self.refresh_snapshot()
 
 
 def run_textual_console(

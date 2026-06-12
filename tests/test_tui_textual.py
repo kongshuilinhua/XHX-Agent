@@ -1107,29 +1107,34 @@ def test_textual_snapshot_status_line() -> None:
     state.status = "running"
     state.mode = "loop"
     state.context_turn = 3
-    state.model_delta_count = 120
+    state.context_used_tokens_estimate = 400
+    state.context_budget_tokens = 6000
+    state.verification = "running"
+    state.changed_files = ["a.py", "b.py"]
+    state.reduce(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={"prompt": 100, "completion": 20, "total": 120, "cumulative_total": 120},
+        )
+    )
     state.is_streaming = True  # type: ignore[attr-defined]
 
     snapshot = TextualSnapshot.from_state(
-        state,
-        workspace="/repo",
-        profile="mock",
-        auto_repair=False,
-        assume_yes=True,
+        state, workspace="/repo", profile="mock", auto_repair=False, assume_yes=True
     )
     assert "state: running" in snapshot.status_line
     assert "mode: loop" in snapshot.status_line
     assert "turn: 3" in snapshot.status_line
     assert "tokens: 120" in snapshot.status_line
+    assert "ctx: 400/6000" in snapshot.status_line
+    assert "verify: running" in snapshot.status_line
+    assert "changed: 2" in snapshot.status_line
     assert "streaming: yes" in snapshot.status_line
 
     state.is_streaming = False  # type: ignore[attr-defined]
     snapshot_non_streaming = TextualSnapshot.from_state(
-        state,
-        workspace="/repo",
-        profile="mock",
-        auto_repair=False,
-        assume_yes=True,
+        state, workspace="/repo", profile="mock", auto_repair=False, assume_yes=True
     )
     assert "streaming: no" in snapshot_non_streaming.status_line
 
