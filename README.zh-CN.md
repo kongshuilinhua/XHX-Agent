@@ -41,7 +41,7 @@ graph TD
     classDef base fill:#14302a,stroke:#2e8b57,stroke-width:1px,color:#e0eee0;
 
     E["入口<br/>CLI run · REPL · TUI · JSON-RPC"]:::entry
-    S["编排器选择<br/>--mode loop / plan / graph<br/>（linear · dag = auto-classify 回退）"]:::orch
+    S["编排器选择<br/>--mode loop / plan / graph<br/>（默认 loop · linear/dag = legacy，仅显式）"]:::orch
     L["loop 范式<br/>单一自主 agent（ReAct）<br/>读 → 改 → 验证，直到完成"]:::orch
     P["plan 范式<br/>批量规划 → 执行 → 验证<br/>有界自我修复（≤2 轮）"]:::orch
     G["graph 范式（LangGraph）<br/>coordinator → worker → reviewer<br/>带条件重试回路"]:::orch
@@ -144,7 +144,7 @@ uv run xhx tui --fullscreen  # Textual 看板
 | **真实模型开销** | 最低（1 个 agent） | 低（1 个 agent + 验证） | 最高（约 4× token、~3× 耗时——多 agent 通信） |
 | **选择方式** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode graph` / `/mode graph` |
 
-省略 `--mode` 时，意图分类器会把任务经一条轻量的 `linear` / `dag` 回退路径路由（`direct` / `research-only` / `linear-edit` / `dag-execute`）。这两者是 **auto-classify 路径的支撑机制**，并非头条范式——对任何非平凡任务，请显式选 `loop`、`plan` 或 `graph`。
+省略 `--mode` 时，任务跑在默认的 **`loop`** 上——与显式三范式同一套原生 tool-calling 路径。legacy 的 `linear` / `dag` 编排器（更早的 ModelPlan 路径）**保留但不再是默认**：用显式 `--mode linear` / `--mode dag` 或 `--dry-run` 预览才会走到。
 
 ---
 
@@ -210,7 +210,7 @@ uv run xhx run "<task>" [options]
 | 选项 | 说明 |
 |:--|:--|
 | `--profile <name>` | 来自 `.xhx/profiles.json` 的 LLM profile（`mock` 离线运行）。 |
-| `--mode <loop\|plan\|graph\|linear\|dag>` | 选择编排器范式（默认：按意图自动分类）。 |
+| `--mode <loop\|plan\|graph\|linear\|dag>` | 选择编排器范式（默认：`loop`）。 |
 | `--auto-repair` | 定向验证失败时，启用最多 2 轮自我修复。 |
 | `--dry-run` | 预览计划、token 预算与风险后退出。 |
 | `-y`, `--yes` | 预先批准 `confirm` 档命令（非交互）。 |
@@ -245,7 +245,7 @@ uv run xhx run "<task>" [options]
 - REPL（prompt-toolkit）与全屏 TUI（Textual）；JSON-RPC 2.0 stdio 接口；离线 `mock` profile；benchmark + replay。
 
 **简化 / 部分实现（有意为之）**
-- `linear` / `dag` 作为轻量的 auto-classify 回退保留（仅在省略 `--mode` 时使用）；头条的分解工作发生在 `plan` 与 `graph`，二者经 tool-calling 由 LLM 驱动。
+- `linear` / `dag`（更早的 ModelPlan 路径）保留但**不再是默认**——仅经显式 `--mode linear/dag` 与 `--dry-run` 预览触达；头条的分解工作发生在 `plan` 与 `graph`，二者经 tool-calling 由 LLM 驱动。
 - `graph` 范式是刻意精简的 coordinator → worker → reviewer 工作流，为与 `loop`/`plan` 形成干净对照而保持最小。
 - 可写 `edit` 子 agent 串行执行，各自隔离在自己的 worktree 里、合并时带冲突检测；真·**并发**子 agent 执行属后续优化。
 - 引用索引是文本级 symbol name 匹配，非语义解析。

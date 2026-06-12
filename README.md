@@ -41,7 +41,7 @@ graph TD
     classDef base fill:#14302a,stroke:#2e8b57,stroke-width:1px,color:#e0eee0;
 
     E["Entry points<br/>CLI run · REPL · TUI · JSON-RPC"]:::entry
-    S["Orchestrator selection<br/>--mode loop / plan / graph<br/>(linear · dag = auto-classify fallback)"]:::orch
+    S["Orchestrator selection<br/>--mode loop / plan / graph<br/>(default: loop · linear/dag = legacy, explicit only)"]:::orch
     L["loop paradigm<br/>single autonomous agent (ReAct)<br/>read → edit → verify, until done"]:::orch
     P["plan paradigm<br/>batch plan → execute → verify<br/>bounded self-repair (≤2 rounds)"]:::orch
     G["graph paradigm (LangGraph)<br/>coordinator → worker → reviewer<br/>conditional retry loop"]:::orch
@@ -144,7 +144,7 @@ All three run over the identical tool / safety / context / code-intelligence bas
 | **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~4× tokens, ~3× time — multi-agent chatter) |
 | **Select via** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode graph` / `/mode graph` |
 
-When `--mode` is omitted, an intent classifier routes the task through a lightweight `linear` / `dag` fallback (`direct` / `research-only` / `linear-edit` / `dag-execute`). These two are **supporting mechanisms for the auto-classify path**, not headline paradigms — for any non-trivial task, pick `loop`, `plan`, or `graph` explicitly.
+When `--mode` is omitted, the task runs on the default **`loop`** — the same native tool-calling path as the explicit paradigms. The legacy `linear` / `dag` orchestrators (the older ModelPlan path) are **retained but no longer the default**: reach them with an explicit `--mode linear` / `--mode dag`, or via the `--dry-run` preview.
 
 ---
 
@@ -210,7 +210,7 @@ uv run xhx run "<task>" [options]
 | Option | Description |
 |:--|:--|
 | `--profile <name>` | LLM profile from `.xhx/profiles.json` (`mock` runs offline). |
-| `--mode <loop\|plan\|graph\|linear\|dag>` | Pick the orchestrator paradigm (default: auto-classify by intent). |
+| `--mode <loop\|plan\|graph\|linear\|dag>` | Pick the orchestrator paradigm (default: `loop`). |
 | `--auto-repair` | Enable up to 2 self-repair rounds when targeted verification fails. |
 | `--dry-run` | Preview plan, token budget, and risks, then exit. |
 | `-y`, `--yes` | Pre-approve `confirm`-tier commands (non-interactive). |
@@ -245,7 +245,7 @@ Stated plainly so capability is never confused with roadmap.
 - REPL (prompt-toolkit) and full-screen TUI (Textual); JSON-RPC 2.0 stdio interface; offline `mock` profile; benchmark + replay.
 
 **Simplified / partial (by design)**
-- `linear` / `dag` are retained as the lightweight auto-classify fallback (used only when `--mode` is omitted); the headline decomposition work happens in `plan` and `graph`, which are LLM-driven via tool-calling.
+- `linear` / `dag` (the older ModelPlan path) are retained but **no longer the default** — reachable only via explicit `--mode linear/dag` and the `--dry-run` preview; the headline decomposition work happens in `plan` and `graph`, which are LLM-driven via tool-calling.
 - The `graph` paradigm is a deliberately lean coordinator → worker → reviewer workflow, kept minimal for a clean contrast against `loop`/`plan`.
 - Write `edit` sub-agents run sequentially, each isolated in its own worktree and merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution.
