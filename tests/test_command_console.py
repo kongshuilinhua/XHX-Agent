@@ -108,7 +108,7 @@ def test_command_console_runs_task_and_keeps_last_result(tmp_path: Path) -> None
     console = _console()
     command_console = CommandConsole(tmp_path, console=console)
     command_console.assume_yes = True
-
+    command_console.mode = "linear"
     assert command_console.handle_input("analyze this repo")
 
     assert command_console.last_result is not None

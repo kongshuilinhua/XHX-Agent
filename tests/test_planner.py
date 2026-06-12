@@ -125,17 +125,17 @@ def test_runtime_app_routes_by_mode(tmp_path: Path) -> None:
     app.init_project()
 
     # 1. Direct Q&A mode
-    res_direct = app.run_task("what is Python?")
+    res_direct = app.run_task("what is Python?", mode="linear")
     assert res_direct.status == "success"
     assert res_direct.verification == "skipped_no_changes"
 
     # 2. Research-only mode
-    res_research = app.run_task("analyze this repo")
+    res_research = app.run_task("analyze this repo", mode="linear")
     assert res_research.status == "success"
     assert res_research.verification == "skipped_no_changes"
 
     # 3. DAG execution mode (with mock/refactor task)
-    res_dag = app.run_task("refactor math", assume_yes=True)
+    res_dag = app.run_task("refactor math", assume_yes=True, mode="dag")
     assert res_dag.status == "success"
     assert res_dag.changed_files == ["src/calc.py"]
     # Check that it executed as a DAG

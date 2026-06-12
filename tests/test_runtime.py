@@ -79,7 +79,7 @@ def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     workspace = tmp_path / "python_bug"
     shutil.copytree(fixture, workspace)
     RuntimeApp(workspace).init_project()
-    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True)
+    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True, mode="linear")
     assert result.status == "success"
     assert result.verification == "passed"
     assert result.changed_files == ["src/calc.py"]
@@ -143,7 +143,7 @@ def test_runtime_refreshes_repo_index_after_patch_before_verification(tmp_path: 
         ],
     )
 
-    result = app.run_task("add public api", assume_yes=False, event_callback=events.append)
+    result = app.run_task("add public api", assume_yes=False, event_callback=events.append, mode="linear")
 
     assert result.status == "success"
     assert result.verification == "requires_confirmation"
@@ -165,7 +165,7 @@ def test_node_fixture_mock_closed_loop(tmp_path: Path) -> None:
     workspace = tmp_path / "node_bug"
     shutil.copytree(fixture, workspace)
     RuntimeApp(workspace).init_project()
-    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True)
+    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True, mode="linear")
     assert result.status == "success"
     assert result.verification == "passed"
     assert result.changed_files == ["src/index.js"]
@@ -178,7 +178,7 @@ def test_runtime_requires_confirmation_without_yes(tmp_path: Path) -> None:
     shutil.copytree(fixture, workspace)
     RuntimeApp(workspace).init_project()
 
-    result = RuntimeApp(workspace).run_task("fix failing test")
+    result = RuntimeApp(workspace).run_task("fix failing test", mode="linear")
 
     assert result.status == "success"
     assert result.verification == "requires_confirmation"
@@ -197,6 +197,7 @@ def test_runtime_confirmation_callback_executes_verification(tmp_path: Path) -> 
     result = RuntimeApp(workspace).run_task(
         "fix failing test",
         confirm_callback=lambda _command, _decision: True,
+        mode="linear",
     )
 
     assert result.status == "success"
@@ -259,7 +260,7 @@ def test_runtime_failed_verification_stops_and_reports(tmp_path: Path, monkeypat
 
     monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: failed_result)
 
-    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True)
+    result = RuntimeApp(workspace).run_task("fix failing test", assume_yes=True, mode="linear")
 
     assert result.status == "failed"
     assert result.verification == "failed"
@@ -360,7 +361,7 @@ def test_runtime_auto_repair_attempts_second_patch(tmp_path: Path, monkeypatch) 
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
     monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", lambda *_args, **_kwargs: verification_results.pop(0))
 
-    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True)
+    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True, mode="linear")
 
     assert result.status == "success"
     assert result.verification == "passed"
@@ -610,7 +611,7 @@ def test_runtime_auto_repair_stops_at_attempt_limit(tmp_path: Path, monkeypatch)
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
     monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", always_fail)
 
-    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True)
+    result = app.run_task("fix demo", profile_name="real", assume_yes=True, auto_repair=True, mode="linear")
 
     assert result.status == "failed"
     assert result.verification == "failed"
@@ -684,7 +685,7 @@ def test_runtime_rejects_invalid_model_plan_before_tool_execution(tmp_path: Path
         steps=[ToolStep(tool="terminal", arguments={"command": "python -m pytest"})],
     )
 
-    result = app.run_task("bad plan")
+    result = app.run_task("bad plan", mode="linear")
 
     assert result.status == "failed"
     assert not executed
@@ -726,7 +727,7 @@ def test_runtime_feeds_tool_results_into_next_model_turn(tmp_path: Path) -> None
 
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
 
-    result = app.run_task("analyze README", profile_name="real")
+    result = app.run_task("analyze README", profile_name="real", mode="linear")
 
     assert result.status == "success"
     assert result.turns == 2
@@ -768,7 +769,7 @@ def test_runtime_emits_model_delta_events_for_streaming_profiles(tmp_path: Path,
     monkeypatch.setattr("xhx_agent.runtime.app.OpenAICompatibleClient.plan", fake_plan)
     events = []
 
-    result = app.run_task("analyze", profile_name="real", event_callback=events.append)
+    result = app.run_task("analyze", profile_name="real", event_callback=events.append, mode="linear")
 
     assert result.status == "success"
     assert [event.message for event in events if event.type == "model_delta"] == [
@@ -806,7 +807,7 @@ def test_runtime_stops_when_real_model_exceeds_max_turns(tmp_path: Path) -> None
 
     app._build_plan = fake_build_plan  # type: ignore[method-assign]
 
-    result = app.run_task("analyze forever", profile_name="real")
+    result = app.run_task("analyze forever", profile_name="real", mode="linear")
 
     assert result.status == "failed"
     assert result.turns == 4
@@ -1011,3 +1012,10 @@ def test_plan_concurrently_executes_readonly_steps(tmp_path: Path, monkeypatch) 
     assert any(event.type == "subagent_concurrent" for event in events)
     read_results = [e for e in events if e.type == "tool_result" and e.payload.get("tool") == "read_file"]
     assert len(read_results) == 2
+
+
+def test_runtime_app_default_mode_is_loop(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    result = RuntimeApp(tmp_path).run_task("analyze this repo")
+    assert result.status == "success"
+    assert result.mode == "loop"

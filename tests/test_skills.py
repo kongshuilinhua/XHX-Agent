@@ -237,7 +237,7 @@ def test_runtime_app_hooks_integration(tmp_path: Path) -> None:
 
     # We will trigger the linear loop by using a simple task that won't run verification unless we make modifications,
     # but we can verify before_plan and before_summary.
-    app.run_task(task="Research how the app works", profile_name="mock")
+    app.run_task(task="Research how the app works", profile_name="mock", mode="linear")
 
     assert "before_plan" in hooks_called
     assert "before_summary" in hooks_called

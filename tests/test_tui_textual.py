@@ -509,6 +509,7 @@ def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp
 
     monkeypatch.setattr("xhx_agent.safety.kernel.run_terminal", fake_run_terminal)
     app = TextualCommandConsoleApp(workspace=workspace, profile="mock", permission_timeout_seconds=10)
+    app.state.mode = "linear"
 
     async def run_app() -> None:
         async with app.run_test() as pilot:
