@@ -50,6 +50,9 @@ class ConsoleState:
     plan_step_count: int = 0
     model_output: str = ""
     model_delta_count: int = 0
+    tokens_prompt: int = 0
+    tokens_completion: int = 0
+    tokens_total: int = 0
     context_turn: int | None = None
     context_selected: int = 0
     context_omitted: int = 0
@@ -69,6 +72,7 @@ class ConsoleState:
     cancel_requested: bool = False
     cancel_reason: str = ""
     is_streaming: bool = False
+    answer: str | None = None
 
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
@@ -90,6 +94,11 @@ class ConsoleState:
             self.is_streaming = False
 
         payload = event.payload
+        if payload and "turn" in payload:
+            t_val = _optional_int(payload.get("turn"))
+            if t_val is not None:
+                self.context_turn = t_val
+
         if event.type == "scan":
             self.detected_languages = [str(item) for item in payload.get("detected_languages", [])]
             self.file_count = int(payload.get("file_count", 0) or 0)
@@ -106,6 +115,10 @@ class ConsoleState:
             self.status = "planning"
             self.model_delta_count += 1
             self.model_output = _trim_model_output(self.model_output + event.message)
+        elif event.type == "token_usage":
+            self.tokens_prompt = int(payload.get("prompt", self.tokens_prompt) or 0)
+            self.tokens_completion = int(payload.get("completion", self.tokens_completion) or 0)
+            self.tokens_total = int(payload.get("cumulative_total", self.tokens_total) or 0)
         elif event.type == "model_plan":
             self.status = "planning"
             self.plan_summary = event.message
@@ -180,6 +193,7 @@ class ConsoleState:
         self.verification = result.verification
         self.summary_path = result.summary_path
         self.repair_attempts = result.repair_attempts
+        self.answer = getattr(result, "answer", None)
         if result.verification_results:
             self.verifications = [
                 VerificationActivity(command=item.command, status=item.status, exit_code=item.exit_code)

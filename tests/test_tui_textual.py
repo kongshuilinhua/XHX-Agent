@@ -540,6 +540,43 @@ def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp
     assert (workspace / app.last_result.summary_path).exists()
 
 
+def test_textual_command_console_handles_sessions_and_resume(tmp_path) -> None:
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.app import RunResult
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    # 1. Test /sessions when empty
+    assert app.handle_text_input("/sessions")
+    assert "No sessions recorded" in app.messages[-1]
+
+    # 2. Record a session
+    result = RunResult(
+        run_id="run-test-sessions-123",
+        status="success",
+        changed_files=["src/test.py"],
+        commands=[],
+        verification="passed",
+        summary_path=".xhx/logbook/run-test-sessions-123.md",
+        risk_summary=[],
+    )
+    record_session(tmp_path, "my test task", result)
+
+    # 3. Test /sessions lists recorded session
+    assert app.handle_text_input("/sessions")
+    assert "run-test-sessions-123" in app.messages[-1]
+
+    # 4. Test /resume with invalid ID
+    assert app.handle_text_input("/resume non_existent_id")
+    assert "Session 'non_existent_id' not found" in app.messages[-1]
+
+    # 5. Test /resume with valid ID
+    assert app.handle_text_input("/resume run-test-sessions-123")
+    assert "Switched follow-up context to session: run-test-sessions-123" in app.messages[-1]
+    assert app.last_result is not None
+    assert app.last_result.run_id == "run-test-sessions-123"
+
+
 def test_textual_permission_confirmation_can_decline_once(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
     app.next_confirm_response = False
@@ -727,6 +764,121 @@ def test_textual_mode_command_shows_and_updates_state_mode(tmp_path) -> None:
     assert "mode: research-only" in app.messages[-1]
 
 
+def test_textual_mode_command_shows_selectable_picker_and_applies(tmp_path) -> None:
+    """/mode with no argument shows an arrow-navigable picker; Enter applies the mode directly."""
+    from textual.widgets import Input, OptionList
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            app.query_one("#input", Input).value = "/mode"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Picker shows exactly the three real paradigms; input is enabled and focused.
+            options = app.query("#active_options")
+            assert len(options) == 1
+            option_list = app.query_one("#active_options", OptionList)
+            assert option_list.option_count == 3
+            assert not app.query_one("#input", Input).disabled
+            assert app.query_one("#input", Input).has_focus
+
+            # Arrow-key navigation, then Enter applies the highlighted mode directly.
+            await pilot.press("down")
+            await pilot.press("down")
+            await pilot.pause()
+            assert option_list.highlighted == 2
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.state.mode == "graph"
+            assert len(app.query("#active_options")) == 0
+            assert not app.query_one("#input", Input).disabled
+            assert "mode: graph" in app.messages[-1]
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_picker_navigation_wraps_around(tmp_path) -> None:
+    """Every picker shares one wrap-around behaviour: up on the first jumps to the last, and
+    down on the last returns to the first."""
+    from textual.widgets import Input
+
+    from xhx_agent.tui.textual_app import WrappingOptionList
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            app.query_one("#input", Input).value = "/mode"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            option_list = app.query_one("#active_options", WrappingOptionList)
+            assert option_list.option_count == 3
+            assert option_list.highlighted == 0
+
+            # Up on the first option wraps to the last.
+            await pilot.press("up")
+            await pilot.pause()
+            assert option_list.highlighted == 2
+
+            # Down on the last option wraps back to the first.
+            await pilot.press("down")
+            await pilot.pause()
+            assert option_list.highlighted == 0
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_threads_prior_messages_across_turns(tmp_path) -> None:
+    """Regression: the model-facing conversation history is carried across turns (real memory),
+    not just shown in the UI. Previously each turn only got a metadata follow-up summary."""
+    from xhx_agent.runtime.session import save_transcript
+
+    class MemoryRuntime:
+        def __init__(self) -> None:
+            self.seen_prior: list = []
+            self.turn = 0
+
+        def run_task(self, task, **kwargs):
+            self.turn += 1
+            self.seen_prior.append(kwargs.get("prior_messages"))
+            run_id = f"run-{self.turn}"
+            prior = kwargs.get("prior_messages") or [{"role": "system", "content": "sys"}]
+            messages = list(prior) + [
+                {"role": "user", "content": task},
+                {"role": "assistant", "content": f"answer {self.turn}"},
+            ]
+            rel = save_transcript(tmp_path, run_id, messages)
+            return RunResult(
+                run_id=run_id, status="success", changed_files=[], commands=[],
+                verification="not_executed", summary_path=f".xhx/logbook/{run_id}.md",
+                risk_summary=[], answer=f"answer {self.turn}", transcript_path=rel, mode="loop",
+            )
+
+    runtime = MemoryRuntime()
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+
+    # First turn: no prior memory yet; it gets recorded from this run's transcript.
+    app.run_task("first question")
+    assert runtime.seen_prior[0] is None
+    assert app.prior_messages is not None
+    assert any(m.get("content") == "first question" for m in app.prior_messages)
+
+    # Second turn: the model actually receives the accumulated conversation.
+    app.run_task("second question")
+    second_prior = runtime.seen_prior[1]
+    assert second_prior is not None
+    assert any(m.get("content") == "first question" for m in second_prior)
+    assert any(m.get("content") == "answer 1" for m in second_prior)
+
+
 def test_textual_repair_command_requires_failed_verification(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
 
@@ -803,7 +955,7 @@ def test_textual_skills_command_lists_local_skill_dirs(tmp_path) -> None:
     assert app.handle_text_input("/skills")
 
     assert "skills:" in app.messages[-1]
-    assert ".xhx/skills/python-debugger" in app.messages[-1]
+    assert "/python-debugger" in app.messages[-1]
 
 
 def test_textual_dashboard_command_prints_state_summary(tmp_path) -> None:
@@ -1009,6 +1161,59 @@ def test_textual_snapshot_streaming_conversation() -> None:
     assert "▌" not in snapshot_non_streaming.conversation
 
 
+def test_textual_snapshot_does_not_duplicate_answer_when_history_present() -> None:
+    """Regression: with history present, the conversation must not also reconstruct the
+    answer/task from state (which previously showed both `model>` and `assistant>`)."""
+    state = ConsoleState()
+    # State as it looks right after a finished run.
+    state.task = "你好"
+    state.status = "success"
+    state.plan_summary = "loop answer [turn 1]"
+    state.model_output = "你好！有什么我可以帮你的吗？"
+    state.is_streaming = False  # type: ignore[attr-defined]
+    state.summary_path = ".xhx/logbook/run-1.md"
+    # Append-only history is the single source of truth.
+    state.textual_messages = [  # type: ignore[attr-defined]
+        "user> 你好",
+        "summary> .xhx/logbook/run-1.md",
+        "assistant> 你好！有什么我可以帮你的吗？",
+        "system> run finished: success, verification: not_executed",
+    ]
+
+    snapshot = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+
+    # The answer and the user task each appear exactly once; no `model>`/`plan>` reconstruction leaks in.
+    assert snapshot.conversation.count("你好！有什么我可以帮你的吗？") == 1
+    assert snapshot.conversation.count("user> 你好") == 1
+    assert "model>" not in snapshot.conversation
+    assert "plan>" not in snapshot.conversation
+
+
+def test_textual_snapshot_shows_streaming_line_atop_history() -> None:
+    """While streaming, the in-flight line is shown after committed history without duplicating it."""
+    state = ConsoleState()
+    state.model_output = "import os"
+    state.is_streaming = True  # type: ignore[attr-defined]
+    state.textual_messages = ["user> add import"]  # type: ignore[attr-defined]
+
+    snapshot = TextualSnapshot.from_state(
+        state,
+        workspace="/repo",
+        profile="mock",
+        auto_repair=False,
+        assume_yes=True,
+    )
+
+    assert "user> add import" in snapshot.conversation
+    assert "model (streaming…)> import os▌" in snapshot.conversation
+
+
 def test_textual_statusline_widget(tmp_path) -> None:
     from textual.widgets import Static
 
@@ -1023,3 +1228,345 @@ def test_textual_statusline_widget(tmp_path) -> None:
 
     import asyncio
     asyncio.run(run_app())
+
+
+def test_textual_app_clipboard_falls_back_and_overrides(tmp_path, monkeypatch) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    # If get_clipboard_text returns None, it falls back to internal clipboard
+    monkeypatch.setattr("xhx_agent.tui.textual_app.get_clipboard_text", lambda: None)
+    app._clipboard = "internal text"
+    assert app.clipboard == "internal text"
+
+    # If get_clipboard_text returns some text, it uses it and replaces newlines
+    monkeypatch.setattr("xhx_agent.tui.textual_app.get_clipboard_text", lambda: "external\r\ntext")
+    assert app.clipboard == "external text"
+
+
+def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
+    from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile
+
+    fake_profiles = ProfilesFile(
+        default_profile="mock1",
+        profiles=[
+            ModelProfile(name="mock1", provider="openai-compatible", model="gpt-4"),
+            ModelProfile(name="mock2", provider="mock", model="deepseek-chat"),
+        ]
+    )
+    monkeypatch.setattr("xhx_agent.tui.textual_app.load_profiles", lambda ws: fake_profiles)
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock1")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("/", "m", "o", "d", "e", "l", "enter")
+            await pilot.pause()
+
+            from textual.widgets import OptionList, Input
+            active_options = pilot.app.query_one("#active_options", OptionList)
+            assert active_options is not None
+            assert not active_options.has_focus
+            assert not pilot.app.query_one("#input", Input).disabled
+            assert pilot.app.query_one("#input", Input).has_focus
+
+            await pilot.press("down", "enter")
+            await pilot.pause()
+
+            assert len(pilot.app.query("#active_options")) == 0
+            assert not pilot.app.query_one("#input", Input).disabled
+            assert pilot.app.profile == "mock2"
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_interactive_session_selection(tmp_path) -> None:
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.app import RunResult
+
+    result1 = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="passed",
+        summary_path="",
+        risk_summary=[],
+    )
+    result2 = RunResult(
+        run_id="run-2",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="passed",
+        summary_path="",
+        risk_summary=[],
+    )
+    record_session(tmp_path, "task 1", result1)
+    record_session(tmp_path, "task 2", result2)
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("/", "s", "e", "s", "s", "i", "o", "n", "s", "enter")
+            await pilot.pause()
+
+            from textual.widgets import OptionList, Input
+            active_options = pilot.app.query_one("#active_options", OptionList)
+            assert active_options is not None
+            assert not active_options.has_focus
+            assert pilot.app.query_one("#input", Input).has_focus
+            assert active_options.get_option_at_index(0).id == "run-2"
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(pilot.app.query("#active_options")) == 0
+            assert pilot.app.last_result is not None
+            assert pilot.app.last_result.run_id == "run-2"
+            assert pilot.app.active_detail == "overview"
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_interactive_permission_confirmation(tmp_path) -> None:
+    from xhx_agent.tui.textual_app import PendingConfirmation
+    from xhx_agent.safety.policy import PolicyDecision
+    from xhx_agent.safety.risk import RiskLevel
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            decision = PolicyDecision(
+                decision="confirm",
+                risk=RiskLevel.CONFIRM,
+                reason="test confirm",
+                requires_user=True,
+            )
+            confirmation = PendingConfirmation(command="python test.py", decision=decision)
+
+            pilot.app.open_pending_confirmation(confirmation)
+            await pilot.pause()
+
+            from textual.widgets import OptionList, Input
+            active_options = pilot.app.query_one("#active_options", OptionList)
+            assert active_options is not None
+            assert not active_options.has_focus
+            assert pilot.app.query_one("#input", Input).has_focus
+            assert active_options.get_option_at_index(0).id == "allow"
+            assert active_options.get_option_at_index(1).id == "deny"
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert confirmation.event.is_set()
+            assert confirmation.response is True
+            assert len(pilot.app.query("#active_options")) == 0
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None:
+    from xhx_agent.runtime.profiles import ModelProfile, ProfilesFile
+
+    fake_profiles = ProfilesFile(
+        default_profile="mock1",
+        profiles=[
+            ModelProfile(name="mock1", provider="openai-compatible", model="gpt-4"),
+            ModelProfile(name="mock2", provider="mock", model="deepseek-chat"),
+        ]
+    )
+    monkeypatch.setattr("xhx_agent.tui.textual_app.load_profiles", lambda ws: fake_profiles)
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock1")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("/", "m", "o", "d", "e", "l", "enter")
+            await pilot.pause()
+
+            from textual.widgets import OptionList, Input
+            assert pilot.app.query_one("#active_options", OptionList) is not None
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert len(pilot.app.query("#active_options")) == 0
+            input_widget = pilot.app.query_one("#input", Input)
+            assert not input_widget.disabled
+            assert input_widget.has_focus
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_resume_loads_transcript_messages(tmp_path) -> None:
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.app import RunResult
+
+    fake_messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "hello world"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+
+    result = RunResult(
+        run_id="run-res-abc",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="passed",
+        summary_path="",
+        risk_summary=[],
+    )
+    object.__setattr__(result, "messages", fake_messages)
+    record_session(tmp_path, "test task", result)
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    app.active_detail = "sessions"
+    app.detail_text = "stale sessions details"
+    app.handle_resume("run-res-abc")
+
+    assert "user> hello world" in app.messages
+    assert "assistant> hi there" in app.messages
+    assert not any("system prompt" in m for m in app.messages)
+    assert app.state.task == "test task"
+    assert app.active_detail == "overview"
+    assert "Use /plan" in app.detail_text
+
+
+def test_textual_app_interactive_command_selection(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await pilot.click("#input")
+            await pilot.press("/")
+            await pilot.pause()
+
+            from textual.widgets import OptionList, Input
+            active_options = pilot.app.query_one("#active_options", OptionList)
+            assert active_options is not None
+            assert not active_options.has_focus
+            assert not pilot.app.query_one("#input", Input).disabled
+
+            # First option is /help, press enter
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(pilot.app.query("#active_options")) == 0
+            input_widget = pilot.app.query_one("#input", Input)
+            assert not input_widget.disabled
+            assert input_widget.value == "/help"
+
+            # Clear value and type / again to select a command with arguments
+            input_widget.value = ""
+            await pilot.press("/")
+            await pilot.pause()
+
+            active_options = pilot.app.query_one("#active_options", OptionList)
+            assert active_options is not None
+            assert active_options.highlighted == 0
+
+            # Navigate down
+            await pilot.press("down")
+            await pilot.pause()
+            assert active_options.highlighted == 1
+
+            # Navigate back up
+            await pilot.press("up")
+            await pilot.pause()
+            assert active_options.highlighted == 0
+
+            pilot.app.resolve_interactive_selection("/resume")
+            await pilot.pause()
+
+            assert input_widget.value == "/resume "
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_input_focus_retention(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            from textual.widgets import Input
+            input_widget = pilot.app.query_one("#input", Input)
+            # Verify it has focus initially
+            assert input_widget.has_focus
+
+            # Try to blur input by focusing another widget
+            side_pane = pilot.app.query_one("#side")
+            side_pane.focus()
+            await pilot.pause()
+
+            # Focus should be forced back to input
+            assert input_widget.has_focus
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_state_turn_and_streaming_delta() -> None:
+    from xhx_agent.tui.state import ConsoleState
+    from xhx_agent.runtime.events import RuntimeEvent
+
+    state = ConsoleState()
+    assert state.context_turn is None
+    assert state.model_delta_count == 0
+    assert not state.is_streaming
+
+    # Reduce tool_start event with turn
+    state.reduce(RuntimeEvent(type="tool_start", message="Tool started", payload={"tool": "search", "turn": 3}))
+    assert state.context_turn == 3
+    assert not state.is_streaming
+
+    # Reduce model_delta event with turn
+    state.reduce(RuntimeEvent(type="model_delta", message="hello", payload={"turn": 4}))
+    assert state.context_turn == 4
+    assert state.model_delta_count == 1
+    assert state.is_streaming is True
+
+    # Reduce another event to stop streaming
+    state.reduce(RuntimeEvent(type="tool_start", message="Tool started", payload={"tool": "read_file"}))
+    assert state.is_streaming is False
+    assert state.context_turn == 4
+
+
+def test_state_reduce_token_usage_tracks_cumulative_total() -> None:
+    from xhx_agent.tui.state import ConsoleState
+    from xhx_agent.runtime.events import RuntimeEvent
+
+    state = ConsoleState()
+    assert state.tokens_total == 0
+
+    state.reduce(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={"prompt": 10, "completion": 6, "total": 16, "cumulative_total": 16},
+        )
+    )
+    assert state.tokens_prompt == 10
+    assert state.tokens_completion == 6
+    assert state.tokens_total == 16
+
+    state.reduce(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={"prompt": 8, "completion": 8, "total": 16, "cumulative_total": 32},
+        )
+    )
+    assert state.tokens_total == 32
+
+
