@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from xhx_agent.evals.metrics import RunMetrics
+from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
 from xhx_agent.models.types import ModelClientError
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
@@ -44,7 +45,13 @@ class LoopOrchestrator:
         client = build_chat_client(ctx.profile)
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": LOOP_SYSTEM_PROMPT + "\n\n" + render_xhx_md(ctx.scan)},
+            {
+                "role": "system",
+                "content": LOOP_SYSTEM_PROMPT
+                + "\n\n"
+                + render_xhx_md(ctx.scan)
+                + render_recalled_memories(ctx.original_workspace, ctx.task),
+            },
         ]
         if ctx.prior_messages:
             messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")

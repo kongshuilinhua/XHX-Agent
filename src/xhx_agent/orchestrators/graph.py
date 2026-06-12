@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
+from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
@@ -62,7 +63,13 @@ class _GraphState(TypedDict):
 def _coordinate(ctx: OrchestratorContext, client: Any) -> list[str]:
     """LLM 把任务拆成子任务列表（解析 '- ' 行；解析不出就整体作为单个子任务）。"""
     messages = [
-        {"role": "system", "content": COORDINATOR_PROMPT + "\n\n" + render_xhx_md(ctx.scan)},
+        {
+            "role": "system",
+            "content": COORDINATOR_PROMPT
+            + "\n\n"
+            + render_xhx_md(ctx.scan)
+            + render_recalled_memories(ctx.original_workspace, ctx.task),
+        },
         {"role": "user", "content": ctx.task},
     ]
     result = chat_and_count(ctx, client, messages, [])
@@ -77,7 +84,13 @@ def _run_worker(ctx: OrchestratorContext, client: Any, subtask: str, turn: int) 
     """写型 worker 小循环：受限工具 tool-calling，真改代码，返回 (changed_files, 结果文本)。"""
     schemas = [s for s in ctx.kernel.tool_registry.tool_schemas() if s["function"]["name"] in WORKER_TOOLS]
     messages: list[dict] = [
-        {"role": "system", "content": WORKER_PROMPT + "\n\n" + render_xhx_md(ctx.scan)},
+        {
+            "role": "system",
+            "content": WORKER_PROMPT
+            + "\n\n"
+            + render_xhx_md(ctx.scan)
+            + render_recalled_memories(ctx.original_workspace, ctx.task),
+        },
         {"role": "user", "content": subtask},
     ]
     changed: list[str] = []

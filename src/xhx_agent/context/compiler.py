@@ -57,6 +57,28 @@ SYMBOL_QUERY_STOPWORDS = {
 }
 
 
+def _memory_context_items(workspace: Path, task: str, recent_error: str | None) -> list[ContextItem]:
+    """召回与当前任务相关的长期记忆，作为 context-pack 的一个来源（第 ④ 轴：跨会话时间）。"""
+    from xhx_agent.memory.recall import recall_memories
+
+    query = task if not recent_error else f"{task}\n{recent_error}"
+    items: list[ContextItem] = []
+    for record in recall_memories(workspace, query, limit=5):
+        header = f"[{record.mtype}] {record.description}".strip()
+        body = record.body.strip()
+        content = f"{header}\n{body}".strip() if body else header
+        items.append(
+            ContextItem(
+                kind=f"memory:{record.mtype}",
+                source=record.name,
+                content=content,
+                priority=88,
+                reason="Cross-session memory recalled by deterministic keyword overlap.",
+            )
+        )
+    return items
+
+
 def compile_context_pack(
     *,
     workspace: Path,
@@ -106,6 +128,12 @@ def compile_context_pack(
     except Exception as e:
         # Gracefully handle any issues with dynamic loading
         logger.warning("Failed to match and load skills: %s", e)
+
+    try:
+        for item in _memory_context_items(workspace, task, recent_error):
+            candidates.append(item)
+    except Exception as e:
+        logger.warning("Failed to recall long-term memory: %s", e)
 
     repo_index = _load_repo_index(workspace)
 
