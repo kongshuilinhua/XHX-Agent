@@ -36,6 +36,7 @@ def render_console_page(
 ) -> Panel:
     """Render the v0.5 terminal page without owning input or execution."""
 
+    status = _status_line(state)
     header = _header_table(state, workspace=workspace, profile=profile, auto_repair=auto_repair, assume_yes=assume_yes)
     body = Columns(
         [
@@ -46,7 +47,18 @@ def render_console_page(
         expand=True,
     )
     footer = _footer_panel()
-    return Panel(Group(header, body, footer), title="xhx-agent", border_style="cyan")
+    return Panel(Group(status, header, body, footer), title="xhx-agent", border_style="cyan")
+
+
+def _status_line(state: ConsoleState) -> Text:
+    streaming_str = "yes" if state.is_streaming else "no"
+    turn_str = str(state.context_turn or 0)
+    return Text(
+        f"state: {state.status}  •  mode: {state.mode}  •  turn: {turn_str}  •  tokens: {state.model_delta_count}  •  streaming: {streaming_str}",
+        style="bold cyan",
+        overflow="ellipsis",
+        no_wrap=True,
+    )
 
 
 def _header_table(
@@ -87,7 +99,10 @@ def _conversation_panel(state: ConsoleState) -> Panel:
     if state.plan_summary:
         rows.append(Text(f"plan> {state.plan_summary}"))
     if state.model_output:
-        rows.append(Text(f"model> {_compact_model_output(state.model_output)}", style="cyan"))
+        if state.is_streaming:
+            rows.append(Text(f"model (streaming...)> {_compact_model_output(state.model_output)}▌", style="cyan"))
+        else:
+            rows.append(Text(f"model> {_compact_model_output(state.model_output)}", style="cyan"))
     if state.tools:
         rows.append(_activity_table(state))
     else:

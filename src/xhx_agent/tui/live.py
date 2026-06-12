@@ -57,9 +57,9 @@ class LiveDashboard:
         self.auto_repair = auto_repair
         self.assume_yes = assume_yes
 
-    def refresh(self) -> None:
+    def refresh(self, refresh: bool = True) -> None:
         if self._live is not None:
-            self._live.update(self.render(), refresh=True)
+            self._live.update(self.render(), refresh=refresh)
 
     def render(self):
         return render_console_page(

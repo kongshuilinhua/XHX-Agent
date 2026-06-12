@@ -278,11 +278,12 @@ class CommandConsole:
     def handle_event(self, event: RuntimeEvent) -> None:
         self.events.append(event)
         self.state.reduce(event)
-        self.refresh_live_dashboard()
         if event.type == "model_delta":
+            self.refresh_live_dashboard(refresh=False)
             if not self.live_enabled:
                 self.console.print(event.message, end="")
             return
+        self.refresh_live_dashboard(refresh=True)
         if self.live_enabled:
             return
         self.console.print(f"[dim]{event.type}[/dim] {event.message}")
@@ -612,7 +613,7 @@ class CommandConsole:
     def active_profile_name(self) -> str:
         return self.profile_name or load_config(self.workspace).default_profile
 
-    def refresh_live_dashboard(self) -> None:
+    def refresh_live_dashboard(self, refresh: bool = True) -> None:
         if self.live_dashboard is None:
             return
         self.live_dashboard.update_options(
@@ -620,7 +621,15 @@ class CommandConsole:
             auto_repair=self.auto_repair,
             assume_yes=self.assume_yes,
         )
-        self.live_dashboard.refresh()
+        import inspect
+        sig = inspect.signature(self.live_dashboard.refresh)
+        has_refresh = "refresh" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if has_refresh:
+            self.live_dashboard.refresh(refresh=refresh)
+        else:
+            self.live_dashboard.refresh()
 
     def print_dashboard(self) -> None:
         self.console.print(

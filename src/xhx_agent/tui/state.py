@@ -68,12 +68,26 @@ class ConsoleState:
     policy_decisions: list[PolicyActivity] = field(default_factory=list)
     cancel_requested: bool = False
     cancel_reason: str = ""
+    is_streaming: bool = False
 
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
             self._reset_for_run(event)
         else:
             self.events.append(event)
+
+        if event.type == "model_delta":
+            self.is_streaming = True
+        elif event.type in {
+            "model_plan",
+            "tool_start",
+            "verification_start",
+            "repair_start",
+            "run_end",
+            "run_cancelled",
+            "cancel_requested",
+        }:
+            self.is_streaming = False
 
         payload = event.payload
         if event.type == "scan":
