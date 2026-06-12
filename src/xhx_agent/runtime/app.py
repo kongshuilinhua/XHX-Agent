@@ -25,8 +25,7 @@ from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
 from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext
-from xhx_agent.orchestrators.registry import execution_mode_to_key, select_orchestrator
-from xhx_agent.planner.classifier import ModeClassifier
+from xhx_agent.orchestrators.registry import select_orchestrator
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
@@ -186,7 +185,6 @@ class RuntimeApp:
                         metrics_tracker=metrics_tracker,
                     )
 
-                execution_mode = ModeClassifier().classify(task, scan)
                 ctx = OrchestratorContext(
                     app=self,
                     task=task,
@@ -200,7 +198,7 @@ class RuntimeApp:
                     tool_context=tool_context,
                     start_time=start_time,
                     isolated=wt_ctx.is_active,
-                    mode=mode or execution_mode.value,
+                    mode=mode or "loop",
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
                     auto_repair=auto_repair,
@@ -209,7 +207,9 @@ class RuntimeApp:
                     metrics_tracker=metrics_tracker,
                     prior_messages=prior_messages,
                 )
-                orchestrator = select_orchestrator(mode or execution_mode_to_key(execution_mode))
+                # Phase 3b-2: 默认（省略 --mode）走统一的 tool-calling loop，而非 legacy ModelPlan(linear/dag)。
+                # linear/dag/ModelPlan 仍保留，仅在显式 --mode linear/dag 与 dry-run 预览路径下使用。
+                orchestrator = select_orchestrator(mode)
                 result = orchestrator.run(ctx)
                 if result.status == "success":
                     wt_ctx.sync_to_workspace(result.changed_files)

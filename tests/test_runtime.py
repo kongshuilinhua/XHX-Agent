@@ -38,7 +38,7 @@ def test_init_project_writes_expected_files(tmp_path: Path) -> None:
 
 def test_run_task_writes_report(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
-    result = RuntimeApp(tmp_path).run_task("analyze this repo")
+    result = RuntimeApp(tmp_path).run_task("analyze this repo", mode="linear")
     assert result.status == "success"
     assert result.verification == "skipped_no_changes"
     assert (tmp_path / result.summary_path).exists()
@@ -48,7 +48,7 @@ def test_run_task_emits_runtime_events(tmp_path: Path) -> None:
     RuntimeApp(tmp_path).init_project()
     events = []
 
-    result = RuntimeApp(tmp_path).run_task("analyze this repo", event_callback=events.append)
+    result = RuntimeApp(tmp_path).run_task("analyze this repo", event_callback=events.append, mode="linear")
 
     assert result.status == "success"
     event_types = [event.type for event in events]
