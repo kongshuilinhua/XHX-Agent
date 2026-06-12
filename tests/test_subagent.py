@@ -162,7 +162,7 @@ def test_subagent_unknown_agent_type():
     assert "writer" in res
 
 
-def test_subagent_turn_limit(monkeypatch):
+def test_subagent_turn_limit(tmp_path, monkeypatch):
     import xhx_agent.orchestrators._toolturn as toolturnmod
     import xhx_agent.orchestrators.subagent as submod
 
@@ -180,6 +180,8 @@ def test_subagent_turn_limit(monkeypatch):
     )
 
     ctx = MagicMock()
+    ctx.original_workspace = tmp_path  # routing 解析需要真实 workspace（无 .xhx 即回退默认配置）
+    ctx.profile.name = "mock"
     ctx.kernel.tool_registry.tool_schemas.return_value = [
         {"function": {"name": "search", "parameters": {}}}
     ]

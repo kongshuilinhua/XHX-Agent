@@ -51,8 +51,6 @@ def write_default_config(workspace: Path) -> bool:
 
 
 def load_config(workspace: Path) -> ProjectConfig:
-    if not isinstance(workspace, (Path, str)):
-        return default_config()
     path = config_path(workspace)
     if not path.exists():
         return default_config()
