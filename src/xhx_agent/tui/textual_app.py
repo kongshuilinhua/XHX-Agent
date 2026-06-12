@@ -261,19 +261,13 @@ class TextualCommandConsoleApp(App[None]):
     }
 
     #conversation_scroll {
-        width: 2fr;
+        width: 1fr;
         border: solid $primary;
     }
 
     #conversation {
         width: 100%;
         height: auto;
-        padding: 1;
-    }
-
-    #side {
-        width: 1fr;
-        border: solid $secondary;
         padding: 1;
     }
 
@@ -365,11 +359,6 @@ class TextualCommandConsoleApp(App[None]):
             with VerticalScroll(id="conversation_scroll"):
                 yield Static(id="conversation")
                 yield Vertical(id="interactive_container")
-            with Vertical(id="side"):
-                yield Static(id="runtime")
-                yield Static(id="changed")
-                yield Static(id="details")
-                yield Static(id="commands")
         completer = XhxCompleter(self.workspace)
         yield Input(
             placeholder="Type a task or slash command. Press Tab or Right arrow to complete.",
@@ -407,10 +396,6 @@ class TextualCommandConsoleApp(App[None]):
         try:
             self.query_one("#statusline", Static).update(snapshot.status_line)
             self.query_one("#conversation", Static).update(snapshot.conversation)
-            self.query_one("#runtime", Static).update(snapshot.runtime_state)
-            self.query_one("#changed", Static).update("changed files:\n" + snapshot.changed_files)
-            self.query_one("#details", Static).update("details:\n" + snapshot.details)
-            self.query_one("#commands", Static).update(snapshot.commands)
         except Exception:
             pass
 

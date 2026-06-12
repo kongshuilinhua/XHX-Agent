@@ -114,8 +114,8 @@ def test_textual_command_console_app_can_render_initial_shell(tmp_path) -> None:
         async with app.run_test() as pilot:
             assert app.title.startswith("xhx-agent | idle | profile: mock")
             assert "No conversation yet." in str(pilot.app.query_one("#conversation").content)
-            assert "changed files:" in str(pilot.app.query_one("#changed").content)
-            assert "details:" in str(pilot.app.query_one("#details").content)
+            assert "state: idle" in str(pilot.app.query_one("#statusline").content)
+            assert len(pilot.app.query("#side")) == 0
 
     import asyncio
 
@@ -395,7 +395,7 @@ def test_textual_command_console_submitted_task_updates_window(tmp_path) -> None
             await pilot.press("f", "i", "x", "enter")
             await pilot.pause()
             assert "summary> .xhx/logbook/run-1.md" in str(pilot.app.query_one("#conversation").content)
-            assert "verification: skipped_no_changes" in str(pilot.app.query_one("#runtime").content)
+            assert "verify: skipped_no_changes" in str(pilot.app.query_one("#statusline").content)
 
     import asyncio
 
@@ -532,7 +532,7 @@ def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp
             assert app.last_result.status == "success"
             assert app.last_result.verification == "passed"
             assert app.last_result.changed_files == ["src/calc.py"]
-            assert "verification: passed" in str(pilot.app.query_one("#runtime").content)
+            assert "verify: passed" in str(pilot.app.query_one("#statusline").content)
 
     asyncio.run(run_app())
     assert "return a + b" in (workspace / "src" / "calc.py").read_text(encoding="utf-8")
@@ -632,8 +632,7 @@ def test_textual_fullscreen_permission_can_wait_for_allow(tmp_path) -> None:
             worker.start()
             await pilot.pause()
             assert app.pending_confirmation is not None
-            assert "permission required" in app.messages[-1]
-            assert "waiting: python -m pytest (confirm)" in str(pilot.app.query_one("#runtime").content)
+            assert app.pending_confirmation.command == "python -m pytest"
             assert app.handle_text_input("/allow")
             for _ in range(50):
                 if result:
@@ -1510,8 +1509,8 @@ def test_textual_app_input_focus_retention(tmp_path) -> None:
             assert input_widget.has_focus
 
             # Try to blur input by focusing another widget
-            side_pane = pilot.app.query_one("#side")
-            side_pane.focus()
+            other = pilot.app.query_one("#conversation")
+            other.focus()
             await pilot.pause()
 
             # Focus should be forced back to input
