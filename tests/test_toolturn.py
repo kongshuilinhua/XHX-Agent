@@ -219,3 +219,31 @@ def test_chat_and_count_emits_model_and_duration() -> None:
     assert isinstance(payload["duration_ms"], int)
     assert payload["duration_ms"] >= 0
 
+
+def test_chat_and_count_emits_turn() -> None:
+    from types import SimpleNamespace
+
+    from xhx_agent.models.types import ChatResult, TokenUsage
+    from xhx_agent.orchestrators._toolturn import chat_and_count
+
+    events = []
+    ctx = SimpleNamespace(metrics_tracker={"tokens": 0}, event_callback=lambda e: events.append(e))
+
+    class FakeClient:
+        model = "deepseek-x"
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok", usage=TokenUsage(prompt=10, completion=6, total=16))
+
+    # Test default turn=0
+    chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [])
+    token_events = [e for e in events if e.type == "token_usage"]
+    assert len(token_events) == 1
+    assert token_events[0].payload["turn"] == 0
+
+    # Test explicit turn=3
+    chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [], turn=3)
+    token_events = [e for e in events if e.type == "token_usage"]
+    assert len(token_events) == 2
+    assert token_events[1].payload["turn"] == 3
+
+

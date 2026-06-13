@@ -22,7 +22,7 @@ def _estimate_message_tokens(messages: list[dict]) -> int:
     return total
 
 
-def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], schemas: list[dict]) -> Any:
+def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], schemas: list[dict], turn: int = 0) -> Any:
     """调 client.chat，累加 token 指标并在拿到 provider usage 时 emit token_usage 事件。
 
     - 估算路径（_estimate_message_tokens）保持不变：run_end 的 tokens_estimate 与回退仍可用。
@@ -50,6 +50,7 @@ def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], 
             cumulative_total=cumulative,
             model=model,
             duration_ms=duration_ms,
+            turn=turn,
         )
     return result
 

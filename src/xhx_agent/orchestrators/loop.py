@@ -98,7 +98,7 @@ class LoopOrchestrator:
                         after=len_after,
                     )
             try:
-                result = chat_and_count(ctx, client, messages, schemas)
+                result = chat_and_count(ctx, client, messages, schemas, turn=turn)
             except ModelClientError as exc:
                 ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
                 emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)

@@ -73,7 +73,7 @@ def _coordinate(ctx: OrchestratorContext, client: Any) -> list[str]:
         },
         {"role": "user", "content": ctx.task},
     ]
-    result = chat_and_count(ctx, client, messages, [])
+    result = chat_and_count(ctx, client, messages, [], turn=0)
     lines = [ln.strip() for ln in (result.content or "").splitlines()]
     subtasks = [ln[2:].strip() for ln in lines if ln.startswith("- ") and ln[2:].strip()]
     if not subtasks:
@@ -97,7 +97,7 @@ def _run_worker(ctx: OrchestratorContext, client: Any, subtask: str, turn: int) 
     changed: list[str] = []
     text = ""
     for _ in range(WORKER_MAX_TURNS):
-        result = chat_and_count(ctx, client, messages, schemas)
+        result = chat_and_count(ctx, client, messages, schemas, turn=0)
         if not result.tool_calls:
             text = result.content or ""
             break
@@ -128,7 +128,7 @@ def _review(ctx: OrchestratorContext, client: Any, changed_files: list[str], wor
         f"Worker results:\n" + "\n".join(f"- {r}" for r in worker_results)
     )
     result = chat_and_count(
-        ctx, client, [{"role": "system", "content": REVIEWER_PROMPT}, {"role": "user", "content": summary}], []
+        ctx, client, [{"role": "system", "content": REVIEWER_PROMPT}, {"role": "user", "content": summary}], [], turn=0
     )
     verdict = (result.content or "").strip()
     passed = verdict.upper().startswith("PASS")

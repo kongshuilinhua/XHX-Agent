@@ -72,7 +72,7 @@ def run_subagent(
 
     answer = ""
     for _ in range(MAX_SUBAGENT_TURNS):
-        result = chat_and_count(ctx, client, messages, schemas)
+        result = chat_and_count(ctx, client, messages, schemas, turn=turn)
         if not result.tool_calls:
             answer = result.content or ""
             break
@@ -160,7 +160,7 @@ def _drive_write_loop(ctx: OrchestratorContext, prompt: str, allowed: set[str], 
     answer = ""
     changed: list[str] = []
     for _ in range(MAX_SUBAGENT_TURNS):
-        result = chat_and_count(ctx, client, messages, schemas)
+        result = chat_and_count(ctx, client, messages, schemas, turn=turn)
         if not result.tool_calls:
             answer = result.content or ""
             break
