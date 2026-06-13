@@ -1,7 +1,22 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from typing import Annotated
+
+# Load .env file manually if exists in current working directory
+env_path = Path.cwd() / ".env"
+if env_path.is_file():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'").strip('"')
+            os.environ.setdefault(k, v)
 
 import typer
 from rich.console import Console
@@ -13,7 +28,6 @@ from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.runtime.session import (
     format_follow_up,
-    list_sessions,
     load_latest_session,
     load_session,
     load_transcript_messages,
@@ -22,9 +36,36 @@ from xhx_agent.runtime.session import (
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
 
+def _ensure_utf8_console() -> None:
+    """把 Windows 控制台切到 UTF-8，再构建 Rich Console。
+
+    默认 Windows 控制台用 GBK/cp936，渲染状态行的 `•` 与时间线字形（⟶/✓/⚙/▸）会抛
+    UnicodeEncodeError。在 Console() 构建前设好编码，避免控制台一启动就崩（与 cli/rpc.py 的
+    reconfigure 同源）。非 Windows 直接跳过；所有调用都吞异常，绝不因环境差异而失败。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 app = typer.Typer(help="xhx-agent local coding agent CLI.")
 config_app = typer.Typer(help="Manage xhx-agent configuration.")
 app.add_typer(config_app, name="config")
+_ensure_utf8_console()
 console = Console()
 
 
@@ -170,24 +211,36 @@ def run(
 def sessions() -> None:
     from rich.table import Table
 
+    from xhx_agent.runtime.session import list_conversations
+
     runtime = RuntimeApp()
-    entries = list_sessions(runtime.workspace)
+    # One row per conversation (multi-turn console dialogues collapse to their latest entry).
+    entries = list_conversations(runtime.workspace)
     if not entries:
         console.print("No sessions recorded yet.")
         return
-    table = Table(title="Sessions")
+    table = Table(title="Conversations")
     table.add_column("run_id")
     table.add_column("status")
     table.add_column("verification")
     table.add_column("task")
-    for entry in entries[-20:]:
+    for entry in list(reversed(entries))[:20]:
         table.add_row(entry.run_id, entry.status, entry.verification, entry.task[:60])
     console.print(table)
 
 
 @app.command("chat")
-def chat() -> None:
-    CommandConsole(console=console).run()
+def chat(
+    profile: Annotated[
+        str | None, typer.Option("--profile", help="Model profile name.")
+    ] = None,
+) -> None:
+    workspace = Path.cwd()
+    config = load_config(workspace)
+    active_profile = profile or config.default_profile
+    cc = CommandConsole(workspace=workspace, console=console)
+    cc.profile_name = active_profile
+    cc.run()
 
 
 @app.command("tui")
@@ -195,11 +248,19 @@ def tui(
     fullscreen: Annotated[
         bool, typer.Option("--fullscreen", help="Run the experimental fullscreen Textual console.")
     ] = False,
+    profile: Annotated[
+        str | None, typer.Option("--profile", help="Model profile name.")
+    ] = None,
 ) -> None:
+    workspace = Path.cwd()
+    config = load_config(workspace)
+    active_profile = profile or config.default_profile
     if fullscreen:
-        run_textual_console()
+        run_textual_console(workspace=workspace, profile=active_profile)
         return
-    CommandConsole(console=console).run()
+    cc = CommandConsole(workspace=workspace, console=console)
+    cc.profile_name = active_profile
+    cc.run()
 
 
 @config_app.command("list")
@@ -349,4 +410,66 @@ def memory() -> None:
     for m in memories:
         table.add_row(m.name, m.mtype, m.description)
     console.print(table)
+
+
+@app.command("compact")
+def compact(
+    profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
+    instructions: Annotated[str | None, typer.Option("--instructions", help="Focus/instructions for the summary.")] = None,
+) -> None:
+    """Manually compact the message history transcript of the latest session."""
+    runtime = RuntimeApp()
+    workspace = runtime.workspace
+    previous = load_latest_session(workspace)
+    if not previous or not previous.transcript_path:
+        console.print("[red]No recent session transcript found to compact.[/red]")
+        return
+
+    messages = load_transcript_messages(workspace, previous.transcript_path)
+    if not messages:
+        console.print("[red]Failed to load transcript messages.[/red]")
+        return
+
+    config = load_config(workspace)
+    active_profile = profile or config.default_profile
+
+    from xhx_agent.runtime.profiles import get_profile
+    from xhx_agent.models.routing import resolve_profile_for_role
+    from xhx_agent.models import build_chat_client
+
+    try:
+        prof = get_profile(workspace, active_profile)
+        summarizer = build_chat_client(
+            resolve_profile_for_role(workspace, "summarize", prof.name)
+        )
+        summarize_fn = getattr(summarizer, "summarize", None)
+    except Exception as e:
+        console.print(f"[red]Failed to initialize summarizer: {e}[/red]")
+        return
+
+    if not summarize_fn:
+        console.print("[red]Summarize client capability not found on active profile.[/red]")
+        return
+
+    from xhx_agent.orchestrators.compaction import compact_messages
+    len_before = len(messages)
+    try:
+        compacted = compact_messages(
+            messages,
+            summarize_fn,
+            force=True,
+            custom_instructions=instructions,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to run compaction: {e}[/red]")
+        return
+
+    len_after = len(compacted)
+    if len_after < len_before:
+        from xhx_agent.runtime.session import save_transcript
+        save_transcript(workspace, previous.run_id, compacted)
+        console.print(f"[green]Successfully compacted session {previous.run_id} from {len_before} to {len_after} messages.[/green]")
+    else:
+        console.print("[yellow]No messages were compacted (already compacted or too short).[/yellow]")
+
 

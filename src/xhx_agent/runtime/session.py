@@ -24,6 +24,9 @@ class SessionEntry(BaseModel):
     summary_path: str | None = None
     transcript_path: str | None = None
     mode: str = ""
+    # Stable id shared by every turn of one interactive console conversation. Empty for one-shot
+    # CLI runs (each stands alone). Lets the resume picker collapse a multi-turn dialogue to one entry.
+    conversation_id: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
@@ -53,8 +56,12 @@ def load_transcript_messages(workspace: Path, rel_path: str | None) -> list[dict
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def record_session(workspace: Path, task: str, result: RunResult) -> SessionEntry:
-    """Append a one-line summary of ``result`` to the session history (+ persist full transcript when present)."""
+def record_session(workspace: Path, task: str, result: RunResult, conversation_id: str = "") -> SessionEntry:
+    """Append a one-line summary of ``result`` to the session history (+ persist full transcript when present).
+
+    ``conversation_id`` ties together the turns of one interactive console conversation so the resume
+    picker can collapse them into a single entry; leave empty for standalone one-shot runs.
+    """
 
     ensure_xhx_dirs(workspace)
     rel_transcript = getattr(result, "transcript_path", None)
@@ -70,6 +77,7 @@ def record_session(workspace: Path, task: str, result: RunResult) -> SessionEntr
         summary_path=result.summary_path,
         transcript_path=rel_transcript,
         mode=getattr(result, "mode", "") or "",
+        conversation_id=conversation_id,
     )
     with session_history_path(workspace).open("a", encoding="utf-8") as handle:
         handle.write(entry.model_dump_json() + "\n")
@@ -85,6 +93,27 @@ def list_sessions(workspace: Path) -> list[SessionEntry]:
     return [
         SessionEntry.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
+
+
+def list_conversations(workspace: Path) -> list[SessionEntry]:
+    """Return one entry per conversation (the latest turn), collapsing multi-turn dialogues.
+
+    Turns of one interactive console conversation share a ``conversation_id`` and collapse to their
+    most recent entry — whose transcript is the full conversation. Entries without a conversation_id
+    are standalone (keyed by run_id), so one-shot CLI runs each stand on their own. Ordered
+    chronologically by the kept entry's ``created_at``.
+    """
+
+    latest: dict[str, SessionEntry] = {}
+    first_task: dict[str, str] = {}
+    for entry in list_sessions(workspace):
+        key = entry.conversation_id or f"run:{entry.run_id}"
+        first_task.setdefault(key, entry.task)  # opening task = the conversation's topic/title
+        latest[key] = entry  # later turns overwrite → keep the most recent, fullest transcript
+    # Title each conversation by its opening task, but keep the latest run_id/transcript so resume
+    # restores the full dialogue.
+    titled = [entry.model_copy(update={"task": first_task[key]}) for key, entry in latest.items()]
+    return sorted(titled, key=lambda entry: entry.created_at)
 
 
 def load_latest_session(workspace: Path) -> SessionEntry | None:
