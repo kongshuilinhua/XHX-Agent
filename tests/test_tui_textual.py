@@ -1636,4 +1636,61 @@ def test_textual_action_cancel_task(tmp_path) -> None:
     assert app_running.is_cancel_requested() is True
 
 
+def test_textual_auto_memory_suggests_and_writes_on_success(tmp_path, monkeypatch) -> None:
+    from xhx_agent.memory.store import MemoryRecord
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
+
+    # 把客户端搭建链路 stub 掉（否则 mock+tmp_path 下 get_profile/build_chat_client 可能抛异常被
+    # _maybe_suggest_memories 的 try/except 吞掉，导致拿不到写入而假失败）。
+    monkeypatch.setattr("xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})())
+    monkeypatch.setattr("xhx_agent.tui.textual_app.get_profile", lambda ws, name: object())
+    monkeypatch.setattr("xhx_agent.tui.textual_app.build_chat_client", lambda profile: object())
+
+    # 注入一个候选记忆，并强制确认返回 True（绕开交互 picker，直接测“成功→提议→写入”链路）。
+    cand = MemoryRecord(name="test-fact", description="a fact", mtype="project", body="remember me")
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.propose_memories",
+        lambda client, task, digest, existing_names=None: [cand],
+    )
+    written = {}
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.write_memory",
+        lambda workspace, *, name, description, mtype, body: written.update(
+            {"name": name, "mtype": mtype, "body": body}
+        ),
+    )
+    monkeypatch.setattr(TextualCommandConsoleApp, "_confirm_memory_blocking", lambda self, c: True)
+
+    app.run_task("do something", announce_user=False, reset_cancel=False)
+
+    assert written.get("name") == "test-fact"
+    assert any("Remembered: test-fact" in m for m in app.messages)
+
+
+def test_textual_auto_memory_skips_when_declined(tmp_path, monkeypatch) -> None:
+    from xhx_agent.memory.store import MemoryRecord
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
+    monkeypatch.setattr("xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})())
+    monkeypatch.setattr("xhx_agent.tui.textual_app.get_profile", lambda ws, name: object())
+    monkeypatch.setattr("xhx_agent.tui.textual_app.build_chat_client", lambda profile: object())
+    cand = MemoryRecord(name="test-fact", description="a fact", mtype="project", body="x")
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.propose_memories",
+        lambda client, task, digest, existing_names=None: [cand],
+    )
+    calls = {"wrote": False}
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.write_memory",
+        lambda *a, **k: calls.update(wrote=True),
+    )
+    monkeypatch.setattr(TextualCommandConsoleApp, "_confirm_memory_blocking", lambda self, c: False)
+
+    app.run_task("do something", announce_user=False, reset_cancel=False)
+
+    assert calls["wrote"] is False
+
+
+
 

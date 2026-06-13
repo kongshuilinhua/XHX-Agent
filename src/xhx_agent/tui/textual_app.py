@@ -23,6 +23,13 @@ from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
 
+# Auto-memory imports for monkeypatching in unit tests
+from xhx_agent.memory import list_memories, propose_memories, write_memory
+from xhx_agent.memory.store import slugify
+from xhx_agent.models import build_chat_client
+from xhx_agent.runtime.profiles import get_profile
+from xhx_agent.runtime.config import load_config
+
 
 class XhxTextualSuggester(Suggester):
     def __init__(self, completer: XhxCompleter) -> None:
@@ -343,6 +350,7 @@ class TextualCommandConsoleApp(App[None]):
         )
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
+        self.auto_memory = True
 
     @property
     def clipboard(self) -> str:
@@ -552,6 +560,7 @@ class TextualCommandConsoleApp(App[None]):
         # Carry the full conversation forward: this run's transcript already includes the prior
         # history we passed in, so the next turn restores complete context (real memory).
         self._refresh_prior_messages(result)
+        self._maybe_suggest_memories(result)
         self.run_pending_steer()
 
     def _refresh_prior_messages(self, result: RunResult) -> None:
@@ -1182,6 +1191,65 @@ class TextualCommandConsoleApp(App[None]):
         if result.summary_path:
             self._append_message(f"summary> {result.summary_path}")
         self.refresh_snapshot()
+
+    def _maybe_suggest_memories(self, result: RunResult) -> None:
+        """跑完成功后自动抽候选记忆并逐条确认写入。best-effort：任何异常静默跳过，绝不影响任务。
+
+        在 worker 线程执行（propose_memories 是一次模型调用）；确认 UI 经 call_ui 投到 UI 线程。
+        mock profile 下 propose_memories 确定性返回空 → 无任何提示。
+        """
+        if not self.auto_memory or result.status != "success":
+            return
+        try:
+            task = self.state.task or ""
+            answer = (getattr(result, "answer", None) or "").strip()
+            digest = f"Assistant: {answer}" if answer else f"Run status: {result.status}"
+            config = load_config(self.workspace)
+            profile = get_profile(self.workspace, self.profile or config.default_profile)
+            client = build_chat_client(profile)
+            existing = {slugify(r.name) for r in list_memories(self.workspace)}
+            candidates = propose_memories(client, task, digest, existing_names=existing)
+            for candidate in candidates:
+                if self._confirm_memory_blocking(candidate):
+                    write_memory(
+                        self.workspace,
+                        name=candidate.name,
+                        description=candidate.description,
+                        mtype=candidate.mtype,
+                        body=candidate.body,
+                    )
+                    self.append_message(f"system> Remembered: {candidate.name}")
+        except Exception:
+            return
+
+    def _confirm_memory_blocking(self, candidate) -> bool:
+        """在 worker 线程阻塞，弹一个 记住/跳过 picker，等用户选。非交互/超时一律视为否。"""
+        if not self.can_wait_for_interactive_confirmation():
+            return False
+        done = threading.Event()
+        holder = {"resp": False}
+
+        def on_select(selected_id: str | None) -> None:
+            holder["resp"] = selected_id == "remember"
+            if not done.is_set():
+                done.set()
+
+        def show() -> None:
+            self._append_message(
+                f"system> 记忆候选 [{candidate.mtype}] {candidate.name}: {candidate.description}"
+            )
+            self.present_picker(
+                [("记住（写入长期记忆）", "remember"), ("跳过", "skip")],
+                on_select=on_select,
+                title="Remember across sessions?",
+            )
+
+        self.call_ui(show)
+        if not done.wait(self.permission_timeout_seconds):
+            holder["resp"] = False
+            self.call_ui(lambda: self.resolve_interactive_selection(None))
+            done.wait(1.0)
+        return bool(holder["resp"])
 
     def append_message(self, message: str) -> None:
         self.call_ui(self._append_message, message)
