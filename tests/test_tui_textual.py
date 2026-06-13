@@ -541,8 +541,8 @@ def test_textual_fullscreen_runs_real_runtime_python_fixture_with_permission(tmp
 
 
 def test_textual_command_console_handles_sessions_and_resume(tmp_path) -> None:
-    from xhx_agent.runtime.session import record_session
     from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.session import record_session
 
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
@@ -1301,7 +1301,7 @@ def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
             await pilot.press("/", "m", "o", "d", "e", "l", "enter")
             await pilot.pause()
 
-            from textual.widgets import OptionList, Input
+            from textual.widgets import Input, OptionList
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1320,8 +1320,8 @@ def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
 
 
 def test_textual_app_interactive_session_selection(tmp_path) -> None:
-    from xhx_agent.runtime.session import record_session
     from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.session import record_session
 
     result1 = RunResult(
         run_id="run-1",
@@ -1352,7 +1352,7 @@ def test_textual_app_interactive_session_selection(tmp_path) -> None:
             await pilot.press("/", "s", "e", "s", "s", "i", "o", "n", "s", "enter")
             await pilot.pause()
 
-            from textual.widgets import OptionList, Input
+            from textual.widgets import Input, OptionList
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1372,9 +1372,9 @@ def test_textual_app_interactive_session_selection(tmp_path) -> None:
 
 
 def test_textual_app_interactive_permission_confirmation(tmp_path) -> None:
-    from xhx_agent.tui.textual_app import PendingConfirmation
     from xhx_agent.safety.policy import PolicyDecision
     from xhx_agent.safety.risk import RiskLevel
+    from xhx_agent.tui.textual_app import PendingConfirmation
 
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
@@ -1391,7 +1391,7 @@ def test_textual_app_interactive_permission_confirmation(tmp_path) -> None:
             pilot.app.open_pending_confirmation(confirmation)
             await pilot.pause()
 
-            from textual.widgets import OptionList, Input
+            from textual.widgets import Input, OptionList
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1430,7 +1430,7 @@ def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None
             await pilot.press("/", "m", "o", "d", "e", "l", "enter")
             await pilot.pause()
 
-            from textual.widgets import OptionList, Input
+            from textual.widgets import Input, OptionList
             assert pilot.app.query_one("#active_options", OptionList) is not None
 
             await pilot.press("escape")
@@ -1446,8 +1446,8 @@ def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None
 
 
 def test_textual_app_resume_loads_transcript_messages(tmp_path) -> None:
-    from xhx_agent.runtime.session import record_session
     from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.session import record_session
 
     fake_messages = [
         {"role": "system", "content": "system prompt"},
@@ -1489,7 +1489,7 @@ def test_textual_app_interactive_command_selection(tmp_path) -> None:
             await pilot.press("/")
             await pilot.pause()
 
-            from textual.widgets import OptionList, Input
+            from textual.widgets import Input, OptionList
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1555,8 +1555,8 @@ def test_textual_app_input_focus_retention(tmp_path) -> None:
 
 
 def test_textual_app_state_turn_and_streaming_delta() -> None:
-    from xhx_agent.tui.state import ConsoleState
     from xhx_agent.runtime.events import RuntimeEvent
+    from xhx_agent.tui.state import ConsoleState
 
     state = ConsoleState()
     assert state.context_turn is None
@@ -1581,8 +1581,8 @@ def test_textual_app_state_turn_and_streaming_delta() -> None:
 
 
 def test_state_reduce_token_usage_tracks_cumulative_total() -> None:
-    from xhx_agent.tui.state import ConsoleState
     from xhx_agent.runtime.events import RuntimeEvent
+    from xhx_agent.tui.state import ConsoleState
 
     state = ConsoleState()
     assert state.tokens_total == 0
@@ -1751,8 +1751,8 @@ def test_textual_run_task_saves_complete_view_log_at_turn_end(tmp_path) -> None:
 
 
 def test_textual_app_sessions_clear(tmp_path) -> None:
-    from xhx_agent.runtime.session import record_session
     from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.session import record_session
 
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
@@ -1773,6 +1773,55 @@ def test_textual_app_sessions_clear(tmp_path) -> None:
     # Invoke /sessions clear
     assert app.handle_text_input("/sessions clear")
     assert "已清理 1 条旧会话" in app.messages[-1]
+
+
+def test_textual_verbose_and_tools_commands(tmp_path) -> None:
+    from xhx_agent.runtime.events import RuntimeEvent
+    from xhx_agent.tui.state import ConsoleState
+
+    state = ConsoleState()
+    # Feed tool activity
+    state.reduce(RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "test-query"}}))
+    state.reduce(RuntimeEvent(type="tool_result", message="", payload={"tool": "search", "status": "success", "summary": "found 3 files", "turn": 1}))
+    state.reduce(RuntimeEvent(type="tool_start", message="", payload={"tool": "verify", "turn": 1, "arguments": {"command": "pytest"}}))
+    state.reduce(RuntimeEvent(type="tool_result", message="", payload={"tool": "verify", "status": "failed", "summary": "tests failed", "turn": 1}))
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+
+    # Initially, verbose is False
+    assert not getattr(app, "verbose", False)
+
+    # Toggle verbose
+    assert app.handle_text_input("/verbose")
+    assert getattr(app, "verbose", False)
+    assert "verbose: on" in app.messages[-1]
+
+    # Toggle verbose off
+    assert app.handle_text_input("/verbose")
+    assert not getattr(app, "verbose", False)
+    assert "verbose: off" in app.messages[-1]
+
+    # Run /tools
+    assert app.handle_text_input("/tools")
+    assert app.active_detail == "tools"
+    assert "search" in app.detail_text
+    assert "test-query" in app.detail_text
+    assert "pytest" in app.detail_text
+    assert "tests failed" in app.detail_text
+    # Check failed tools have red markup
+    assert "[red]✗ verify pytest → tests failed[/red]" in app.detail_text
+
+    # Test timeline with verbose enabled
+    app.verbose = True
+    app.messages.clear()
+    app.handle_runtime_event(
+        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}})
+    )
+    # Timeline should have args: inline
+    joined = "\n".join(app.messages)
+    assert '⟶ search "hello"' in joined
+    assert 'args: {"query":"hello"}' in joined
+
 
 
 

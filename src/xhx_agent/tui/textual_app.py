@@ -45,6 +45,8 @@ SLASH_COMMAND_HINTS = [
     "/new",
     "/sessions",
     "/resume",
+    "/tools",
+    "/verbose",
     "/exit",
 ]
 
@@ -388,6 +390,7 @@ class TextualCommandConsoleApp(App[None]):
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
         self.auto_memory = True
+        self.verbose = False
 
     @property
     def clipboard(self) -> str:
@@ -718,6 +721,8 @@ class TextualCommandConsoleApp(App[None]):
                 "/sessions  - List recent recorded agent sessions (supports filtering by keyword)",
                 "/sessions clear - 清理无法恢复的旧会话",
                 "/resume    - Switch follow-up context to a past session (supports prefix/suffix)",
+                "/tools     - Show details of recent tool calls",
+                "/verbose   - Toggle verbose inline tool call details",
                 "/exit      - Exit the textual command console",
             ]
             self.append_message(
@@ -740,6 +745,8 @@ class TextualCommandConsoleApp(App[None]):
                         "/sessions clear - 清理无法恢复的旧会话",
                         "/new - start a new session",
                         "/resume <run_id_prefix> - switch follow-up context to a past session",
+                        "/tools - show details of recent tool calls",
+                        "/verbose - toggle verbose inline tool call details",
                     ]
                 ),
             )
@@ -800,6 +807,13 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/resume":
             self.handle_resume(argument)
+            return True
+        if command == "/verbose":
+            self.verbose = not getattr(self, "verbose", False)
+            self.append_message(f"system> verbose: {'on' if self.verbose else 'off'}")
+            return True
+        if command == "/tools":
+            self.handle_tools()
             return True
         if command == "/status":
             self.append_message(
@@ -1374,6 +1388,8 @@ class TextualCommandConsoleApp(App[None]):
             ("/clear", "Clear conversation messages and details"),
             ("/sessions", "List recent recorded agent sessions"),
             ("/resume", "Switch follow-up context to a past session"),
+            ("/tools", "Show details of recent tool calls"),
+            ("/verbose", "Toggle verbose inline tool call details"),
             ("/exit", "Exit the textual command console"),
         ]
         filtered = [
@@ -1659,6 +1675,36 @@ class TextualCommandConsoleApp(App[None]):
 
         self.append_message("system> 已恢复会话（完整界面+记忆），直接提问即可继续")
         self.refresh_snapshot()
+
+    def handle_tools(self) -> None:
+        if not self.state.tools:
+            self.append_message("system> 本次会话还没有工具调用")
+            self.set_detail("tools", "No tool calls.")
+            return
+
+        lines = []
+        recent_tools = self.state.tools[-10:]
+        import json
+        for t in recent_tools:
+            glyph = "✗" if t.status in {"failed", "error", "denied"} else "✓"
+            header = tool_header(t.tool, t.arguments)
+            try:
+                compact_args = json.dumps(t.arguments, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                compact_args = str(t.arguments)
+
+            if len(compact_args) > 70:
+                compact_args = compact_args[:67] + "..."
+
+            first_line = f"{glyph} {header} → {t.summary}"
+            if t.status in {"failed", "error", "denied"}:
+                first_line = f"[red]{first_line}[/red]"
+
+            lines.append(first_line)
+            lines.append(f"     入参 {compact_args}")
+
+        self.append_message(f"system> 最近 {len(recent_tools)} 次工具调用已展示在面板")
+        self.set_detail("tools", "\n".join(lines))
 
 def run_textual_console(
     *,
