@@ -105,3 +105,21 @@ def test_console_state_reduces_cancel_events() -> None:
     assert state.cancel_requested is True
     assert state.cancel_reason == "Run cancelled before verification."
     assert state.verification == "cancelled"
+
+
+def test_console_state_tracks_compaction() -> None:
+    state = ConsoleState()
+    assert state.compaction_count == 0
+    assert state.compaction_last_before == 0
+    assert state.compaction_last_after == 0
+
+    state.reduce(RuntimeEvent(type="compaction", message="Compaction 1", payload={"before": 24, "after": 9}))
+    assert state.compaction_count == 1
+    assert state.compaction_last_before == 24
+    assert state.compaction_last_after == 9
+
+    state.reduce(RuntimeEvent(type="compaction", message="Compaction 2", payload={"before": 30, "after": 15}))
+    assert state.compaction_count == 2
+    assert state.compaction_last_before == 30
+    assert state.compaction_last_after == 15
+
