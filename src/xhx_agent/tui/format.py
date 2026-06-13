@@ -17,3 +17,36 @@ def context_meter(used: int, budget: int) -> tuple[str, float | None, str]:
     label = f"Context {human_tokens(used)}/{human_tokens(budget)} {pct:.1f}%"
     level = "ok" if pct < 70 else "warn" if pct < 90 else "crit"
     return label, pct, level
+
+
+def line_style(line: str) -> str:
+    """Return the Rich style string for a given timeline line based on its prefix/type."""
+    if line.startswith("user>"):
+        return "cyan"
+    if line.startswith("assistant>"):
+        return "bright_white"
+    if line.startswith("system>"):
+        return "yellow"
+    if line.startswith("plan>"):
+        return "blue"
+    if line.startswith("summary>"):
+        return "dim"
+    if line.startswith("model (streaming"):
+        return "dim italic"
+
+    stripped = line.lstrip()
+    if stripped.startswith("⟶"):
+        return "blue"
+    if stripped.startswith("✓"):
+        return "green"
+    if stripped.startswith("✗"):
+        return "red"
+    if stripped.startswith("⚙"):
+        return "blue"
+    if stripped.startswith("▸ agent"):
+        return "magenta"
+    if stripped.startswith("💭"):
+        return "dim italic"
+
+    return ""
+
