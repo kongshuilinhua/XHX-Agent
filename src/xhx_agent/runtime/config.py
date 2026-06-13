@@ -31,6 +31,8 @@ class ProjectConfig(BaseModel):
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"  # 只允许结构化补丁写，杜绝任意文件写
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    auto_resume: bool = True  # 启动自动接最近会话
+
 
 
 def default_config() -> ProjectConfig:
