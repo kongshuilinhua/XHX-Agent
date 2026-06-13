@@ -40,7 +40,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-norecursedirs = ["tests/fixtures", ".tmp"]
+norecursedirs = ["tests/fixtures", ".tmp", ".xhx"]
 markers = [
     "live: opt-in end-to-end tests that call a real LLM endpoint (skipped unless configured)",
 ]

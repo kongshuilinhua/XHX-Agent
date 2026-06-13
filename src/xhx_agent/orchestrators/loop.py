@@ -153,7 +153,6 @@ class LoopOrchestrator:
                 outcomes = [_run(tc) for tc in result.tool_calls]
 
             for tc, content, changed in outcomes:
-                emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
                 changed_files.extend(changed)
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
         else:

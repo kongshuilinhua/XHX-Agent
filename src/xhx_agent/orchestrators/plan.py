@@ -46,6 +46,8 @@ class PlanOrchestrator:
             event_callback=ctx.event_callback,
             build_client_func=build_chat_client,
         )
+        if hasattr(client, "set_delta_callback"):
+            client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
             {
@@ -334,7 +336,6 @@ class PlanOrchestrator:
                 outcomes = [_run(tc) for tc in result.tool_calls]
 
             for tc, content, changed, meta in outcomes:
-                emit_event(ctx.event_callback, "tool_result", "Tool execution completed.", turn=turn, tool=tc.name)
                 changed_files.extend(changed)
                 if meta:
                     entry = ctx.evidence.write_evidence(

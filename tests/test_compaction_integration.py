@@ -123,3 +123,119 @@ def test_loop_integration_compaction(tmp_path, monkeypatch):
     assert len(calls) > 0
     # At least one call should have resulted in a reduced list of messages due to low max_tokens
     # (Checking if the final history contains the compaction prefix)
+
+
+def test_compact_token_sliding_window():
+    counter = CallCounterSummarize("new summary")
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello " * 200},  # ~200 tokens
+        {"role": "assistant", "content": "hi " * 200},   # ~200 tokens
+        {"role": "user", "content": "short"},           # keep this verbatim
+    ]
+    res = compact_messages(
+        messages,
+        counter.summarize,
+        max_tokens=100,
+        keep_recent_tokens=50,
+        keep_recent=1,
+    )
+    assert counter.calls == 1
+    assert res[0]["role"] == "system"
+    assert "[Earlier turns compacted to save context]" in res[1]["content"]
+    assert res[2]["role"] == "assistant"
+    assert res[3]["role"] == "user"
+    assert res[3]["content"] == "short"
+
+
+def test_compact_file_ops_extraction():
+    counter = CallCounterSummarize("new summary")
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {
+            "role": "assistant",
+            "content": "thinking",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "src/utils.py"}'},
+                },
+                {
+                    "id": "c2",
+                    "type": "function",
+                    "function": {"name": "apply_patch", "arguments": '{"patch": "*** Update File: src/main.py\\n"}'},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "result"},
+        {"role": "user", "content": "hello"},
+    ]
+    res = compact_messages(
+        messages,
+        counter.summarize,
+        force=True,
+        keep_recent=1,
+    )
+    assert counter.calls == 1
+    summary_content = res[1]["content"]
+    assert "<read-files>\nsrc/utils.py\n</read-files>" in summary_content
+    assert "<modified-files>\nsrc/main.py\n</modified-files>" in summary_content
+
+
+def test_compact_iterative_summary():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "user",
+            "content": (
+                "[Earlier turns compacted to save context]\n"
+                "## Goal\n"
+                "Fix bugs\n"
+                "<read-files>\n"
+                "old_read.py\n"
+                "</read-files>\n"
+                "<modified-files>\n"
+                "old_mod.py\n"
+                "</modified-files>"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "thinking",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "new_read.py"}'},
+                }
+            ],
+        },
+        {"role": "user", "content": "next task"},
+    ]
+
+    recorded_prompts = []
+    def record_summarize(prompt: str) -> str:
+        recorded_prompts.append(prompt)
+        return "updated summary content"
+
+    res = compact_messages(
+        messages,
+        record_summarize,
+        force=True,
+        keep_recent=1,
+        custom_instructions="focus on errors",
+    )
+
+    assert len(recorded_prompts) == 1
+    prompt = recorded_prompts[0]
+    assert "<previous-summary>\n## Goal\nFix bugs\n</previous-summary>" in prompt
+    assert "<conversation>" in prompt
+    assert "focus on errors" in prompt
+
+    summary_content = res[1]["content"]
+    assert "old_read.py" in summary_content
+    assert "new_read.py" in summary_content
+    assert "old_mod.py" in summary_content
+
