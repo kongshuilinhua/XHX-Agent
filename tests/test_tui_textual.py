@@ -1742,6 +1742,29 @@ def test_textual_app_auto_resume_on_startup(tmp_path, monkeypatch) -> None:
     asyncio.run(run_app())
 
 
+def test_textual_run_task_saves_complete_view_log_at_turn_end(tmp_path) -> None:
+    """T4 时序回归：view-log 必须在本轮 apply_run_result + run-finished 之后落盘，
+    因而包含本轮完整界面（开场 user 行 + 结尾 run-finished 行），且 SessionEntry
+    带上 view_path 与 turn_count。若 record/落盘仍在 apply_run_result 之前，结尾行会缺失。"""
+    from xhx_agent.runtime.session import load_session, load_view_log
+
+    runtime = FakeRuntime()  # run_task 返回 run_id="run-1"
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+
+    app.run_task("fix tests")
+
+    entry = load_session(tmp_path, "run-1")
+    assert entry is not None
+    assert entry.view_path == ".xhx/sessions/run-1.view.json"
+    assert entry.turn_count == 1
+
+    view = load_view_log(tmp_path, entry.view_path)
+    assert view is not None
+    # 开场行在前、结尾行在后 —— 证明落盘发生在本轮收尾之后。
+    assert "user> fix tests" in view
+    assert any(line.startswith("system> run finished:") for line in view)
+
+
 def test_textual_app_no_auto_resume_when_disabled(tmp_path, monkeypatch) -> None:
     from xhx_agent.runtime.session import record_session
     from xhx_agent.runtime.config import ProjectConfig
