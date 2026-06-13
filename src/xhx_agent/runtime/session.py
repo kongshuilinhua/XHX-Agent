@@ -206,14 +206,14 @@ def resolve_run_id(entries: list[SessionEntry], token: str) -> tuple[str | None,
         return None, sorted(cands)
 
 
-def format_session_line(entry: SessionEntry, now: datetime) -> str:
-    """Format a session entry to a human readable list item."""
-    t_str = entry.updated_at or entry.created_at
+def _relative_time(t_str: str | None, created_at: str | None, now: datetime) -> str:
+    """Calculate relative time string."""
+    target_str = t_str or created_at
     try:
-        t = datetime.fromisoformat(t_str)
+        t = datetime.fromisoformat(target_str) if target_str else now
     except Exception:
         try:
-            t = datetime.fromisoformat(entry.created_at)
+            t = datetime.fromisoformat(created_at) if created_at else now
         except Exception:
             t = now
 
@@ -227,18 +227,29 @@ def format_session_line(entry: SessionEntry, now: datetime) -> str:
     diff = now - t
     diff_sec = diff.total_seconds()
     if diff_sec < 60:  # 含未来时间（diff_sec < 0）一并归为「刚刚」
-        rel_time = "刚刚"
+        return "刚刚"
     elif diff_sec < 3600:
-        rel_time = f"{int(diff_sec // 60)}分钟前"
+        return f"{int(diff_sec // 60)}分钟前"
     elif diff_sec < 86400:
-        rel_time = f"{int(diff_sec // 3600)}小时前"
+        return f"{int(diff_sec // 3600)}小时前"
     else:
-        rel_time = f"{int(diff_sec // 86400)}天前"
+        return f"{int(diff_sec // 86400)}天前"
 
+
+def format_session_line(entry: SessionEntry, now: datetime) -> str:
+    """Format a session entry to a human readable list item."""
+    rel_time = _relative_time(entry.updated_at, entry.created_at, now)
     task_single = " ".join(entry.task.splitlines())
     if len(task_single) > 60:
         task_single = task_single[:60] + "…"
 
     short_id = entry.run_id[-8:]
     return f"{rel_time} | {entry.status} | 轮{entry.turn_count} | …{short_id} | {task_single}"
+
+
+def format_session_meta(entry: SessionEntry, now: datetime) -> str:
+    """Format a session entry to a dark meta info line."""
+    rel_time = _relative_time(entry.updated_at, entry.created_at, now)
+    short_id = entry.run_id[-8:]
+    return f"{rel_time} · {entry.status} · {entry.turn_count}轮 · …{short_id}"
 

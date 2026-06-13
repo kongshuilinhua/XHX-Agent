@@ -5,6 +5,7 @@ from xhx_agent.runtime.session import (
     load_latest_session,
     load_session,
     record_session,
+    format_session_meta,
 )
 
 
@@ -242,3 +243,32 @@ def test_format_session_line_shape() -> None:
     assert "5678" in line
 
 
+def test_format_session_meta() -> None:
+    from datetime import datetime, UTC, timedelta
+    now = datetime.now(UTC)
+
+    # 1. 5 minutes ago, status="success", turn_count=3, run_id="run-12345678"
+    e1 = SessionEntry(
+        run_id="run-12345678",
+        task="task 1",
+        status="success",
+        turn_count=3,
+        updated_at=(now - timedelta(minutes=5)).isoformat(),
+    )
+    meta1 = format_session_meta(e1, now)
+    assert "5分钟前" in meta1
+    assert "success" in meta1
+    assert "3轮" in meta1
+    assert "5678" in meta1
+    assert "task 1" not in meta1  # should not contain task
+
+    # 2. Future time (now + 5 mins) -> "刚刚"
+    e2 = SessionEntry(
+        run_id="run-12345678",
+        task="task 2",
+        status="running",
+        turn_count=1,
+        updated_at=(now + timedelta(minutes=5)).isoformat(),
+    )
+    meta2 = format_session_meta(e2, now)
+    assert "刚刚" in meta2
