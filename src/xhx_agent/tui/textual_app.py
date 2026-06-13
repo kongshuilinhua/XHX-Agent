@@ -1496,16 +1496,24 @@ class TextualCommandConsoleApp(App[None]):
         ]
         self.present_picker(options, on_select=self._select_session, title="Select Conversation to Resume")
 
-    def handle_resume(self, run_id: str) -> None:
+    def handle_resume(self, run_id: str, *, auto: bool = False) -> None:
         if not run_id:
             # No id given: show the session picker (Arrow keys + Enter resumes directly).
             self.handle_sessions()
             return
-        from xhx_agent.runtime.session import load_session, load_transcript_messages
+        from xhx_agent.runtime.session import load_session, load_transcript_messages, load_view_log, resolve_run_id, list_sessions
         entry = load_session(self.workspace, run_id)
         if not entry:
-            self.append_message(f"system> Session '{run_id}' not found.")
-            return
+            resolved, cands = resolve_run_id(list_sessions(self.workspace), run_id)
+            if resolved:
+                entry = load_session(self.workspace, resolved)
+            elif len(cands) > 1:
+                self.append_message("system> 多个会话匹配，请补全：" + ", ".join(cands))
+                return
+            else:
+                self.append_message(f"system> Session '{run_id}' not found.")
+                return
+
         self.active_detail = "overview"
         self.detail_text = (
             "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
@@ -1532,6 +1540,11 @@ class TextualCommandConsoleApp(App[None]):
         if messages:
             # Feed the real transcript to the model on the next turn (true memory), not just the UI.
             self.prior_messages = messages
+
+        view = load_view_log(self.workspace, entry.view_path)
+        if view is not None:
+            self.messages = list(view)
+        elif messages:
             self.messages.clear()
             for msg in messages:
                 role = msg.get("role")
@@ -1551,7 +1564,10 @@ class TextualCommandConsoleApp(App[None]):
                     if content:
                         self.messages.append(f"assistant> {content}")
 
-        self.append_message(f"system> Switched follow-up context to session: {run_id}")
+        if auto:
+            self.append_message("system> 已自动恢复最近会话；/clear 或 /new 开新对话，/sessions 切换其它会话")
+        else:
+            self.append_message("system> 已恢复会话（完整界面+记忆），直接提问即可继续")
         self.refresh_snapshot()
 
 
