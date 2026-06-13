@@ -403,6 +403,12 @@ class TextualCommandConsoleApp(App[None]):
             self.query_one("#input", Input).focus()
         except Exception:
             pass
+        from xhx_agent.runtime.config import load_config
+        from xhx_agent.runtime.session import load_latest_session
+        if load_config(self.workspace).auto_resume:
+            latest = load_latest_session(self.workspace)
+            if latest is not None:
+                self.handle_resume(latest.run_id, auto=True)
 
     def refresh_snapshot(self) -> None:
         self.state.textual_messages = list(self.messages)  # type: ignore[attr-defined]

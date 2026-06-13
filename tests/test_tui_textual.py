@@ -1692,5 +1692,67 @@ def test_textual_auto_memory_skips_when_declined(tmp_path, monkeypatch) -> None:
     assert calls["wrote"] is False
 
 
+def test_textual_app_auto_resume_on_startup(tmp_path, monkeypatch) -> None:
+    from xhx_agent.runtime.session import SessionEntry, save_view_log
+    from xhx_agent.runtime.config import ProjectConfig
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.app import RunResult
+
+    # 1. Create a session history and view-log
+    run_id = "run-auto-123"
+    fake_entry = SessionEntry(
+        run_id=run_id,
+        task="do auto resume",
+        status="success",
+        conversation_id="conv-auto-id",
+        view_path=f".xhx/sessions/{run_id}.view.json"
+    )
+    save_view_log(tmp_path, run_id, ["user> hi", "assistant> hello"])
+
+    res = RunResult(run_id=run_id, status="success", changed_files=[], commands=[], verification="passed", summary_path="", risk_summary=[])
+    record_session(tmp_path, "do auto resume", res, conversation_id="conv-auto-id", view_path=f".xhx/sessions/{run_id}.view.json")
+
+    monkeypatch.setattr("xhx_agent.runtime.config.load_config", lambda ws: ProjectConfig(auto_resume=True))
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            # Assert that app auto-resumed
+            assert pilot.app.conversation_id == "conv-auto-id"
+            assert "user> hi" in pilot.app.messages
+            assert "assistant> hello" in pilot.app.messages
+            assert any("已自动恢复最近会话" in m for m in pilot.app.messages)
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+def test_textual_app_no_auto_resume_when_disabled(tmp_path, monkeypatch) -> None:
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.config import ProjectConfig
+    from xhx_agent.runtime.app import RunResult
+
+    run_id = "run-auto-123"
+    res = RunResult(run_id=run_id, status="success", changed_files=[], commands=[], verification="passed", summary_path="", risk_summary=[])
+    record_session(tmp_path, "do auto resume", res, conversation_id="conv-auto-id")
+
+    # Mock config to auto_resume=False
+    monkeypatch.setattr("xhx_agent.runtime.config.load_config", lambda ws: ProjectConfig(auto_resume=False))
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            # Should not be resumed
+            assert pilot.app.conversation_id != "conv-auto-id"
+            assert not pilot.app.messages
+
+    import asyncio
+    asyncio.run(run_app())
+
+
+
+
 
 
