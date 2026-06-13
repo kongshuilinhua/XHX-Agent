@@ -29,12 +29,17 @@ def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], 
     - 若 ChatResult 带 provider usage，则把真实 total 累加进 metrics_tracker['tokens_real']，
       并 emit 'token_usage'（cumulative_total 供状态条实时显示）。
     """
+    import time
+
     ctx.metrics_tracker["tokens"] = ctx.metrics_tracker.get("tokens", 0) + _estimate_message_tokens(messages)
+    t0 = time.perf_counter()
     result = client.chat(messages, schemas)
+    duration_ms = int((time.perf_counter() - t0) * 1000)
     usage = getattr(result, "usage", None)
     if usage is not None:
         cumulative = ctx.metrics_tracker.get("tokens_real", 0) + int(usage.total or 0)
         ctx.metrics_tracker["tokens_real"] = cumulative
+        model = getattr(client, "model", "")
         emit_event(
             ctx.event_callback,
             "token_usage",
@@ -43,6 +48,8 @@ def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], 
             completion=int(usage.completion or 0),
             total=int(usage.total or 0),
             cumulative_total=cumulative,
+            model=model,
+            duration_ms=duration_ms,
         )
     return result
 

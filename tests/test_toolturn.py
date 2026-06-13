@@ -194,3 +194,28 @@ def test_chat_and_count_no_usage_emits_no_token_event():
     assert [e for e in events if e.type == "token_usage"] == []
     # 估算路径仍然累加，保证回退可用
     assert ctx.metrics_tracker["tokens"] > 0
+
+
+def test_chat_and_count_emits_model_and_duration() -> None:
+    from types import SimpleNamespace
+
+    from xhx_agent.models.types import ChatResult, TokenUsage
+    from xhx_agent.orchestrators._toolturn import chat_and_count
+
+    events = []
+    ctx = SimpleNamespace(metrics_tracker={"tokens": 0}, event_callback=lambda e: events.append(e))
+
+    class FakeClient:
+        model = "deepseek-x"
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok", usage=TokenUsage(prompt=10, completion=6, total=16))
+
+    chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [])
+
+    token_events = [e for e in events if e.type == "token_usage"]
+    assert len(token_events) == 1
+    payload = token_events[0].payload
+    assert payload["model"] == "deepseek-x"
+    assert isinstance(payload["duration_ms"], int)
+    assert payload["duration_ms"] >= 0
+
