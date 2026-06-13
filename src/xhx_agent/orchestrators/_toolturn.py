@@ -35,6 +35,18 @@ def chat_and_count(ctx: OrchestratorContext, client: Any, messages: list[dict], 
     t0 = time.perf_counter()
     result = client.chat(messages, schemas)
     duration_ms = int((time.perf_counter() - t0) * 1000)
+
+    reasoning = getattr(result, "reasoning", None)
+    if reasoning:
+        emit_event(
+            ctx.event_callback,
+            "model_thinking",
+            "Model reasoning.",
+            turn=turn,
+            model=getattr(client, "model", ""),
+            text=reasoning,
+        )
+
     usage = getattr(result, "usage", None)
     if usage is not None:
         cumulative = ctx.metrics_tracker.get("tokens_real", 0) + int(usage.total or 0)

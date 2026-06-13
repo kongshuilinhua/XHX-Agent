@@ -247,3 +247,38 @@ def test_chat_and_count_emits_turn() -> None:
     assert token_events[1].payload["turn"] == 3
 
 
+def test_chat_and_count_emits_model_thinking() -> None:
+    from types import SimpleNamespace
+
+    from xhx_agent.models.types import ChatResult
+    from xhx_agent.orchestrators._toolturn import chat_and_count
+
+    events = []
+    ctx = SimpleNamespace(metrics_tracker={"tokens": 0}, event_callback=lambda e: events.append(e))
+
+    class FakeClient:
+        model = "deepseek-reasoner"
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok", reasoning="thinking process details")
+
+    result = chat_and_count(ctx, FakeClient(), [{"role": "user", "content": "hi"}], [])
+    assert result.content == "ok"
+    thinking_events = [e for e in events if e.type == "model_thinking"]
+    assert len(thinking_events) == 1
+    assert thinking_events[0].payload["text"] == "thinking process details"
+    assert thinking_events[0].payload["model"] == "deepseek-reasoner"
+    assert thinking_events[0].payload["turn"] == 0
+
+    # If reasoning is None, no event should be emitted
+    events.clear()
+    class FakeClientNoReasoning:
+        model = "deepseek-chat"
+        def chat(self, messages, schemas):
+            return ChatResult(content="ok", reasoning=None)
+
+    chat_and_count(ctx, FakeClientNoReasoning(), [{"role": "user", "content": "hi"}], [])
+    thinking_events = [e for e in events if e.type == "model_thinking"]
+    assert len(thinking_events) == 0
+
+
+
