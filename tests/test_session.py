@@ -6,6 +6,7 @@ from xhx_agent.runtime.session import (
     load_session,
     record_session,
     format_session_meta,
+    prune_legacy_sessions,
 )
 
 
@@ -272,3 +273,46 @@ def test_format_session_meta() -> None:
     )
     meta2 = format_session_meta(e2, now)
     assert "刚刚" in meta2
+
+
+def test_prune_legacy_sessions(tmp_path) -> None:
+    # Empty workspace -> 0
+    assert prune_legacy_sessions(tmp_path) == 0
+
+    # Record 3 sessions with view_path, and 2 sessions without view_path
+    # (use dict/fake-like result, or minimal result object)
+    from xhx_agent.runtime.app import RunResult
+    res = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="passed",
+        summary_path="",
+        risk_summary=[],
+    )
+    # 3 with view_path
+    record_session(tmp_path, "task 1", res, view_path=".xhx/sessions/run-1.view.json")
+    res.run_id = "run-2"
+    record_session(tmp_path, "task 2", res, view_path=".xhx/sessions/run-2.view.json")
+    res.run_id = "run-3"
+    record_session(tmp_path, "task 3", res, view_path=".xhx/sessions/run-3.view.json")
+
+    # 2 without view_path
+    res.run_id = "run-4"
+    record_session(tmp_path, "task 4", res, view_path=None)
+    res.run_id = "run-5"
+    record_session(tmp_path, "task 5", res, view_path="")
+
+    # Verify initial length is 5
+    assert len(list_sessions(tmp_path)) == 5
+
+    # Run prune
+    pruned = prune_legacy_sessions(tmp_path)
+    assert pruned == 2
+
+    # Check remaining
+    remaining = list_sessions(tmp_path)
+    assert len(remaining) == 3
+    assert all(e.view_path for e in remaining)
+    assert [e.run_id for e in remaining] == ["run-1", "run-2", "run-3"]

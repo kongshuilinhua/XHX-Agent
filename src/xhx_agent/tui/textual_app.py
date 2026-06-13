@@ -7,18 +7,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.suggester import Suggester
-from textual.widgets import Footer, Header, Input, Static, OptionList
+from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
-from textual import events
 
 from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
-from xhx_agent.runtime.session import record_session, save_view_log, list_sessions
+from xhx_agent.runtime.session import list_sessions, record_session, save_view_log
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.state import ConsoleState
 
@@ -50,8 +50,8 @@ SLASH_COMMAND_HINTS = [
 from xhx_agent.memory import list_memories, propose_memories, write_memory
 from xhx_agent.memory.store import slugify
 from xhx_agent.models import build_chat_client
-from xhx_agent.runtime.profiles import get_profile
 from xhx_agent.runtime.config import load_config
+from xhx_agent.runtime.profiles import get_profile
 
 
 class XhxTextualSuggester(Suggester):
@@ -386,10 +386,9 @@ class TextualCommandConsoleApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static(id="statusline")
-        with Horizontal(id="body"):
-            with VerticalScroll(id="conversation_scroll"):
-                yield Static(id="conversation")
-                yield Vertical(id="interactive_container")
+        with Horizontal(id="body"), VerticalScroll(id="conversation_scroll"):
+            yield Static(id="conversation")
+            yield Vertical(id="interactive_container")
         completer = XhxCompleter(self.workspace)
         yield Input(
             placeholder="Type a task or slash command. Press Tab or Right arrow to complete.",
@@ -703,6 +702,7 @@ class TextualCommandConsoleApp(App[None]):
                 "/clear     - Clear conversation messages and details",
                 "/new       - Clear conversation and start a new session",
                 "/sessions  - List recent recorded agent sessions (supports filtering by keyword)",
+                "/sessions clear - 清理无法恢复的旧会话",
                 "/resume    - Switch follow-up context to a past session (supports prefix/suffix)",
                 "/exit      - Exit the textual command console",
             ]
@@ -723,6 +723,7 @@ class TextualCommandConsoleApp(App[None]):
                         "/allow or /deny - answer pending confirmation",
                         "/cancel - request safe-boundary cancellation",
                         "/sessions [keyword] - list past sessions and filter by keyword",
+                        "/sessions clear - 清理无法恢复的旧会话",
                         "/new - start a new session",
                         "/resume <run_id_prefix> - switch follow-up context to a past session",
                     ]
@@ -775,7 +776,13 @@ class TextualCommandConsoleApp(App[None]):
             self.request_cancel()
             return True
         if command == "/sessions":
-            self.handle_sessions(argument)
+            if argument.strip() == "clear":
+                from xhx_agent.runtime.session import prune_legacy_sessions
+                n = prune_legacy_sessions(self.workspace)
+                self.append_message(f"system> 已清理 {n} 条旧会话")
+                self.refresh_snapshot()
+            else:
+                self.handle_sessions(argument)
             return True
         if command == "/resume":
             self.handle_resume(argument)
@@ -1020,7 +1027,7 @@ class TextualCommandConsoleApp(App[None]):
                             description = data.get("description", "")
                     except Exception:
                         pass
-            
+
             padded_name = f"{name_str:<{pad_width}}"
             if description:
                 lines.append(f"{padded_name}{description}")
@@ -1488,6 +1495,7 @@ class TextualCommandConsoleApp(App[None]):
         from datetime import UTC, datetime
 
         from rich.text import Text
+
         from xhx_agent.runtime.session import format_session_line, format_session_meta, list_conversations
         # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
         conversations = list_conversations(self.workspace)

@@ -1730,6 +1730,32 @@ def test_textual_run_task_saves_complete_view_log_at_turn_end(tmp_path) -> None:
     assert any(line.startswith("system> run finished:") for line in view)
 
 
+def test_textual_app_sessions_clear(tmp_path) -> None:
+    from xhx_agent.runtime.session import record_session
+    from xhx_agent.runtime.app import RunResult
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    # Record 1 with view_path, 1 without view_path
+    res = RunResult(
+        run_id="run-1",
+        status="success",
+        changed_files=[],
+        commands=[],
+        verification="passed",
+        summary_path="",
+        risk_summary=[],
+    )
+    record_session(tmp_path, "task 1", res, view_path=".xhx/sessions/run-1.view.json")
+    res.run_id = "run-2"
+    record_session(tmp_path, "task 2", res, view_path=None)
+
+    # Invoke /sessions clear
+    assert app.handle_text_input("/sessions clear")
+    assert "已清理 1 条旧会话" in app.messages[-1]
+
+
+
 
 
 

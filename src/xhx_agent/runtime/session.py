@@ -253,3 +253,27 @@ def format_session_meta(entry: SessionEntry, now: datetime) -> str:
     short_id = entry.run_id[-8:]
     return f"{rel_time} · {entry.status} · {entry.turn_count}轮 · …{short_id}"
 
+
+def prune_legacy_sessions(workspace: Path) -> int:
+    """Read history.jsonl, remove entries where view_path is empty/missing, and rewrite it directly."""
+    path = session_history_path(workspace)
+    if not path.exists():
+        return 0
+
+    entries = list_sessions(workspace)
+    if not entries:
+        return 0
+
+    valid_entries = [e for e in entries if e.view_path]
+    removed_count = len(entries) - len(valid_entries)
+
+    if removed_count > 0:
+        # Overwrite history.jsonl directly (no backup)
+        path.write_text(
+            "".join(e.model_dump_json() + "\n" for e in valid_entries),
+            encoding="utf-8"
+        )
+
+    return removed_count
+
+
