@@ -50,6 +50,9 @@ class XhxCompleter:
 
     def _get_path_completions(self, prefix: str) -> list[str]:
         prefix_normalized = prefix.replace("\\", "/")
+        # 空前缀不做整仓遍历（否则在 UI 线程上 glob("**/*") 卡顿）。
+        if not prefix_normalized:
+            return []
         index = self.get_index()
         paths = []
         if index and index.repo_map:
@@ -63,7 +66,7 @@ class XhxCompleter:
                 ]
             except Exception:
                 pass
-        return [p for p in paths if p.startswith(prefix_normalized)]
+        return [p for p in paths if p.startswith(prefix_normalized)][:50]
 
     def _get_symbol_completions(self, prefix: str) -> list[str]:
         if len(prefix) < 2:

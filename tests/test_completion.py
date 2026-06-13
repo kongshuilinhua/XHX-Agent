@@ -26,3 +26,16 @@ def test_completer_paths(tmp_path):
     # 输入以 "src/" 开头的文件路径补全
     res = completer.get_completions("src/")
     assert "src/agent/app.py" in res
+
+
+def test_completer_empty_path_prefix_does_not_walk_repo(tmp_path):
+    """回归：空前缀路径补全不得遍历整仓（否则在 UI 线程上卡顿）。"""
+    for i in range(5):
+        (tmp_path / f"f{i}.py").touch()
+    completer = XhxCompleter(tmp_path)
+    # "/plan " 的空 arg 不做整仓路径补全
+    assert completer.get_completions("/plan ") == []
+    # 直接空前缀路径补全也返回空
+    assert completer._get_path_completions("") == []
+    # 非空前缀仍正常
+    assert any(p.startswith("f") for p in completer._get_path_completions("f"))
