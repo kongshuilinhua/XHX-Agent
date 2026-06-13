@@ -54,10 +54,13 @@ SLASH_COMMANDS = {
     "/live",
     "/cancel",
     "/clear",
+    "/sessions",
+    "/resume",
     "/exit",
     "/remember",
     "/memory",
     "/automem",
+    "/compact",
 }
 
 
@@ -76,8 +79,12 @@ class CommandConsole:
         self.assume_yes = False
         self.auto_memory = True
         self.last_result: RunResult | None = None
+        # Real model-facing conversation history carried across turns so the model remembers the
+        # dialogue (not just the metadata follow-up summary). None until the first turn populates it.
+        self.prior_messages: list[dict] | None = None
         self.last_manual_verification: ManualVerificationResult | None = None
         self.last_manual_repair: ManualRepairResult | None = None
+        self._answer_streamed = False
         self.last_user_task: str | None = None
         self.last_runtime_task: str | None = None
         self.events: list[RuntimeEvent] = []
@@ -108,8 +115,8 @@ class CommandConsole:
             except KeyboardInterrupt:
                 if self.request_cancel("Keyboard interrupt requested cancellation."):
                     continue
-                self.console.print("Exiting xhx-agent console.")
-                return
+                self.console.print("\nUse /exit to quit.")
+                continue
             if not self.handle_input(text):
                 return
 
@@ -157,13 +164,22 @@ class CommandConsole:
             self.request_cancel()
         elif command == "/clear":
             self.console.clear()
+            # Start a fresh conversation: drop the model-facing history too.
+            self.prior_messages = None
+            self.last_result = None
             self.print_dashboard()
+        elif command == "/sessions":
+            self.handle_sessions()
+        elif command == "/resume":
+            self.handle_resume(argument.strip())
         elif command == "/remember":
             self.handle_remember(argument.strip())
         elif command == "/memory":
             self.handle_memory()
         elif command == "/automem":
             self.set_auto_memory(argument.strip())
+        elif command == "/compact":
+            self.handle_compact(argument.strip())
         else:
             self.console.print(f"Unknown command: {command}. Type /help.")
         return True
@@ -179,7 +195,13 @@ class CommandConsole:
 
     def run_task(self, task: str) -> None:
         self.cancel_requested = False
-        runtime_task = self.build_runtime_task(task)
+        self._answer_streamed = False
+        # With real conversation history in hand, send the raw task and let prior_messages carry
+        # the memory; otherwise fall back to the metadata follow-up summary.
+        if self.prior_messages:
+            runtime_task = task
+        else:
+            runtime_task = self.build_runtime_task(task)
         self.last_user_task = task
         self.last_runtime_task = runtime_task
         self.console.print(Panel(task, title="Task"))
@@ -198,6 +220,7 @@ class CommandConsole:
                             event_callback=self.handle_event,
                             cancel_check=self.is_cancel_requested,
                             mode=self.orchestrator_mode,
+                            prior_messages=self.prior_messages,
                         )
                 else:
                     self.print_dashboard()
@@ -210,6 +233,7 @@ class CommandConsole:
                         event_callback=self.handle_event,
                         cancel_check=self.is_cancel_requested,
                         mode=self.orchestrator_mode,
+                        prior_messages=self.prior_messages,
                     )
         except KeyboardInterrupt:
             self.request_cancel("Keyboard interrupt requested cancellation.", force=True)
@@ -219,7 +243,24 @@ class CommandConsole:
         self.state.apply_result(result)
         self.print_run_result(result)
         self._maybe_suggest_memories(result)
+        # Carry the full conversation forward: this run's transcript already includes the prior
+        # history we passed in, so the next turn restores complete context (real memory).
+        self._refresh_prior_messages(result)
         self.print_dashboard()
+
+    def _refresh_prior_messages(self, result: RunResult) -> None:
+        """Reload the just-finished run's transcript so the next turn keeps full memory."""
+        path = getattr(result, "transcript_path", None)
+        if not path:
+            return
+        try:
+            from xhx_agent.runtime.session import load_transcript_messages
+
+            messages = load_transcript_messages(self.workspace, path)
+            if messages:
+                self.prior_messages = messages
+        except Exception:
+            pass
 
     @contextmanager
     def open_live_dashboard(self) -> Iterator[LiveDashboard]:
@@ -282,6 +323,7 @@ class CommandConsole:
             self.refresh_live_dashboard(refresh=False)
             if not self.live_enabled:
                 self.console.print(event.message, end="")
+                self._answer_streamed = True
             return
         self.refresh_live_dashboard(refresh=True)
         if self.live_enabled:
@@ -338,10 +380,13 @@ class CommandConsole:
             ("/dashboard", "Render the console dashboard."),
             ("/live [on|off]", "Toggle Rich Live dashboard refresh."),
             ("/cancel", "Request cancellation at the next safe runtime boundary."),
-            ("/clear", "Clear terminal."),
+            ("/clear", "Clear terminal and start a fresh conversation."),
+            ("/sessions", "List past recorded sessions."),
+            ("/resume <run_id>", "Switch follow-up context to a past session."),
             ("/remember <text>", "Remember a fact across sessions."),
             ("/memory", "List remembered facts."),
             ("/automem [on|off]", "Toggle auto memory suggest-confirm or show status."),
+            ("/compact [instructions]", "Manually trigger conversation history compaction."),
             ("/exit", "Exit console."),
         ]
         for command, behavior in rows:
@@ -687,7 +732,7 @@ class CommandConsole:
         return table
 
     def print_run_result(self, result: RunResult) -> None:
-        if result.answer:
+        if result.answer and not self._answer_streamed:
             self.console.print(Panel(result.answer, title="Answer", border_style="green"))
         table = Table(title="Run Result")
         table.add_column("Field")
@@ -747,6 +792,58 @@ class CommandConsole:
             self.auto_memory = False
         self.console.print(f"auto_memory: {str(self.auto_memory).lower()}")
 
+    def handle_compact(self, instructions: str) -> None:
+        if not self.prior_messages:
+            self.console.print("[yellow]No message history to compact in the current session.[/yellow]")
+            return
+
+        from xhx_agent.runtime.profiles import get_profile
+        from xhx_agent.models.routing import resolve_profile_for_role
+        from xhx_agent.models import build_chat_client
+
+        profile = get_profile(self.workspace, self.active_profile_name())
+        try:
+            summarizer = build_chat_client(
+                resolve_profile_for_role(self.workspace, "summarize", profile.name)
+            )
+            summarize_fn = getattr(summarizer, "summarize", None)
+        except Exception as e:
+            self.console.print(f"[red]Failed to initialize summarizer: {e}[/red]")
+            return
+
+        if not summarize_fn:
+            self.console.print("[red]Summarize client capability not found on active profile.[/red]")
+            return
+
+        from xhx_agent.orchestrators.compaction import compact_messages
+        len_before = len(self.prior_messages)
+        try:
+            compacted = compact_messages(
+                self.prior_messages,
+                summarize_fn,
+                force=True,
+                custom_instructions=instructions.strip() or None
+            )
+        except Exception as e:
+            self.console.print(f"[red]Failed to run compaction: {e}[/red]")
+            return
+
+        len_after = len(compacted)
+        if len_after < len_before:
+            self.prior_messages = compacted
+            self.console.print(f"[green]Successfully compacted history from {len_before} to {len_after} messages.[/green]")
+
+            from xhx_agent.runtime.session import load_latest_session, save_transcript
+            latest = load_latest_session(self.workspace)
+            if latest and latest.transcript_path:
+                try:
+                    save_transcript(self.workspace, latest.run_id, self.prior_messages)
+                    self.console.print(f"[dim]Saved compacted transcript back to disk for run {latest.run_id}.[/dim]")
+                except Exception as e:
+                    self.console.print(f"[yellow]Warning: failed to save compacted transcript to disk: {e}[/yellow]")
+        else:
+            self.console.print("[yellow]Compaction result did not reduce the message count (possibly already compacted).[/yellow]")
+
     def _maybe_suggest_memories(self, result: RunResult) -> None:
         """跑完（成功）后自动抽取候选记忆并逐条请用户确认（suggest-confirm）。
 
@@ -796,4 +893,47 @@ class CommandConsole:
             return bool(typer.confirm("Save to long-term memory?", default=False))
         except Exception:
             return False
+
+    def handle_sessions(self) -> None:
+        from xhx_agent.runtime.session import list_conversations
+        # One row per conversation (a multi-turn dialogue collapses to its latest, full transcript).
+        conversations = list_conversations(self.workspace)
+        if not conversations:
+            self.console.print("No sessions recorded yet.")
+            return
+        table = Table(title="Conversations")
+        table.add_column("run_id")
+        table.add_column("status")
+        table.add_column("verification")
+        table.add_column("task")
+        for entry in list(reversed(conversations))[:20]:
+            table.add_row(entry.run_id, entry.status, entry.verification, entry.task[:60])
+        self.console.print(table)
+
+    def handle_resume(self, run_id: str) -> None:
+        if not run_id:
+            self.console.print("[red]Please specify the session ID: /resume <run_id>[/red]")
+            return
+        from xhx_agent.runtime.session import load_session, load_transcript_messages
+        entry = load_session(self.workspace, run_id)
+        if not entry:
+            self.console.print(f"[red]Session '{run_id}' not found.[/red]")
+            return
+        from xhx_agent.runtime.app import RunResult
+        result = RunResult(
+            run_id=entry.run_id,
+            status=entry.status,
+            changed_files=list(entry.changed_files),
+            commands=[],
+            verification=entry.verification,
+            summary_path=entry.summary_path or "",
+            risk_summary=[],
+        )
+        self.last_result = result
+        self.state.apply_result(result)
+        # Feed the real transcript to the model on the next turn (true memory), not just a metadata blurb.
+        messages = load_transcript_messages(self.workspace, entry.transcript_path)
+        if messages:
+            self.prior_messages = messages
+        self.console.print(f"[green]Switched follow-up context to session: [bold]{run_id}[/bold][/green]")
 

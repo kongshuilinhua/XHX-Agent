@@ -400,3 +400,29 @@ def test_command_console_exit_returns_false(tmp_path: Path) -> None:
     command_console = CommandConsole(tmp_path, console=_console())
 
     assert command_console.handle_input("/exit") is False
+
+
+def test_command_console_keyboard_interrupt_no_exit(tmp_path: Path) -> None:
+    RuntimeApp(tmp_path).init_project()
+    console = _console()
+    command_console = CommandConsole(tmp_path, console=console)
+
+    calls = []
+
+    def mock_prompt(*args, **kwargs):
+        if not calls:
+            calls.append(1)
+            raise KeyboardInterrupt()
+        return "/exit"
+
+    class FakePromptSession:
+        def prompt(self, *args, **kwargs):
+            return mock_prompt(*args, **kwargs)
+
+    command_console.prompt_session = FakePromptSession()  # type: ignore[assignment]
+    command_console.run()
+
+    output = console.export_text()
+    assert "Use /exit to quit." in output
+    assert "Exiting xhx-agent console." in output
+

@@ -296,7 +296,7 @@ class TextualCommandConsoleApp(App[None]):
     """
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+c", "cancel_task", "Cancel"),
         ("ctrl+l", "clear", "Clear"),
     ]
 
@@ -420,6 +420,12 @@ class TextualCommandConsoleApp(App[None]):
             "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
         )
         self.refresh_snapshot()
+
+    def action_cancel_task(self) -> None:
+        if self.is_task_running():
+            self.request_cancel("Keyboard interrupt requested cancellation.")
+        else:
+            self.append_message("system> Use /exit to quit the console.")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         stripped = event.value.strip()

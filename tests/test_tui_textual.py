@@ -1620,3 +1620,20 @@ def test_textual_timeline_skips_non_visible_events(tmp_path) -> None:
     assert len(app.messages) == before
 
 
+def test_textual_action_cancel_task(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    assert not app.is_task_running()
+
+    app.action_cancel_task()
+    assert "Use /exit to quit the console." in app.messages[-1]
+
+    state = ConsoleState()
+    state.status = "running_tool"
+    app_running = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
+    assert app_running.is_task_running()
+
+    app_running.action_cancel_task()
+    assert app_running.is_cancel_requested() is True
+
+
+
