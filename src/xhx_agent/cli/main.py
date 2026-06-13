@@ -23,8 +23,8 @@ from rich.console import Console
 
 from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
 from xhx_agent.runtime.app import RuntimeApp
-from xhx_agent.runtime.config import load_config
-from xhx_agent.runtime.profiles import load_profiles
+from xhx_agent.runtime.config import global_config_path, load_config, write_global_config
+from xhx_agent.runtime.profiles import global_profiles_path, load_profiles, write_global_profiles
 from xhx_agent.runtime.session import (
     format_follow_up,
     load_latest_session,
@@ -69,7 +69,27 @@ console = Console()
 
 
 @app.command("init")
-def init() -> None:
+def init(
+    global_: Annotated[
+        bool,
+        typer.Option(
+            "--global",
+            help="Write user-level config to ~/.xhx (config + profiles) so any directory can use it.",
+        ),
+    ] = False,
+) -> None:
+    if global_:
+        config_created = write_global_config()
+        profiles_created = write_global_profiles()
+        console.print("Initialized xhx-agent global config (~/.xhx).")
+        console.print(f"config.json: {'created' if config_created else 'exists'} ({global_config_path()})")
+        console.print(f"profiles.json: {'created' if profiles_created else 'exists'} ({global_profiles_path()})")
+        console.print(
+            "Next: edit the 'default' profile in the global profiles.json with your real "
+            "base_url/model/api_key_env, then export that API key. After that any directory "
+            "falls back to this profile automatically."
+        )
+        return
     result = RuntimeApp().init_project()
     console.print("Initialized xhx-agent project.")
     console.print(f"config.json: {'created' if result.config_created else 'exists'}")

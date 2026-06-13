@@ -86,6 +86,18 @@ uv run xhx init          # creates .xhx/, XHX.md, and the repo index
 uv run xhx repo-index    # prints index diagnostics
 ```
 
+**Configure your model once, use it from any directory.** Model config resolves
+`project .xhx/ → user-level ~/.xhx/ → built-in placeholder`, so you set up a real
+provider once globally and every directory falls back to it:
+
+```bash
+uv run xhx init --global   # writes ~/.xhx/{config.json,profiles.json}
+# edit the `default` profile in ~/.xhx/profiles.json (base_url/model/api_key_env),
+# then export that API key — now `xhx tui`/`xhx run` work from anywhere.
+```
+
+A project `.xhx/profiles.json` still overrides the global one (e.g. pin `mock` for CI).
+
 Real output from this repository:
 
 ```text
@@ -209,7 +221,7 @@ uv run xhx run "<task>" [options]
 
 | Option | Description |
 |:--|:--|
-| `--profile <name>` | LLM profile from `.xhx/profiles.json` (`mock` runs offline). |
+| `--profile <name>` | LLM profile, resolved `project .xhx/ → ~/.xhx/ → built-in` (`mock` runs offline). |
 | `--mode <loop\|plan\|graph\|linear\|dag>` | Pick the orchestrator paradigm (default: `loop`). |
 | `--auto-repair` | Enable up to 2 self-repair rounds when targeted verification fails. |
 | `--dry-run` | Preview plan, token budget, and risks, then exit. |
@@ -218,7 +230,7 @@ uv run xhx run "<task>" [options]
 | `--continue` | Resume from the most recent session, injecting its summary as context. |
 | `--resume <run-id>` | Resume from a specific past session (`xhx sessions` lists them). |
 
-Other commands: `init`, `repo-index`, `sessions`, `chat`, `tui`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`.
+Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `sessions`, `chat`, `tui`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`.
 
 ### REPL slash commands
 

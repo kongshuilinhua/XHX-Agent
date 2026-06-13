@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from xhx_agent.runtime.paths import ensure_xhx_dirs, xhx_dir
+from xhx_agent.runtime.paths import ensure_xhx_dirs, global_xhx_dir, xhx_dir
 
 
 class RoutingConfig(BaseModel):
@@ -42,6 +42,10 @@ def config_path(workspace: Path) -> Path:
     return xhx_dir(workspace) / "config.json"
 
 
+def global_config_path() -> Path:
+    return global_xhx_dir() / "config.json"
+
+
 def write_default_config(workspace: Path) -> bool:
     ensure_xhx_dirs(workspace)
     path = config_path(workspace)
@@ -51,8 +55,34 @@ def write_default_config(workspace: Path) -> bool:
     return True
 
 
-def load_config(workspace: Path) -> ProjectConfig:
-    path = config_path(workspace)
+def write_global_config() -> bool:
+    """把全局默认 config 写到 ~/.xhx/config.json（已存在则不覆盖）。
+
+    全局默认 default_profile 设为 "default"——用户级配置意味着“我要真模型”，
+    而非项目级 init 那种零配置离线 mock。
+    """
+    path = global_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return False
+    config = default_config().model_copy(update={"default_profile": "default"})
+    path.write_text(config.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def _read_config(path: Path) -> ProjectConfig | None:
     if not path.exists():
-        return default_config()
+        return None
     return ProjectConfig.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+
+def load_config(workspace: Path) -> ProjectConfig:
+    """项目级 .xhx/config.json 优先，其次用户级 ~/.xhx/config.json，最后内置默认。
+
+    模型配置本就是“配一次、到处用”，所以在任意目录启动都能回落到全局配置。
+    """
+    for path in (config_path(workspace), global_config_path()):
+        config = _read_config(path)
+        if config is not None:
+            return config
+    return default_config()

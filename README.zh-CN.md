@@ -86,6 +86,17 @@ uv run xhx init          # 创建 .xhx/、XHX.md 和仓库索引
 uv run xhx repo-index    # 打印索引诊断
 ```
 
+**模型配一次，任意目录都能用。** 模型配置按 `项目级 .xhx/ → 用户级 ~/.xhx/ → 内置占位`
+解析，所以全局配一次真实 provider，之后在哪个目录启动都会回落到它：
+
+```bash
+uv run xhx init --global   # 写入 ~/.xhx/{config.json,profiles.json}
+# 编辑 ~/.xhx/profiles.json 里的 `default` profile（base_url/model/api_key_env），
+# 再 export 对应 API key——此后 `xhx tui`/`xhx run` 在任意目录都直接可用。
+```
+
+项目级 `.xhx/profiles.json` 仍会覆盖全局（比如给 CI 钉死 `mock`）。
+
 来自本仓库的真实输出：
 
 ```text
@@ -209,7 +220,7 @@ uv run xhx run "<task>" [options]
 
 | 选项 | 说明 |
 |:--|:--|
-| `--profile <name>` | 来自 `.xhx/profiles.json` 的 LLM profile（`mock` 离线运行）。 |
+| `--profile <name>` | LLM profile，按 `项目级 .xhx/ → ~/.xhx/ → 内置` 解析（`mock` 离线运行）。 |
 | `--mode <loop\|plan\|graph\|linear\|dag>` | 选择编排器范式（默认：`loop`）。 |
 | `--auto-repair` | 定向验证失败时，启用最多 2 轮自我修复。 |
 | `--dry-run` | 预览计划、token 预算与风险后退出。 |
@@ -218,7 +229,7 @@ uv run xhx run "<task>" [options]
 | `--continue` | 从最近一次会话恢复，并把其摘要作为上下文注入。 |
 | `--resume <run-id>` | 从指定的历史会话恢复（`xhx sessions` 可列出）。 |
 
-其他命令：`init`、`repo-index`、`sessions`、`chat`、`tui`、`rpc`（stdio 上的 JSON-RPC 2.0）、`replay <run-id>`、`benchmark`、`memory`。
+其他命令：`init`（`--global` 写用户级 `~/.xhx/`）、`repo-index`、`sessions`、`chat`、`tui`、`rpc`（stdio 上的 JSON-RPC 2.0）、`replay <run-id>`、`benchmark`、`memory`。
 
 ### REPL slash 命令
 
