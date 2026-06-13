@@ -195,9 +195,8 @@ def resolve_run_id(entries: list[SessionEntry], token: str) -> tuple[str | None,
     # Prefix or suffix matches
     cands = []
     for entry in entries:
-        if entry.run_id.startswith(token) or entry.run_id.endswith(token):
-            if entry.run_id not in cands:
-                cands.append(entry.run_id)
+        if (entry.run_id.startswith(token) or entry.run_id.endswith(token)) and entry.run_id not in cands:
+            cands.append(entry.run_id)
 
     if len(cands) == 1:
         return cands[0], []
@@ -227,9 +226,7 @@ def format_session_line(entry: SessionEntry, now: datetime) -> str:
 
     diff = now - t
     diff_sec = diff.total_seconds()
-    if diff_sec < 0:
-        rel_time = "刚刚"
-    elif diff_sec < 60:
+    if diff_sec < 60:  # 含未来时间（diff_sec < 0）一并归为「刚刚」
         rel_time = "刚刚"
     elif diff_sec < 3600:
         rel_time = f"{int(diff_sec // 60)}分钟前"

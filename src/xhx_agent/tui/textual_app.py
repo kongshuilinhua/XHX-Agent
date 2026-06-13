@@ -1490,8 +1490,9 @@ class TextualCommandConsoleApp(App[None]):
         return []
 
     def handle_sessions(self, query: str = "") -> None:
-        from xhx_agent.runtime.session import list_conversations, format_session_line
-        from datetime import datetime, UTC
+        from datetime import UTC, datetime
+
+        from xhx_agent.runtime.session import format_session_line, list_conversations
         # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
         conversations = list_conversations(self.workspace)
         if not conversations:
@@ -1522,7 +1523,14 @@ class TextualCommandConsoleApp(App[None]):
             # No id given: show the session picker (Arrow keys + Enter resumes directly).
             self.handle_sessions()
             return
-        from xhx_agent.runtime.session import load_session, load_transcript_messages, load_view_log, resolve_run_id, list_sessions
+        from xhx_agent.runtime.session import (
+            list_sessions,
+            load_session,
+            load_transcript_messages,
+            load_view_log,
+            resolve_run_id,
+        )
+
         entry = load_session(self.workspace, run_id)
         if not entry:
             resolved, cands = resolve_run_id(list_sessions(self.workspace), run_id)
