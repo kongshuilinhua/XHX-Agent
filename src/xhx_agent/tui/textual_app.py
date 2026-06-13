@@ -21,6 +21,8 @@ from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.runtime.session import list_sessions, record_session, save_view_log
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.state import ConsoleState
+from xhx_agent.tui.format import context_meter, human_tokens
+
 
 SLASH_COMMAND_HINTS = [
     "/help",
@@ -111,10 +113,22 @@ class TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
         streaming = getattr(state, "is_streaming", False)
+        ctx_label, _, ctx_level = context_meter(
+            state.context_used_tokens_estimate, state.context_budget_tokens
+        )
+        if ctx_level == "ok":
+            ctx_str = f"[green]{ctx_label}[/green]"
+        elif ctx_level == "warn":
+            ctx_str = f"[yellow]{ctx_label}[/yellow]"
+        elif ctx_level == "crit":
+            ctx_str = f"[red]{ctx_label}[/red]"
+        else:
+            ctx_str = ctx_label
+
         status_line = (
             f"state: {state.status}  •  mode: {state.mode}  •  turn: {state.context_turn or 0}"
-            f"  •  tokens: {state.tokens_total}"
-            f"  •  ctx: {state.context_used_tokens_estimate}/{state.context_budget_tokens or 0}"
+            f"  •  tokens: {human_tokens(state.tokens_total)}"
+            f"  •  {ctx_str}"
             f"  •  verify: {state.verification}  •  changed: {len(state.changed_files)}"
             f"  •  streaming: {'yes' if streaming else 'no'}"
         )

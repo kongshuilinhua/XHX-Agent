@@ -1140,7 +1140,7 @@ def test_textual_snapshot_status_line() -> None:
     assert "mode: loop" in snapshot.status_line
     assert "turn: 3" in snapshot.status_line
     assert "tokens: 120" in snapshot.status_line
-    assert "ctx: 400/6000" in snapshot.status_line
+    assert "[green]Context 400/6k 6.7%[/green]" in snapshot.status_line
     assert "verify: running" in snapshot.status_line
     assert "changed: 2" in snapshot.status_line
     assert "streaming: yes" in snapshot.status_line
