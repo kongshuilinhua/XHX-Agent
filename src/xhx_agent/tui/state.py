@@ -15,6 +15,7 @@ class ToolActivity:
     turn: int | None = None
     status: str = "running"
     summary: str = ""
+    arguments: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -139,6 +140,7 @@ class ConsoleState:
                 ToolActivity(
                     tool=str(payload.get("tool", "unknown")),
                     turn=_optional_int(payload.get("turn")),
+                    arguments=payload.get("arguments", {}),
                 )
             )
         elif event.type == "policy_decision":
@@ -225,6 +227,8 @@ class ConsoleState:
             if item.tool == tool and (turn is None or item.turn == turn) and item.status == "running":
                 item.status = str(event.payload.get("status", "finished"))
                 item.summary = str(event.payload.get("summary", event.message))
+                if "arguments" in event.payload:
+                    item.arguments = event.payload.get("arguments", {})
                 break
         else:
             self.tools.append(
@@ -233,6 +237,7 @@ class ConsoleState:
                     turn=turn,
                     status=str(event.payload.get("status", "finished")),
                     summary=str(event.payload.get("summary", event.message)),
+                    arguments=event.payload.get("arguments", {}),
                 )
             )
         self.status = "running"

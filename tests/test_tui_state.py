@@ -123,3 +123,35 @@ def test_console_state_tracks_compaction() -> None:
     assert state.compaction_last_before == 30
     assert state.compaction_last_after == 15
 
+
+def test_console_state_tool_activity_payload() -> None:
+    state = ConsoleState()
+    state.reduce(
+        RuntimeEvent(
+            type="tool_start",
+            message="Tool started.",
+            payload={"turn": 1, "tool": "verify", "arguments": {"command": "pytest"}},
+        )
+    )
+    assert len(state.tools) == 1
+    assert state.tools[0].tool == "verify"
+    assert state.tools[0].turn == 1
+    assert state.tools[0].arguments == {"command": "pytest"}
+    assert state.tools[0].status == "running"
+
+    state.reduce(
+        RuntimeEvent(
+            type="tool_result",
+            message="Tool finished.",
+            payload={
+                "turn": 1,
+                "tool": "verify",
+                "status": "failed",
+                "summary": "tests failed",
+            },
+        )
+    )
+    assert state.tools[0].status == "failed"
+    assert state.tools[0].summary == "tests failed"
+
+
