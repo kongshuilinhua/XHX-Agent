@@ -406,12 +406,6 @@ class TextualCommandConsoleApp(App[None]):
             self.query_one("#input", Input).focus()
         except Exception:
             pass
-        from xhx_agent.runtime.config import load_config
-        from xhx_agent.runtime.session import load_latest_session
-        if load_config(self.workspace).auto_resume:
-            latest = load_latest_session(self.workspace)
-            if latest is not None:
-                self.handle_resume(latest.run_id, auto=True)
 
     def refresh_snapshot(self) -> None:
         self.state.textual_messages = list(self.messages)  # type: ignore[attr-defined]
@@ -1518,7 +1512,7 @@ class TextualCommandConsoleApp(App[None]):
         ]
         self.present_picker(options, on_select=self._select_session, title="Select Conversation to Resume")
 
-    def handle_resume(self, run_id: str, *, auto: bool = False) -> None:
+    def handle_resume(self, run_id: str) -> None:
         if not run_id:
             # No id given: show the session picker (Arrow keys + Enter resumes directly).
             self.handle_sessions()
@@ -1593,12 +1587,8 @@ class TextualCommandConsoleApp(App[None]):
                     if content:
                         self.messages.append(f"assistant> {content}")
 
-        if auto:
-            self.append_message("system> 已自动恢复最近会话；/clear 或 /new 开新对话，/sessions 切换其它会话")
-        else:
-            self.append_message("system> 已恢复会话（完整界面+记忆），直接提问即可继续")
+        self.append_message("system> 已恢复会话（完整界面+记忆），直接提问即可继续")
         self.refresh_snapshot()
-
 
 def run_textual_console(
     *,
