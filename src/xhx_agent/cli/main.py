@@ -238,16 +238,14 @@ def chat(
     workspace = Path.cwd()
     config = load_config(workspace)
     active_profile = profile or config.default_profile
-    cc = CommandConsole(workspace=workspace, console=console)
-    cc.profile_name = active_profile
-    cc.run()
+    run_textual_console(workspace=workspace, profile=active_profile)
 
 
 @app.command("tui")
 def tui(
     fullscreen: Annotated[
-        bool, typer.Option("--fullscreen", help="Run the experimental fullscreen Textual console.")
-    ] = False,
+        bool, typer.Option("--fullscreen", help="Deprecated: fullscreen is now the default.")
+    ] = True,
     profile: Annotated[
         str | None, typer.Option("--profile", help="Model profile name.")
     ] = None,
@@ -255,12 +253,7 @@ def tui(
     workspace = Path.cwd()
     config = load_config(workspace)
     active_profile = profile or config.default_profile
-    if fullscreen:
-        run_textual_console(workspace=workspace, profile=active_profile)
-        return
-    cc = CommandConsole(workspace=workspace, console=console)
-    cc.profile_name = active_profile
-    cc.run()
+    run_textual_console(workspace=workspace, profile=active_profile)
 
 
 @config_app.command("list")
