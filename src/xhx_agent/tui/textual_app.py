@@ -20,9 +20,9 @@ from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.runtime.session import list_sessions, record_session, save_view_log
 from xhx_agent.safety.policy import PolicyDecision
-from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.format import context_meter, human_tokens
-
+from xhx_agent.tui.state import ConsoleState
+from xhx_agent.tui.tool_display import tool_header
 
 SLASH_COMMAND_HINTS = [
     "/help",
@@ -1179,14 +1179,23 @@ class TextualCommandConsoleApp(App[None]):
         et = event.type
         p = event.payload or {}
         if et == "tool_start":
-            return f"  ⟶ tool  {p.get('tool', '?')}"
+            header = tool_header(p.get("tool", "unknown"), p.get("arguments", {}))
+            line = f"  ⟶ {header}"
+            if getattr(self, "verbose", False):
+                import json
+                try:
+                    args_str = json.dumps(p.get("arguments", {}), ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    args_str = str(p.get("arguments", {}))
+                line += f"\n     args: {args_str}"
+            return line
         if et == "tool_result":
             summary = (p.get("summary") or event.message or "").strip().replace("\n", " ")
-            if len(summary) > 80:
+            if not getattr(self, "verbose", False) and len(summary) > 80:
                 summary = summary[:80] + "…"
-            glyph = "✗" if str(p.get("status")) in {"failed", "error"} else "✓"
+            glyph = "✗" if str(p.get("status")) in {"failed", "error", "denied"} else "✓"
             tail = f" → {summary}" if summary else ""
-            return f"  {glyph} tool  {p.get('tool', '?')}{tail}"
+            return f"  {glyph} {p.get('tool', '?')}{tail}"
         if et in {"graph_coordinator", "graph_worker", "graph_execute", "graph_review"}:
             role = et.removeprefix("graph_")
             msg = (event.message or "").strip().replace("\n", " ")

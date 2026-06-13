@@ -1612,13 +1612,13 @@ def test_textual_timeline_translates_runtime_events_into_messages(tmp_path) -> N
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
     app.handle_runtime_event(
-        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1})
+        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}})
     )
     app.handle_runtime_event(
         RuntimeEvent(
             type="tool_result",
             message="",
-            payload={"tool": "search", "status": "success", "summary": "0 hits", "turn": 1},
+            payload={"tool": "search", "status": "failed", "summary": "error detail", "turn": 1},
         )
     )
     app.handle_runtime_event(
@@ -1636,8 +1636,8 @@ def test_textual_timeline_translates_runtime_events_into_messages(tmp_path) -> N
     )
 
     joined = "\n".join(app.messages)
-    assert "⟶ tool  search" in joined
-    assert "✓ tool  search → 0 hits" in joined
+    assert '⟶ search "hello"' in joined
+    assert "✗ search → error detail" in joined
     assert "▸ agent  review  round 1: passed" in joined
     assert "⚙ verify  python -m pytest" in joined
     assert "→ failed(exit 1)" in joined
