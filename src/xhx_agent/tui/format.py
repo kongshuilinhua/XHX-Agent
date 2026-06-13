@@ -35,6 +35,8 @@ def line_style(line: str) -> str:
         return "dim italic"
 
     stripped = line.lstrip()
+    if stripped.startswith("·"):
+        return "dim"
     if stripped.startswith("⟶"):
         return "blue"
     if stripped.startswith("✓"):

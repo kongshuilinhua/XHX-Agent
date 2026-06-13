@@ -145,6 +145,67 @@ def test_textual_conversation_coloring(tmp_path) -> None:
     asyncio.run(run_app())
 
 
+def test_textual_conversation_coloring_metrics(tmp_path) -> None:
+    from rich.text import Text
+
+    from xhx_agent.runtime.events import RuntimeEvent
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    # Send a token_usage event with model and duration_ms
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={
+                "prompt": 1000,
+                "completion": 500,
+                "cumulative_total": 1500,
+                "model": "deepseek-chat",
+                "duration_ms": 2500,
+            },
+        )
+    )
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            conversation_widget = pilot.app.query_one("#conversation")
+            renderable = conversation_widget.content
+            assert isinstance(renderable, Text)
+            plain = renderable.plain
+            assert "deepseek-chat" in plain
+            assert "2.5s" in plain
+            assert "in 1k/out 500" in plain
+
+            # Check the status bar contains the model name
+            statusline_widget = pilot.app.query_one("#statusline")
+            status_content = str(statusline_widget.content)
+            assert "deepseek-chat" in status_content
+
+            # Test token_usage without model (should not render timeline line)
+            app.apply_runtime_event(
+                RuntimeEvent(
+                    type="token_usage",
+                    message="Token usage updated.",
+                    payload={
+                        "prompt": 1200,
+                        "completion": 600,
+                        "cumulative_total": 1800,
+                    },
+                )
+            )
+            await pilot.pause()
+
+            # Verify the status bar still contains the last model name
+            status_content2 = str(statusline_widget.content)
+            assert "deepseek-chat" in status_content2
+            assert "1.8k" in status_content2
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
 def test_textual_command_console_handles_read_only_slash_commands(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 

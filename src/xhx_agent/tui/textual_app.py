@@ -128,9 +128,13 @@ class TextualSnapshot:
         else:
             ctx_str = ctx_label
 
+        tokens_str = f"{human_tokens(state.tokens_total)}"
+        if state.last_model:
+            tokens_str += f" · {state.last_model}"
+
         status_line = (
             f"state: {state.status}  •  mode: {state.mode}  •  turn: {state.context_turn or 0}"
-            f"  •  tokens: {human_tokens(state.tokens_total)}"
+            f"  •  tokens: {tokens_str}"
             f"  •  {ctx_str}"
             f"  •  verify: {state.verification}  •  changed: {len(state.changed_files)}"
             f"  •  streaming: {'yes' if streaming else 'no'}"
@@ -1230,6 +1234,14 @@ class TextualCommandConsoleApp(App[None]):
             return f"  ⚙ verify  {p.get('command', '')} → {p.get('status', '')}{tail}"
         if et == "model_plan":
             return f"plan> {event.message}"
+        if et == "token_usage":
+            model = p.get("model")
+            if model:
+                secs = p.get("duration_ms", 0) / 1000
+                prompt_tokens = int(p.get("prompt", 0) or 0)
+                completion_tokens = int(p.get("completion", 0) or 0)
+                return f"  · {model} · {secs:.1f}s · in {human_tokens(prompt_tokens)}/out {human_tokens(completion_tokens)}"
+            return None
         return None
 
     def apply_runtime_event(self, event: RuntimeEvent) -> None:
