@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import uuid
 from collections.abc import Callable
@@ -67,7 +68,8 @@ class XhxTextualSuggester(Suggester):
     async def get_suggestion(self, value: str) -> str | None:
         if not value:
             return None
-        candidates = self.completer.get_completions(value)
+        # 补全可能要扫描仓库——挪到线程，避免堵住事件循环（UI 卡顿）。
+        candidates = await asyncio.to_thread(self.completer.get_completions, value)
         if candidates:
             return candidates[0]
         return None
@@ -952,6 +954,20 @@ class TextualCommandConsoleApp(App[None]):
             )
             self.set_detail("plan", detail)
             return
+        # preview_plan 是重活（扫描 + 上下文打包 + planner 模型调用）——必须放后台 worker，
+        # 否则在 UI 线程同步跑会堵死 Textual 事件循环（界面卡死）。
+        self.append_message(f"system> plan preview started: {task}")
+        if self.widgets_ready:
+            self.run_worker(
+                lambda: self.run_plan_preview(task),
+                name="plan-preview",
+                group="runtime",
+                thread=True,
+            )
+        else:
+            self.run_plan_preview(task)
+
+    def run_plan_preview(self, task: str) -> None:
         result = self.runtime.preview_plan(task, self.profile)
         parts = [
             f"system> plan preview: {result.status}",

@@ -1032,6 +1032,44 @@ def test_textual_threads_prior_messages_across_turns(tmp_path) -> None:
     assert any(m.get("content") == "answer 1" for m in second_prior)
 
 
+def test_textual_plan_preview_uses_background_worker(tmp_path) -> None:
+    """回归：/plan <task> 的 preview_plan 必须在后台 worker 跑，不能堵 UI 线程（否则卡死）。"""
+    runtime = FakeRuntime()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_preview(task, profile_name=None):
+        started.set()
+        assert release.wait(timeout=2)
+        return PlanPreview(
+            run_id="dry-1", status="success", summary=f"Preview {task}", step_count=1,
+            context_budget_tokens=6000, context_used_tokens_estimate=120,
+            trace_path=".xhx/traces/dry-1.jsonl", risk_summary=[],
+        )
+
+    runtime.preview_plan = blocking_preview
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=runtime)
+
+    async def run_app() -> None:
+        from textual.widgets import Input
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#input", Input).value = "/plan do thing"
+            await pilot.press("enter")
+            assert started.wait(timeout=2)
+            # preview 阻塞中：worker 在跑、UI 未被堵死
+            assert any(worker.name == "plan-preview" for worker in app.workers)
+            release.set()
+            for _ in range(50):
+                if any("plan preview: success" in m for m in app.messages):
+                    break
+                await asyncio.sleep(0.02)
+            assert any("plan preview: success" in m for m in app.messages)
+
+    asyncio.run(run_app())
+
+
 def test_textual_repair_command_requires_failed_verification(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
 
