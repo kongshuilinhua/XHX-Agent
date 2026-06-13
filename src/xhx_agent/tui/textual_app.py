@@ -1245,6 +1245,16 @@ class TextualCommandConsoleApp(App[None]):
             if turn > 0:
                 return f"── turn {turn} · {model} · {secs:.1f}s · in {prompt_t}/out {comp_t}"
             return f"  · {model} · {secs:.1f}s · in {prompt_t}/out {comp_t}"
+        if et == "model_thinking":
+            text = (p.get("text") or "").strip()
+            if not text:
+                return None
+            model = p.get("model", "")
+            oneline = " ".join(text.split())
+            limit = 500 if getattr(self, "verbose", False) else 60
+            if len(oneline) > limit:
+                oneline = oneline[:limit] + "…"
+            return f"  💭 思考 ({model}) {oneline}"
         return None
 
     def apply_runtime_event(self, event: RuntimeEvent) -> None:

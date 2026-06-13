@@ -1943,6 +1943,75 @@ def test_textual_verbose_and_tools_commands(tmp_path) -> None:
     assert 'args: {"query":"hello"}' in joined
 
 
+def test_textual_app_model_thinking_rendering(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    assert not getattr(app, "verbose", False)
+
+    # Empty reasoning text -> should return None / not add message
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="model_thinking",
+            message="Model reasoning.",
+            payload={"text": "", "model": "deepseek-reasoner", "turn": 1},
+        )
+    )
+    assert not any("思考" in msg for msg in app.messages)
+
+    # Non-empty reasoning text -> should add thinking block
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="model_thinking",
+            message="Model reasoning.",
+            payload={"text": "first line\nsecond line", "model": "deepseek-reasoner", "turn": 1},
+        )
+    )
+    # Default limit is 60 chars. Let's check truncated rendering
+    # Single-line and spaces cleaned: "first line second line"
+    assert "💭 思考 (deepseek-reasoner) first line second line" in app.messages[-1]
+
+    # Long text truncation test
+    app.messages.clear()
+    long_text = "a" * 100
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="model_thinking",
+            message="Model reasoning.",
+            payload={"text": long_text, "model": "deepseek-reasoner", "turn": 1},
+        )
+    )
+    # 60 chars + 1 ellipsis
+    expected_default = "a" * 60 + "…"
+    assert expected_default in app.messages[-1]
+
+    # With verbose on, limit is 500
+    app.verbose = True
+    app.messages.clear()
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="model_thinking",
+            message="Model reasoning.",
+            payload={"text": long_text, "model": "deepseek-reasoner", "turn": 1},
+        )
+    )
+    # Long text (100 chars) is shorter than 500, so it shouldn't truncate
+    assert "a" * 100 in app.messages[-1]
+    assert "…" not in app.messages[-1]
+
+    # Super long text (600 chars) with verbose on should truncate at 500
+    super_long = "b" * 600
+    app.messages.clear()
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="model_thinking",
+            message="Model reasoning.",
+            payload={"text": super_long, "model": "deepseek-reasoner", "turn": 1},
+        )
+    )
+    expected_verbose = "b" * 500 + "…"
+    assert expected_verbose in app.messages[-1]
+
+
+
 
 
 
