@@ -77,6 +77,8 @@ class ConsoleState:
     compaction_count: int = 0
     compaction_last_before: int = 0
     compaction_last_after: int = 0
+    last_model: str = ""
+    last_call_ms: int = 0
 
 
     def reduce(self, event: RuntimeEvent) -> None:
@@ -124,6 +126,8 @@ class ConsoleState:
             self.tokens_prompt = int(payload.get("prompt", self.tokens_prompt) or 0)
             self.tokens_completion = int(payload.get("completion", self.tokens_completion) or 0)
             self.tokens_total = int(payload.get("cumulative_total", self.tokens_total) or 0)
+            self.last_model = str(payload.get("model", self.last_model) or "")
+            self.last_call_ms = int(payload.get("duration_ms", 0) or 0)
         elif event.type == "compaction":
             self.compaction_count += 1
             self.compaction_last_before = int(payload.get("before", 0) or 0)

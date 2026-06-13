@@ -155,3 +155,43 @@ def test_console_state_tool_activity_payload() -> None:
     assert state.tools[0].summary == "tests failed"
 
 
+def test_console_state_tracks_last_model_and_duration() -> None:
+    state = ConsoleState()
+    assert state.last_model == ""
+    assert state.last_call_ms == 0
+
+    # Test token_usage with model and duration_ms
+    state.reduce(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={
+                "prompt": 10,
+                "completion": 6,
+                "cumulative_total": 16,
+                "model": "deepseek-x",
+                "duration_ms": 2500,
+            },
+        )
+    )
+    assert state.last_model == "deepseek-x"
+    assert state.last_call_ms == 2500
+
+    # Test token_usage without model and duration_ms (backward compatibility)
+    state.reduce(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={
+                "prompt": 12,
+                "completion": 8,
+                "cumulative_total": 36,
+            },
+        )
+    )
+    # They should keep the previous/default values or fallback to 0/""
+    assert state.last_model == "deepseek-x"
+    assert state.last_call_ms == 0
+
+
+
