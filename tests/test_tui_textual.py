@@ -564,17 +564,31 @@ def test_textual_command_console_handles_sessions_and_resume(tmp_path) -> None:
 
     # 3. Test /sessions lists recorded session
     assert app.handle_text_input("/sessions")
-    assert "run-test-sessions-123" in app.messages[-1]
+    assert "ions-123" in app.messages[-1]  # Tail 8 digits
 
     # 4. Test /resume with invalid ID
     assert app.handle_text_input("/resume non_existent_id")
     assert "Session 'non_existent_id' not found" in app.messages[-1]
 
-    # 5. Test /resume with valid ID
-    assert app.handle_text_input("/resume run-test-sessions-123")
-    assert "Switched follow-up context to session: run-test-sessions-123" in app.messages[-1]
+    # 5. Test /resume with valid ID prefix
+    assert app.handle_text_input("/resume ions-123")
+    assert "已恢复会话" in app.messages[-1]
     assert app.last_result is not None
     assert app.last_result.run_id == "run-test-sessions-123"
+
+    # 6. Test /sessions filtering
+    # Clear messages for clarity
+    app.messages.clear()
+    assert app.handle_text_input("/sessions my")
+    assert "ions-123" in app.messages[-1]
+
+    app.messages.clear()
+    assert app.handle_text_input("/sessions nope")
+    assert "No sessions matching 'nope' found" in app.messages[-1]
+
+    # 7. Test /new alias
+    assert app.handle_text_input("/new")
+    assert not app.messages
 
 
 def test_textual_permission_confirmation_can_decline_once(tmp_path) -> None:

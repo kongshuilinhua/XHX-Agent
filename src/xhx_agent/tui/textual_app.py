@@ -40,6 +40,9 @@ SLASH_COMMAND_HINTS = [
     "/allow",
     "/deny",
     "/clear",
+    "/new",
+    "/sessions",
+    "/resume",
     "/exit",
 ]
 
@@ -469,7 +472,7 @@ class TextualCommandConsoleApp(App[None]):
             valid_commands = {
                 "/help", "/model", "/status", "/plan", "/context", "/evidence",
                 "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
-                "/cancel", "/live", "/allow", "/deny", "/clear", "/sessions",
+                "/cancel", "/live", "/allow", "/deny", "/clear", "/new", "/sessions",
                 "/resume", "/exit"
             }
             if cmd in valid_commands:
@@ -504,7 +507,7 @@ class TextualCommandConsoleApp(App[None]):
             valid_commands = {
                 "/help", "/model", "/status", "/plan", "/context", "/evidence",
                 "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
-                "/cancel", "/live", "/allow", "/deny", "/clear", "/sessions",
+                "/cancel", "/live", "/allow", "/deny", "/clear", "/new", "/sessions",
                 "/resume", "/exit"
             }
             if event.value in valid_commands:
@@ -672,6 +675,9 @@ class TextualCommandConsoleApp(App[None]):
         if command == "/clear":
             self.action_clear()
             return True
+        if command == "/new":
+            self.action_clear()
+            return True
         if command == "/allow":
             if not self.resolve_pending_confirmation(True):
                 self.next_confirm_response = True
@@ -701,8 +707,9 @@ class TextualCommandConsoleApp(App[None]):
                 "/allow     - Answer allow to pending permission confirmation",
                 "/deny      - Answer deny to pending permission confirmation",
                 "/clear     - Clear conversation messages and details",
-                "/sessions  - List recent recorded agent sessions",
-                "/resume    - Switch follow-up context to a past session",
+                "/new       - Clear conversation and start a new session",
+                "/sessions  - List recent recorded agent sessions (supports filtering by keyword)",
+                "/resume    - Switch follow-up context to a past session (supports prefix/suffix)",
                 "/exit      - Exit the textual command console",
             ]
             self.append_message(
@@ -721,8 +728,9 @@ class TextualCommandConsoleApp(App[None]):
                         "/repair [loop] - repair after failed verification",
                         "/allow or /deny - answer pending confirmation",
                         "/cancel - request safe-boundary cancellation",
-                        "/sessions - list past sessions",
-                        "/resume <run_id> - switch follow-up context to a past session",
+                        "/sessions [keyword] - list past sessions and filter by keyword",
+                        "/new - start a new session",
+                        "/resume <run_id_prefix> - switch follow-up context to a past session",
                     ]
                 ),
             )
@@ -773,7 +781,7 @@ class TextualCommandConsoleApp(App[None]):
             self.request_cancel()
             return True
         if command == "/sessions":
-            self.handle_sessions()
+            self.handle_sessions(argument)
             return True
         if command == "/resume":
             self.handle_resume(argument)
@@ -1481,23 +1489,30 @@ class TextualCommandConsoleApp(App[None]):
             return list(self.last_result.changed_files)
         return []
 
-    def handle_sessions(self) -> None:
-        from xhx_agent.runtime.session import list_conversations
+    def handle_sessions(self, query: str = "") -> None:
+        from xhx_agent.runtime.session import list_conversations, format_session_line
+        from datetime import datetime, UTC
         # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
         conversations = list_conversations(self.workspace)
         if not conversations:
             self.append_message("system> No sessions recorded yet.")
             return
 
-        # Most recent first, capped at 10.
-        recent = list(reversed(conversations))[:10]
+        recent = list(reversed(conversations))
+        if query:
+            q_lower = query.lower()
+            recent = [c for c in recent if q_lower in c.task.lower()]
+            if not recent:
+                self.append_message(f"system> No sessions matching '{query}' found.")
+                return
 
-        lines = [f"{entry.run_id} | {entry.status} | {entry.task[:40]}" for entry in recent]
+        now = datetime.now(UTC)
+        lines = [format_session_line(entry, now) for entry in recent]
         self.append_message("system> recent conversations:\n" + "\n".join(lines))
         self.set_detail("sessions", "\n".join(lines))
 
         options = [
-            (f"{entry.status} | {entry.task[:40]}", entry.run_id)
+            (format_session_line(entry, now), entry.run_id)
             for entry in recent
         ]
         self.present_picker(options, on_select=self._select_session, title="Select Conversation to Resume")
