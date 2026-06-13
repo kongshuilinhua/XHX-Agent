@@ -18,10 +18,7 @@ class XhxCompleter:
             "/repair",
             "/diff",
             "/skills",
-            "/automem",
             "/clear",
-            "/remember",
-            "/memory",
         ]
         self._index = None
 

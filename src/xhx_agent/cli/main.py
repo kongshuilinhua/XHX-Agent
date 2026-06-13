@@ -21,7 +21,6 @@ if env_path.is_file():
 import typer
 from rich.console import Console
 
-from xhx_agent.cli.console import CommandConsole
 from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import load_config

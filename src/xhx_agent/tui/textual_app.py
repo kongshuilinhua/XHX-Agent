@@ -20,8 +20,28 @@ from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.runtime.session import record_session
 from xhx_agent.safety.policy import PolicyDecision
-from xhx_agent.tui.page import SLASH_COMMAND_HINTS
 from xhx_agent.tui.state import ConsoleState
+
+SLASH_COMMAND_HINTS = [
+    "/help",
+    "/model",
+    "/status",
+    "/plan",
+    "/evidence",
+    "/context",
+    "/verify",
+    "/repair",
+    "/diff",
+    "/skills",
+    "/mode",
+    "/dashboard",
+    "/live",
+    "/cancel",
+    "/allow",
+    "/deny",
+    "/clear",
+    "/exit",
+]
 
 # Auto-memory imports for monkeypatching in unit tests
 from xhx_agent.memory import list_memories, propose_memories, write_memory

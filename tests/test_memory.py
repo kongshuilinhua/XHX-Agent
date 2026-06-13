@@ -191,32 +191,8 @@ def test_repl_slash_commands_and_autocomplete(tmp_path):
     from xhx_agent.cli.completion import XhxCompleter
     completer = XhxCompleter(tmp_path)
     res = completer.get_completions("/")
-    assert "/remember" in res
-    assert "/memory" in res
-
-    # 2. Console check
-    from rich.console import Console
-
-    from xhx_agent.cli.console import CommandConsole
-    from xhx_agent.runtime.app import RuntimeApp
-
-    RuntimeApp(tmp_path).init_project()
-    console = Console(record=True, force_terminal=False, width=120)
-    command_console = CommandConsole(tmp_path, console=console)
-
-    # Run /remember
-    assert command_console.handle_input("/remember This is a console memory test.")
-
-    # Verify file created
-    from xhx_agent.memory.store import list_memories
-    mems = list_memories(tmp_path)
-    assert len(mems) == 1
-    assert mems[0].body == "This is a console memory test."
-
-    # Run /memory
-    assert command_console.handle_input("/memory")
-    output = console.export_text()
-    assert "This is a console memory test." in output
+    assert "/help" in res
+    assert "/clear" in res
 
 
 def test_cli_subcommand(tmp_path, monkeypatch):
