@@ -129,3 +129,7 @@ __marimo__/
 # Private Study & Architecture Deep Dives
 # ==========================================
 docs/deep_dive/
+
+# Git worktrees
+.worktrees/
+
