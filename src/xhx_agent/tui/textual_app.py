@@ -18,7 +18,7 @@ from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
-from xhx_agent.runtime.session import record_session
+from xhx_agent.runtime.session import record_session, save_view_log, list_sessions
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.state import ConsoleState
 
@@ -574,9 +574,11 @@ class TextualCommandConsoleApp(App[None]):
             prior_messages=self.prior_messages,
         )
         self.last_result = result
-        record_session(self.workspace, task, result, conversation_id=self.conversation_id)
         self.apply_run_result(result)
         self.append_message(f"system> run finished: {result.status}, verification: {result.verification}")
+        view_path = save_view_log(self.workspace, result.run_id, self.messages)
+        turn_count = sum(1 for e in list_sessions(self.workspace) if e.conversation_id == self.conversation_id) + 1
+        record_session(self.workspace, task, result, conversation_id=self.conversation_id, view_path=view_path, turn_count=turn_count)
         # Carry the full conversation forward: this run's transcript already includes the prior
         # history we passed in, so the next turn restores complete context (real memory).
         self._refresh_prior_messages(result)
