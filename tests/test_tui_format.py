@@ -53,6 +53,7 @@ def test_line_style() -> None:
     assert line_style("⟶ tool_call") == "blue"
     assert line_style("  ⟶ tool_call_indented") == "blue"
     assert line_style("  · deepseek · 2.4s ...") == "dim"
+    assert line_style("── turn 2 · deepseek · ...") == "dim"
     assert line_style("✓ success") == "green"
     assert line_style("  ✓ success_indented") == "green"
     assert line_style("✗ failure") == "red"

@@ -1236,12 +1236,15 @@ class TextualCommandConsoleApp(App[None]):
             return f"plan> {event.message}"
         if et == "token_usage":
             model = p.get("model")
-            if model:
-                secs = p.get("duration_ms", 0) / 1000
-                prompt_tokens = int(p.get("prompt", 0) or 0)
-                completion_tokens = int(p.get("completion", 0) or 0)
-                return f"  · {model} · {secs:.1f}s · in {human_tokens(prompt_tokens)}/out {human_tokens(completion_tokens)}"
-            return None
+            if not model:
+                return None
+            secs = p.get("duration_ms", 0) / 1000
+            prompt_t = human_tokens(int(p.get("prompt", 0) or 0))
+            comp_t = human_tokens(int(p.get("completion", 0) or 0))
+            turn = int(p.get("turn", 0) or 0)
+            if turn > 0:
+                return f"── turn {turn} · {model} · {secs:.1f}s · in {prompt_t}/out {comp_t}"
+            return f"  · {model} · {secs:.1f}s · in {prompt_t}/out {comp_t}"
         return None
 
     def apply_runtime_event(self, event: RuntimeEvent) -> None:

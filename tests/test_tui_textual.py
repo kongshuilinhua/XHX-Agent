@@ -206,6 +206,42 @@ def test_textual_conversation_coloring_metrics(tmp_path) -> None:
     asyncio.run(run_app())
 
 
+def test_textual_conversation_step_tree(tmp_path) -> None:
+    from rich.text import Text
+
+    from xhx_agent.runtime.events import RuntimeEvent
+
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    # Send a token_usage event with model, duration_ms and turn=2
+    app.apply_runtime_event(
+        RuntimeEvent(
+            type="token_usage",
+            message="Token usage updated.",
+            payload={
+                "prompt": 2000,
+                "completion": 1000,
+                "cumulative_total": 3000,
+                "model": "deepseek-coder",
+                "duration_ms": 3500,
+                "turn": 2,
+            },
+        )
+    )
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            conversation_widget = pilot.app.query_one("#conversation")
+            renderable = conversation_widget.content
+            assert isinstance(renderable, Text)
+            plain = renderable.plain
+            assert "── turn 2 · deepseek-coder · 3.5s · in 2k/out 1k" in plain
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
 def test_textual_command_console_handles_read_only_slash_commands(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
