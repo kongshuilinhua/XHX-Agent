@@ -180,3 +180,68 @@ def format_follow_up(entry: SessionEntry) -> str:
         "Use the previous context only when it is relevant. "
         "Keep normal safety, apply_patch, and verification rules."
     )
+
+
+def resolve_run_id(entries: list[SessionEntry], token: str) -> tuple[str | None, list[str]]:
+    """Try to resolve a token to a single run_id in the entries.
+
+    Returns (resolved_run_id, candidates_if_ambiguous).
+    """
+    # Exact match first
+    for entry in entries:
+        if entry.run_id == token:
+            return token, []
+
+    # Prefix or suffix matches
+    cands = []
+    for entry in entries:
+        if entry.run_id.startswith(token) or entry.run_id.endswith(token):
+            if entry.run_id not in cands:
+                cands.append(entry.run_id)
+
+    if len(cands) == 1:
+        return cands[0], []
+    elif len(cands) == 0:
+        return None, []
+    else:
+        return None, sorted(cands)
+
+
+def format_session_line(entry: SessionEntry, now: datetime) -> str:
+    """Format a session entry to a human readable list item."""
+    t_str = entry.updated_at or entry.created_at
+    try:
+        t = datetime.fromisoformat(t_str)
+    except Exception:
+        try:
+            t = datetime.fromisoformat(entry.created_at)
+        except Exception:
+            t = now
+
+    # Align tzinfo to prevent TypeError: can't subtract offset-naive and offset-aware datetimes
+    if t.tzinfo is not None and now.tzinfo is None:
+        from datetime import UTC
+        now = now.replace(tzinfo=UTC)
+    elif t.tzinfo is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+
+    diff = now - t
+    diff_sec = diff.total_seconds()
+    if diff_sec < 0:
+        rel_time = "刚刚"
+    elif diff_sec < 60:
+        rel_time = "刚刚"
+    elif diff_sec < 3600:
+        rel_time = f"{int(diff_sec // 60)}分钟前"
+    elif diff_sec < 86400:
+        rel_time = f"{int(diff_sec // 3600)}小时前"
+    else:
+        rel_time = f"{int(diff_sec // 86400)}天前"
+
+    task_single = " ".join(entry.task.splitlines())
+    if len(task_single) > 60:
+        task_single = task_single[:60] + "…"
+
+    short_id = entry.run_id[-8:]
+    return f"{rel_time} | {entry.status} | 轮{entry.turn_count} | …{short_id} | {task_single}"
+

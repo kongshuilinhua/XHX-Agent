@@ -168,3 +168,77 @@ def test_record_session_stores_view_path_and_turn_count(tmp_path) -> None:
     assert latest.view_path == ".xhx/sessions/run-x.view.json"
     assert latest.turn_count == 3
 
+
+def test_resolve_run_id_exact_prefix_suffix() -> None:
+    from xhx_agent.runtime.session import resolve_run_id
+    entries = [
+        SessionEntry(run_id="run-12345678", task="t1", status="success"),
+        SessionEntry(run_id="run-87654321", task="t2", status="success"),
+    ]
+    # Exact match
+    r, cands = resolve_run_id(entries, "run-12345678")
+    assert r == "run-12345678"
+    assert cands == []
+
+    # Suffix match (unique)
+    r, cands = resolve_run_id(entries, "87654321")
+    assert r == "run-87654321"
+    assert cands == []
+
+    # Prefix match (unique)
+    r, cands = resolve_run_id(entries, "run-123")
+    assert r == "run-12345678"
+    assert cands == []
+
+
+def test_resolve_run_id_ambiguous_returns_candidates() -> None:
+    from xhx_agent.runtime.session import resolve_run_id
+    entries = [
+        SessionEntry(run_id="run-12345678", task="t1", status="success"),
+        SessionEntry(run_id="run-1234aaaa", task="t2", status="success"),
+    ]
+    r, cands = resolve_run_id(entries, "run-1234")
+    assert r is None
+    assert set(cands) == {"run-12345678", "run-1234aaaa"}
+
+
+def test_resolve_run_id_miss() -> None:
+    from xhx_agent.runtime.session import resolve_run_id
+    entries = [
+        SessionEntry(run_id="run-12345678", task="t1", status="success"),
+    ]
+    r, cands = resolve_run_id(entries, "nope")
+    assert r is None
+    assert cands == []
+
+
+def test_format_session_line_shape() -> None:
+    from xhx_agent.runtime.session import format_session_line
+    from datetime import datetime, UTC, timedelta
+    now = datetime.now(UTC)
+
+    # 1. Just now
+    e1 = SessionEntry(run_id="run-12345678", task="task 1", status="success", turn_count=2, updated_at=now.isoformat())
+    assert "刚刚" in format_session_line(e1, now)
+
+    # 2. Minutes ago
+    e2 = SessionEntry(run_id="run-12345678", task="task 2", status="success", turn_count=2, updated_at=(now - timedelta(minutes=5)).isoformat())
+    assert "5分钟前" in format_session_line(e2, now)
+
+    # 3. Hours ago
+    e3 = SessionEntry(run_id="run-12345678", task="task 3", status="success", turn_count=2, updated_at=(now - timedelta(hours=3)).isoformat())
+    assert "3小时前" in format_session_line(e3, now)
+
+    # 4. Days ago
+    e4 = SessionEntry(run_id="run-12345678", task="task 4", status="success", turn_count=2, updated_at=(now - timedelta(days=2)).isoformat())
+    assert "2天前" in format_session_line(e4, now)
+
+    # 5. Long task truncation
+    long_task = "a" * 100
+    e5 = SessionEntry(run_id="run-12345678", task=long_task, status="success", turn_count=2, updated_at=now.isoformat())
+    line = format_session_line(e5, now)
+    assert "…" in line or "..." in line
+    assert "success" in line
+    assert "5678" in line
+
+
