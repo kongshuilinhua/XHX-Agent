@@ -127,6 +127,7 @@ class OpenAICompatibleClient:
         stream_payload = {**payload, "stream": True, "stream_options": {"include_usage": True}}
         content_parts: list[str] = []
         tool_frags: dict[int, dict[str, str]] = {}
+        reasoning_parts: list[str] = []
         usage_raw: Any = None
         try:
             with self.http_client.stream(
@@ -156,17 +157,21 @@ class OpenAICompatibleClient:
                         continue  # 容忍 keep-alive / 注释 / 半行
                     if data.get("usage"):
                         usage_raw = data["usage"]
-                    self._consume_stream_delta(data, content_parts, tool_frags)
+                    self._consume_stream_delta(data, content_parts, tool_frags, reasoning_parts)
         except ModelClientError:
             raise
         except httpx.HTTPError as exc:
             raise ModelClientError(
                 code="network_error", message=f"Chat request failed: {exc}", details={"error": str(exc)}
             ) from exc
-        return _assemble_stream_chat(content_parts, tool_frags, usage_raw)
+        return _assemble_stream_chat(content_parts, tool_frags, reasoning_parts, usage_raw)
 
     def _consume_stream_delta(
-        self, data: dict[str, Any], content_parts: list[str], tool_frags: dict[int, dict[str, str]]
+        self,
+        data: dict[str, Any],
+        content_parts: list[str],
+        tool_frags: dict[int, dict[str, str]],
+        reasoning_parts: list[str],
     ) -> None:
         try:
             delta = data["choices"][0].get("delta", {})
@@ -179,6 +184,9 @@ class OpenAICompatibleClient:
             content_parts.append(text)
             if self.delta_callback is not None:
                 self.delta_callback(text)
+        r = delta.get("reasoning_content")
+        if isinstance(r, str) and r:
+            reasoning_parts.append(r)
         for frag in delta.get("tool_calls") or []:
             if not isinstance(frag, dict):
                 continue
@@ -455,11 +463,19 @@ def _message_to_chat_result(message: dict[str, Any]) -> ChatResult:
                 ) from exc
         tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args or {}))
     content = message.get("content")
-    return ChatResult(content=content if isinstance(content, str) else None, tool_calls=tool_calls)
+    reasoning = message.get("reasoning_content")
+    return ChatResult(
+        content=content if isinstance(content, str) else None,
+        tool_calls=tool_calls,
+        reasoning=reasoning if isinstance(reasoning, str) else None,
+    )
 
 
 def _assemble_stream_chat(
-    content_parts: list[str], tool_frags: dict[int, dict[str, str]], usage_raw: Any = None
+    content_parts: list[str],
+    tool_frags: dict[int, dict[str, str]],
+    reasoning_parts: list[str],
+    usage_raw: Any = None,
 ) -> ChatResult:
     """把流式累积的 content 片段与按 index 拼接的 tool_call 片段组装成最终 ChatResult。"""
     tool_calls: list[ToolCall] = []
@@ -478,7 +494,13 @@ def _assemble_stream_chat(
             ) from exc
         tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
     content = "".join(content_parts)
-    return ChatResult(content=content or None, tool_calls=tool_calls, usage=_parse_usage(usage_raw))
+    reasoning = "".join(reasoning_parts)
+    return ChatResult(
+        content=content or None,
+        tool_calls=tool_calls,
+        usage=_parse_usage(usage_raw),
+        reasoning=reasoning or None,
+    )
 
 
 def _parse_plan_content(content: str) -> ModelPlan:

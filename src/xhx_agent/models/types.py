@@ -65,4 +65,5 @@ class ChatResult(BaseModel):
     content: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: TokenUsage | None = None
+    reasoning: str | None = None
 

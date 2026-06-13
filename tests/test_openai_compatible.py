@@ -547,3 +547,64 @@ def test_chat_stream_captures_usage_and_requests_include_usage(monkeypatch: pyte
     assert result.content == "hello"
     assert result.usage is not None
     assert result.usage.total == 9
+
+
+def test_chat_nonstream_captures_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "ok",
+                            "reasoning_content": "thinking process",
+                            "tool_calls": [],
+                        }
+                    }
+                ],
+            },
+        )
+
+    client = OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = client.chat([{"role": "user", "content": "hi"}], tools=[])
+    assert result.reasoning == "thinking process"
+
+
+def test_chat_stream_captures_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XHX_TEST_API_KEY", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = (
+            'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\n'
+            'data: {"choices":[{"delta":{"reasoning_content":"ing"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, text=body)
+
+    deltas = []
+    client = OpenAICompatibleClient(
+        base_url="https://api.example.com/v1",
+        api_key_env="XHX_TEST_API_KEY",
+        model="demo-model",
+        stream=True,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    client.set_delta_callback(deltas.append)
+
+    result = client.chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert result.content == "ok"
+    assert result.reasoning == "thinking"
+    # Content delta callback should ONLY receive "ok", not "think" or "ing"
+    assert deltas == ["ok"]
+
