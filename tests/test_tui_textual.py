@@ -122,6 +122,29 @@ def test_textual_command_console_app_can_render_initial_shell(tmp_path) -> None:
     asyncio.run(run_app())
 
 
+def test_textual_conversation_coloring(tmp_path) -> None:
+    from rich.text import Text
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    app.messages.append("user> hello")
+    app.messages.append("system> init")
+    app.messages.append("  ✓ tool_ok")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            conversation_widget = pilot.app.query_one("#conversation")
+            renderable = conversation_widget.content
+            assert isinstance(renderable, Text)
+            plain = renderable.plain
+            assert "user> hello" in plain
+            assert "system> init" in plain
+            assert "  ✓ tool_ok" in plain
+            assert len(renderable.spans) > 0
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
 def test_textual_command_console_handles_read_only_slash_commands(tmp_path) -> None:
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 

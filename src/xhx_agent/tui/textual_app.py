@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -20,7 +21,7 @@ from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
 from xhx_agent.runtime.session import list_sessions, record_session, save_view_log
 from xhx_agent.safety.policy import PolicyDecision
-from xhx_agent.tui.format import context_meter, human_tokens
+from xhx_agent.tui.format import context_meter, human_tokens, line_style
 from xhx_agent.tui.state import ConsoleState
 from xhx_agent.tui.tool_display import tool_header
 
@@ -442,7 +443,12 @@ class TextualCommandConsoleApp(App[None]):
             return
         try:
             self.query_one("#statusline", Static).update(snapshot.status_line)
-            self.query_one("#conversation", Static).update(snapshot.conversation)
+            conv_text = snapshot.conversation
+            text = Text()
+            lines = conv_text.split("\n")
+            for i, line in enumerate(lines):
+                text.append(line + ("\n" if i < len(lines) - 1 else ""), style=line_style(line))
+            self.query_one("#conversation", Static).update(text)
         except Exception:
             pass
 
