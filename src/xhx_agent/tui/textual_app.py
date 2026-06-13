@@ -1090,27 +1090,54 @@ class TextualCommandConsoleApp(App[None]):
         return self.cancel_requested
 
     def print_context_summary(self) -> None:
-        languages = ", ".join(self.state.detected_languages) or "unknown"
-        detail = "\n".join(
-            [
-                f"turn: {self.state.context_turn or 'none'}",
-                f"selected: {self.state.context_selected}",
-                f"omitted: {self.state.context_omitted}",
-                f"budget: {self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0}",
-                f"languages: {languages}",
-                f"files: {self.state.file_count}",
-            ]
+        from xhx_agent.tui.format import context_meter, human_tokens
+
+        used = self.state.context_used_tokens_estimate
+        budget = self.state.context_budget_tokens
+        label, pct, level = context_meter(used, budget)
+
+        detail_lines = []
+        if budget <= 0:
+            detail_lines.append("Context —")
+        else:
+            bar_len = 30
+            filled = int(round((pct / 100) * bar_len)) if pct is not None else 0
+            filled = max(0, min(bar_len, filled))
+            bar_str = "█" * filled + "░" * (bar_len - filled)
+            if level == "ok":
+                bar_line = f"[green]{bar_str}[/green]"
+            elif level == "warn":
+                bar_line = f"[yellow]{bar_str}[/yellow]"
+            elif level == "crit":
+                bar_line = f"[red]{bar_str}[/red]"
+            else:
+                bar_line = bar_str
+
+            pct_val = pct if pct is not None else 0.0
+            detail_lines.extend([
+                f"Context {human_tokens(used)} / {human_tokens(budget)} ({pct_val:.1f}%)",
+                bar_line,
+            ])
+
+        detail_lines.append(f"── 本轮 (turn {self.state.context_turn or 0})")
+        detail_lines.append(
+            f"   选中文件 {self.state.context_selected} · 省略 {self.state.context_omitted} · 预算 {human_tokens(budget)}"
         )
-        self.append_message(
-            "system> "
-            f"context: turn={self.state.context_turn or 'none'} "
-            f"selected={self.state.context_selected} "
-            f"omitted={self.state.context_omitted} "
-            f"budget={self.state.context_used_tokens_estimate}/{self.state.context_budget_tokens or 0} "
-            f"languages={languages} "
-            f"files={self.state.file_count}"
+        detail_lines.append("── token")
+        detail_lines.append(
+            f"   最近调用 prompt {human_tokens(self.state.tokens_prompt)} · "
+            f"completion {human_tokens(self.state.tokens_completion)} · "
+            f"累计 {human_tokens(self.state.tokens_total)}"
         )
-        self.set_detail("context", detail)
+        if self.state.compaction_count > 0:
+            detail_lines.append("── 压缩 (microcompact)")
+            detail_lines.append(
+                f"   已压缩 {self.state.compaction_count} 次 (最近 "
+                f"{self.state.compaction_last_before}→{self.state.compaction_last_after} 条)"
+            )
+
+        self.append_message(f"system> {label}")
+        self.set_detail("context", "\n".join(detail_lines))
 
     def print_evidence_summary(self) -> None:
         if not self.state.policy_decisions:

@@ -705,9 +705,29 @@ def test_textual_context_command_summarizes_current_state(tmp_path) -> None:
 
     assert app.handle_text_input("/context")
 
-    assert "context: turn=2 selected=5 omitted=1 budget=400/6000 languages=python files=9" in app.messages[-1]
+    assert "Context 400/6k 6.7%" in app.messages[-1]
     assert app.active_detail == "context"
-    assert "budget: 400/6000" in app.detail_text
+    assert "Context 400 / 6k (6.7%)" in app.detail_text
+    assert "turn 2" in app.detail_text
+    assert "选中文件 5" in app.detail_text
+    assert "省略 1" in app.detail_text
+    assert "预算 6k" in app.detail_text
+    assert "压缩" not in app.detail_text
+
+    # With compaction
+    state.compaction_count = 3
+    state.compaction_last_before = 24
+    state.compaction_last_after = 9
+    assert app.handle_text_input("/context")
+    assert "已压缩 3 次" in app.detail_text
+    assert "24→9 条" in app.detail_text
+
+    # With budget <= 0
+    state.context_budget_tokens = 0
+    assert app.handle_text_input("/context")
+    assert "Context —" in app.messages[-1]
+    assert "Context —" in app.detail_text
+
 
 
 def test_textual_evidence_command_summarizes_policy_decisions(tmp_path) -> None:
