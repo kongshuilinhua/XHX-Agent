@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -1347,10 +1347,11 @@ class TextualCommandConsoleApp(App[None]):
 
     def present_picker(
         self,
-        options: list[tuple[str, str]],
+        options: list[tuple[Any, str]],
         *,
         on_select: Callable[[str | None], None],
         title: str = "Select",
+        placeholder: str | None = None,
     ) -> None:
         """Mount the one and only wrap-around picker. Every selectable list goes through here.
 
@@ -1370,7 +1371,7 @@ class TextualCommandConsoleApp(App[None]):
         option_list.highlighted = 0
         input_widget = self.query_one("#input", Input)
         input_widget.disabled = False
-        input_widget.placeholder = f"[{title}] ↑/↓ navigate · Enter select · Esc cancel"
+        input_widget.placeholder = placeholder or f"[{title}] ↑/↓ navigate · Enter select · Esc cancel"
         input_widget.focus()
         self.call_after_refresh(self.query_one("#conversation_scroll").scroll_end, animate=False)
 
@@ -1486,7 +1487,8 @@ class TextualCommandConsoleApp(App[None]):
     def handle_sessions(self, query: str = "") -> None:
         from datetime import UTC, datetime
 
-        from xhx_agent.runtime.session import format_session_line, list_conversations
+        from rich.text import Text
+        from xhx_agent.runtime.session import format_session_line, format_session_meta, list_conversations
         # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
         conversations = list_conversations(self.workspace)
         if not conversations:
@@ -1503,14 +1505,24 @@ class TextualCommandConsoleApp(App[None]):
 
         now = datetime.now(UTC)
         lines = [format_session_line(entry, now) for entry in recent]
-        self.append_message("system> recent conversations:\n" + "\n".join(lines))
+        self.append_message(f"system> {len(recent)} 个会话（↑↓ 选，Enter 恢复，Esc 开新）")
         self.set_detail("sessions", "\n".join(lines))
 
-        options = [
-            (format_session_line(entry, now), entry.run_id)
-            for entry in recent
-        ]
-        self.present_picker(options, on_select=self._select_session, title="Select Conversation to Resume")
+        options = []
+        for entry in recent:
+            task_single = " ".join(entry.task.splitlines())
+            if len(task_single) > 60:
+                task_single = task_single[:60] + "…"
+            meta = format_session_meta(entry, now)
+            prompt = Text.assemble((task_single, "bold"), "\n", (meta, "dim"))
+            options.append((prompt, entry.run_id))
+
+        self.present_picker(
+            options,
+            on_select=self._select_session,
+            title=f"Resume session ({len(recent)})",
+            placeholder="↑/↓ 选 · Enter 恢复 · Esc 开新会话 · /sessions <词> 过滤",
+        )
 
     def handle_resume(self, run_id: str) -> None:
         if not run_id:

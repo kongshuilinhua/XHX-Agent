@@ -564,7 +564,7 @@ def test_textual_command_console_handles_sessions_and_resume(tmp_path) -> None:
 
     # 3. Test /sessions lists recorded session
     assert app.handle_text_input("/sessions")
-    assert "ions-123" in app.messages[-1]  # Tail 8 digits
+    assert "1 个会话" in app.messages[-1]
 
     # 4. Test /resume with invalid ID
     assert app.handle_text_input("/resume non_existent_id")
@@ -580,7 +580,7 @@ def test_textual_command_console_handles_sessions_and_resume(tmp_path) -> None:
     # Clear messages for clarity
     app.messages.clear()
     assert app.handle_text_input("/sessions my")
-    assert "ions-123" in app.messages[-1]
+    assert "1 个会话" in app.messages[-1]
 
     app.messages.clear()
     assert app.handle_text_input("/sessions nope")
