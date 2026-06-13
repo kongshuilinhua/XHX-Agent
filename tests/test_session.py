@@ -102,3 +102,69 @@ def test_record_session_backward_compatible_stub(tmp_path) -> None:
     record_session(tmp_path, "x", _ResultStub("run-9", "success", "passed", [], None))
     entry = load_latest_session(tmp_path)
     assert entry is not None and entry.transcript_path is None and entry.mode == ""
+
+
+def test_list_conversations_collapses_turns_of_one_conversation(tmp_path) -> None:
+    from xhx_agent.runtime.session import list_conversations
+
+    # Three turns of one console conversation share a conversation_id.
+    record_session(tmp_path, "你好", _ResultStub("run-a1", "success", "passed", [], None), conversation_id="conv-1")
+    record_session(tmp_path, "你能做什么", _ResultStub("run-a2", "success", "passed", [], None), conversation_id="conv-1")
+    record_session(tmp_path, "不要触屏", _ResultStub("run-a3", "success", "passed", [], None), conversation_id="conv-1")
+    # A standalone one-shot run (no conversation_id) stands alone.
+    record_session(tmp_path, "one-shot", _ResultStub("run-b", "success", "passed", [], None))
+
+    convs = list_conversations(tmp_path)
+    # The 3-turn conversation collapses to ONE entry; with the standalone run that's 2 total
+    # (whereas list_sessions would show all 4).
+    assert len(list_sessions(tmp_path)) == 4
+    assert len(convs) == 2
+
+    by_run = {c.run_id: c for c in convs}
+    # The conversation collapses to its LATEST run (full transcript) but is titled by its FIRST task.
+    assert "run-a3" in by_run
+    assert by_run["run-a3"].task == "你好"
+    assert "run-b" in by_run
+    assert by_run["run-b"].task == "one-shot"
+
+
+def test_view_log_roundtrip(tmp_path) -> None:
+    from xhx_agent.runtime.session import save_view_log, load_view_log
+    lines = ["user> hi", "  ⟶ tool search", "assistant> ok"]
+    rel = save_view_log(tmp_path, "run-v", lines)
+    assert rel.endswith("run-v.view.json")
+    assert load_view_log(tmp_path, rel) == lines
+
+
+def test_load_view_log_missing_returns_none(tmp_path) -> None:
+    from xhx_agent.runtime.session import load_view_log
+    assert load_view_log(tmp_path, ".xhx/sessions/nope.view.json") is None
+    assert load_view_log(tmp_path, None) is None
+
+
+def test_session_entry_new_fields_default() -> None:
+    # Old JSON representation without the new fields
+    old_json = '{"run_id": "run-old", "task": "do old", "status": "success", "verification": "passed", "changed_files": []}'
+    entry = SessionEntry.model_validate_json(old_json)
+    assert entry.view_path is None
+    assert entry.turn_count == 0
+    assert entry.updated_at is not None
+    # Check that updated_at is a valid ISO format string
+    from datetime import datetime
+    datetime.fromisoformat(entry.updated_at)
+
+
+def test_record_session_stores_view_path_and_turn_count(tmp_path) -> None:
+    record_session(
+        tmp_path,
+        "t",
+        _ResultStub("run-x", "success", "passed", [], None),
+        conversation_id="c1",
+        view_path=".xhx/sessions/run-x.view.json",
+        turn_count=3,
+    )
+    latest = load_latest_session(tmp_path)
+    assert latest is not None
+    assert latest.view_path == ".xhx/sessions/run-x.view.json"
+    assert latest.turn_count == 3
+

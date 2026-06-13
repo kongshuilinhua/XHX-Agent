@@ -27,6 +27,9 @@ class SessionEntry(BaseModel):
     # Stable id shared by every turn of one interactive console conversation. Empty for one-shot
     # CLI runs (each stands alone). Lets the resume picker collapse a multi-turn dialogue to one entry.
     conversation_id: str = ""
+    view_path: str | None = None
+    turn_count: int = 0
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
@@ -56,7 +59,36 @@ def load_transcript_messages(workspace: Path, rel_path: str | None) -> list[dict
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def record_session(workspace: Path, task: str, result: RunResult, conversation_id: str = "") -> SessionEntry:
+def view_log_path(workspace: Path, run_id: str) -> Path:
+    return xhx_dir(workspace) / "sessions" / f"{run_id}.view.json"
+
+
+def save_view_log(workspace: Path, run_id: str, lines: list[str]) -> str:
+    """落盘界面日志，返回相对 workspace 的 POSIX 路径。"""
+    ensure_xhx_dirs(workspace)
+    path = view_log_path(workspace, run_id)
+    path.write_text(json.dumps(lines, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path.relative_to(workspace).as_posix()
+
+
+def load_view_log(workspace: Path, rel_path: str | None) -> list[str] | None:
+    """按相对路径读回界面日志；缺文件/空路径返回 None。"""
+    if not rel_path:
+        return None
+    path = workspace / rel_path
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def record_session(
+    workspace: Path,
+    task: str,
+    result: RunResult,
+    conversation_id: str = "",
+    view_path: str | None = None,
+    turn_count: int = 0,
+) -> SessionEntry:
     """Append a one-line summary of ``result`` to the session history (+ persist full transcript when present).
 
     ``conversation_id`` ties together the turns of one interactive console conversation so the resume
@@ -78,6 +110,8 @@ def record_session(workspace: Path, task: str, result: RunResult, conversation_i
         transcript_path=rel_transcript,
         mode=getattr(result, "mode", "") or "",
         conversation_id=conversation_id,
+        view_path=view_path,
+        turn_count=turn_count,
     )
     with session_history_path(workspace).open("a", encoding="utf-8") as handle:
         handle.write(entry.model_dump_json() + "\n")
