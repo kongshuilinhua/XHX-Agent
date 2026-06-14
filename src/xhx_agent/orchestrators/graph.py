@@ -236,7 +236,9 @@ class GraphOrchestrator:
                     changed.extend(ch)
                 return True, text  # 异常交给 DAGScheduler 捕获 → 该节点 failed、下游 blocked
 
-            dag_ok = DAGScheduler(ctx.original_workspace).execute(plan, _cb)
+            from xhx_agent.runtime.config import load_config
+            max_workers = load_config(ctx.original_workspace).max_parallel_subagents
+            dag_ok = DAGScheduler(ctx.original_workspace).execute(plan, _cb, max_workers=max_workers)
             return {
                 "nodes": nodes,
                 "changed_files": state["changed_files"] + changed,

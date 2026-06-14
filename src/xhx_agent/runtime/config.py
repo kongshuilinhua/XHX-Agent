@@ -31,6 +31,7 @@ class ProjectConfig(BaseModel):
     max_subagent_turns: int = 12  # 子 agent（dispatch / graph 节点）循环上限；停止靠"无工具调用"，这是防跑飞的宽松安全网（对标 max_loop_turns，4 太紧会让 explore 撞限）
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"  # 只允许结构化补丁写，杜绝任意文件写
+    max_parallel_subagents: int = 4  # graph DAG 并发执行的子 agent 数上限，防嵌套 LLM 调用烧 token/撞限流
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
 

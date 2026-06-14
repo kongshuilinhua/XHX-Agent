@@ -347,5 +347,40 @@ def test_graph_node_failure_marks_failed(tmp_path, monkeypatch):
     assert any("DAG nodes failed" in r for r in result.risk_summary)
 
 
+def test_graph_runs_independent_edit_nodes_in_parallel(tmp_path, monkeypatch):
+    """两个无依赖 edit 节点应并发执行（Barrier 证明）。"""
+    import threading
+
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+    barrier = threading.Barrier(2, timeout=5)
+    done = []
+
+    def fake_run_write_subagent(ctx, description, prompt, turn):
+        barrier.wait()
+        done.append(prompt)
+        return f"edited:{prompt}", []
+
+    monkeypatch.setattr(graphmod, "run_write_subagent", fake_run_write_subagent)
+
+    class FakeClient:
+        def chat(self, messages, tools):
+            if "PLANNER" in messages[0]["content"]:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={"nodes": [
+                    {"id": "n1", "agent_type": "edit", "prompt": "edit A", "deps": []},
+                    {"id": "n2", "agent_type": "edit", "prompt": "edit B", "deps": []},
+                ]})])
+            return ChatResult(content="synthesized")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
+    result = RuntimeApp(tmp_path).run_task("two edits", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert sorted(done) == ["edit A", "edit B"]   # 都越过 barrier == 真并行
+
+
+
 
 
