@@ -26,9 +26,9 @@ def test_mode_classifier_categories() -> None:
     assert classifier.classify("analyze this repo") == ExecutionMode.RESEARCH_ONLY
     assert classifier.classify("search for add function") == ExecutionMode.RESEARCH_ONLY
 
-    # 3. DAG-execute
-    assert classifier.classify("refactor math functions") == ExecutionMode.DAG_EXECUTE
-    assert classifier.classify("integrate all files") == ExecutionMode.DAG_EXECUTE
+    # 3. Multi-file/refactor edits → linear-edit（dag 模式已退役）
+    assert classifier.classify("refactor math functions") == ExecutionMode.LINEAR_EDIT
+    assert classifier.classify("integrate all files") == ExecutionMode.LINEAR_EDIT
 
     # 4. Linear-edit
     assert classifier.classify("fix calc.py buggy code") == ExecutionMode.LINEAR_EDIT
@@ -133,10 +133,3 @@ def test_runtime_app_routes_by_mode(tmp_path: Path) -> None:
     res_research = app.run_task("analyze this repo", mode="linear")
     assert res_research.status == "success"
     assert res_research.verification == "skipped_no_changes"
-
-    # 3. DAG execution mode (with mock/refactor task)
-    res_dag = app.run_task("refactor math", assume_yes=True, mode="dag")
-    assert res_dag.status == "success"
-    assert res_dag.changed_files == ["src/calc.py"]
-    # Check that it executed as a DAG
-    assert res_dag.turns == 1

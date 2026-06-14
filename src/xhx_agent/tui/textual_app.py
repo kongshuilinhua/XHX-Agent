@@ -590,7 +590,7 @@ class TextualCommandConsoleApp(App[None]):
     @property
     def orchestrator_mode(self) -> str | None:
         """Explicit orchestrator paradigm from /mode, or None to auto-classify."""
-        return self.state.mode if self.state.mode in {"plan", "loop", "graph", "linear", "dag"} else None
+        return self.state.mode if self.state.mode in {"plan", "loop", "graph", "linear"} else None
 
     def run_task(self, task: str, *, announce_user: bool = True, reset_cancel: bool = True) -> None:
         if reset_cancel:

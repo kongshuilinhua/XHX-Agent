@@ -10,7 +10,6 @@ class ExecutionMode(StrEnum):
     RESEARCH_ONLY = "research-only"
     LINEAR_EDIT = "linear-edit"
     PLAN_REVIEW_ACT = "plan-review-act"
-    DAG_EXECUTE = "dag-execute"
     REPAIR_LOOP = "repair-loop"
 
 

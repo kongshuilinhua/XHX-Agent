@@ -1,7 +1,7 @@
-"""意图分类器：用关键词启发式把任务粗分到 direct / research-only / linear-edit / dag-execute。
+"""意图分类器：用关键词启发式把任务粗分到 direct / research-only / linear-edit。
 
 仅在没有显式 --mode 时用于挑编排器。是轻量关键词规则（中英双语）、不是 LLM 分类；
-判定顺序从特殊到一般：先认直达命令，再问答/研究，再多文件 DAG，最后按有无写关键词落到编辑或研究。
+判定顺序从特殊到一般：先认直达命令，再问答/研究，最后按有无写关键词落到编辑或研究。
 """
 
 from __future__ import annotations
@@ -49,13 +49,7 @@ class ModeClassifier:
         if has_research and not self._has_write_keywords(lowered):
             return ExecutionMode.RESEARCH_ONLY
 
-        # 4. 多文件 / 复杂 DAG（重构/跨模块…）
-        dag_keywords = {"refactor", "across modules", "multi-file", "all files", "whole project", "integrate"}
-        zh_dag_keywords = {"重构", "跨模块", "多文件", "所有文件", "整个项目", "集成"}
-        if any(kw in lowered for kw in dag_keywords) or any(kw in lowered for kw in zh_dag_keywords):
-            return ExecutionMode.DAG_EXECUTE
-
-        # 5. 兜底：有写关键词走 linear-edit，否则 research-only
+        # 4. 兜底：有写关键词走 linear-edit，否则 research-only
         if self._has_write_keywords(lowered):
             return ExecutionMode.LINEAR_EDIT
 
@@ -71,6 +65,8 @@ class ModeClassifier:
             r"\bupdate\b",
             r"\bimplement\b",
             r"\bcreate\b",
+            r"\brefactor\b",
+            r"\bintegrate\b",
         }
-        zh_write_keywords = {"修复", "补丁", "修改", "删除", "写入", "更新", "实现", "创建", "继续推进"}
+        zh_write_keywords = {"修复", "补丁", "修改", "删除", "写入", "更新", "实现", "创建", "继续推进", "重构", "集成"}
         return any(re.search(kw, text) for kw in write_keywords) or any(kw in text for kw in zh_write_keywords)
