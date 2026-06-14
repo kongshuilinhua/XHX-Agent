@@ -34,7 +34,7 @@ def test_checkpoint_2_routing(monkeypatch):
     called_write = []
     called_read = []
 
-    def fake_run_write(ctx, *, description, prompt, turn):
+    def fake_run_write(ctx, *, description, prompt, turn, seed_files=None):
         called_write.append((description, prompt, turn))
         return "write conclusion", ["modified.py"]
 

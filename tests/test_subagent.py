@@ -355,3 +355,83 @@ def test_sub_run_id_uses_uuid(tmp_path, monkeypatch):
     assert len(wt_instances) == 1
     assert "test-run-edit1-abcdef12" in wt_instances[0]
 
+
+def test_run_write_subagent_seeds_prior_changed_files(tmp_path, monkeypatch):
+    import subprocess
+    import threading
+    from unittest.mock import MagicMock
+
+    import xhx_agent.orchestrators.subagent as submod
+    from xhx_agent.orchestrators.base import OrchestratorContext
+    from xhx_agent.tools.registry import ToolContext
+
+    # 1. Initialize git repo
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    # Create an initial commit
+    init_file = tmp_path / "init.txt"
+    init_file.write_text("initial commit file", encoding="utf-8")
+    subprocess.run(["git", "add", "init.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    # 2. Write foo.py in the parent workspace (not committed, simulating round 1 edits)
+    foo_file = tmp_path / "foo.py"
+    foo_file.write_text("line1\n", encoding="utf-8")
+
+    # 3. Construct minimum ctx
+    ctx = OrchestratorContext(
+        app=MagicMock(),
+        task="mock task",
+        run_id="run-seeding-123",
+        workspace=tmp_path,
+        original_workspace=tmp_path,
+        profile=MagicMock(),
+        scan=MagicMock(),
+        evidence=MagicMock(),
+        kernel=MagicMock(),
+        tool_context=ToolContext(workspace=tmp_path),
+        subagent_claims={},
+    )
+    ctx.subagent_lock = threading.Lock()
+
+    # 4. Mock _drive_write_loop to assert seeding worked
+    seeding_verified = False
+    def fake_drive_write_loop(run_ctx, prompt, allowed, turn):
+        nonlocal seeding_verified
+        # The worktree workspace path:
+        wt_workspace = run_ctx.tool_context.workspace
+        wt_foo = wt_workspace / "foo.py"
+        assert wt_foo.exists(), "foo.py was not seeded to worktree"
+        assert wt_foo.read_text(encoding="utf-8") == "line1\n", "foo.py content mismatch"
+        seeding_verified = True
+        return "ok", []
+
+    monkeypatch.setattr(submod, "_drive_write_loop", fake_drive_write_loop)
+    monkeypatch.setattr(submod, "_merge_into_parent", lambda ctx, merge_root, changed, label: ([], []))
+
+    # Run subagent with seeding
+    conclusion, changed = submod.run_write_subagent(
+        ctx, description="seeding_test", prompt="edit foo", turn=2, seed_files=["foo.py"]
+    )
+    assert seeding_verified, "_drive_write_loop was not run or assertion failed"
+    assert "ok" in conclusion
+
+    # 5. Counter-example: seed_files=None, foo.py should NOT exist in worktree
+    no_seeding_verified = False
+    def fake_drive_write_loop_no_seed(run_ctx, prompt, allowed, turn):
+        nonlocal no_seeding_verified
+        wt_workspace = run_ctx.tool_context.workspace
+        wt_foo = wt_workspace / "foo.py"
+        assert not wt_foo.exists(), "foo.py should not be seeded when seed_files=None"
+        no_seeding_verified = True
+        return "ok", []
+
+    monkeypatch.setattr(submod, "_drive_write_loop", fake_drive_write_loop_no_seed)
+    submod.run_write_subagent(
+        ctx, description="no_seeding_test", prompt="edit foo", turn=3, seed_files=None
+    )
+    assert no_seeding_verified
+
+

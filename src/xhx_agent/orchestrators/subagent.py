@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xhx_agent.models import build_chat_client
@@ -107,6 +108,7 @@ def run_write_subagent(
     description: str,
     prompt: str,
     turn: int = 0,
+    seed_files: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """跑一个隔离【可写】子循环（自己的 git worktree），改完**串行合并回父工作区**（冲突先到先得）。
 
@@ -128,6 +130,7 @@ def run_write_subagent(
         if wt.is_active:
             sub_tool_context = ctx.tool_context.model_copy(update={"workspace": wt.active_path})
             run_ctx = dataclasses.replace(ctx, tool_context=sub_tool_context)
+            _seed_worktree(ctx, wt.active_path, seed_files)   # 播种：让本轮 edit 看得到前序已改文件
         answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)   # 锁外并行（各自 worktree）
         merge_root = wt.active_path if wt.is_active else ctx.tool_context.workspace
         with ctx.subagent_lock:      # ② 串行化合并（claims + 文件拷贝）
@@ -217,3 +220,19 @@ def _merge_into_parent(
         ctx.subagent_claims[rel] = label
         applied.append(rel)
     return applied, conflicts
+
+
+def _seed_worktree(ctx: OrchestratorContext, worktree_root: Path, seed_files: list[str] | None) -> None:
+    """把父工作区里\"前序已改文件\"拷进新建 worktree，使后续 edit 在其之上继续改（解决 worktree 从 HEAD 切出看不到未提交改动的问题）。"""
+    import shutil
+    if not seed_files:
+        return
+    parent = ctx.tool_context.workspace
+    for rel in dict.fromkeys(seed_files):
+        if not rel:
+            continue
+        src = parent / rel
+        dest = worktree_root / rel
+        if src.exists() and src.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)

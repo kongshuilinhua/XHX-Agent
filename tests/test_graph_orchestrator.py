@@ -109,7 +109,7 @@ def test_graph_runs_dependent_nodes_with_variable_substitution(tmp_path, monkeyp
         return "n1 result text"
 
     edit_called = []
-    def fake_run_write_subagent(ctx, description, prompt, turn):
+    def fake_run_write_subagent(ctx, description, prompt, turn, seed_files=None):
         edit_called.append(prompt)
         return "n2 result text", []
 
@@ -149,7 +149,7 @@ def test_graph_planner_fallback_on_bad_dag(tmp_path, monkeypatch):
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
 
     called_prompts = []
-    def fake_run_write_subagent(ctx, description, prompt, turn):
+    def fake_run_write_subagent(ctx, description, prompt, turn, seed_files=None):
         called_prompts.append(prompt)
         return "fallback success", []
 
@@ -273,7 +273,7 @@ def test_variable_substitution_and_node_execution(monkeypatch) -> None:
     node_edit = DAGNode(node_id="n3", prompt="edit $n2", agent_type="edit")
 
     edit_called = []
-    def fake_run_write_subagent(context, description, prompt, turn):
+    def fake_run_write_subagent(context, description, prompt, turn, seed_files=None):
         edit_called.append((description, prompt, turn))
         return "edit result", ["src/calc.py"]
 
@@ -366,7 +366,7 @@ def test_graph_runs_independent_edit_nodes_in_parallel(tmp_path, monkeypatch):
     barrier = threading.Barrier(2, timeout=5)
     done = []
 
-    def fake_run_write_subagent(ctx, description, prompt, turn):
+    def fake_run_write_subagent(ctx, description, prompt, turn, seed_files=None):
         barrier.wait()
         done.append(prompt)
         return f"edited:{prompt}", []
@@ -462,6 +462,110 @@ def test_graph_replan_budget_exhausted_forces_finish(tmp_path, monkeypatch):
     assert result.answer == "forced finish"
     assert fc.plans == 3      # 默认 max_graph_replans=2 → 1 初规划 + 2 重规划
     assert fc.joins == 3
+
+
+def test_graph_replan_reedits_same_file_across_rounds(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    # 1. Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    init_file = tmp_path / "init.txt"
+    init_file.write_text("initial commit file", encoding="utf-8")
+    subprocess.run(["git", "add", "init.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # 2. Graph Fake Client
+    class FakeGraphClient:
+        def __init__(self):
+            self.plans = 0
+            self.joins = 0
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                self.plans += 1
+                node_id = f"n{self.plans}"
+                prompt = f"edit foo.py to add line{self.plans}"
+                return ChatResult(content=None, tool_calls=[ToolCall(id=f"p{self.plans}", name="submit_dag", arguments={
+                    "nodes": [{"id": node_id, "agent_type": "edit", "prompt": prompt, "deps": []}]
+                })])
+            if "JOINER" in system:
+                self.joins += 1
+                if self.joins == 1:
+                    return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="replan", arguments={
+                        "reason": "need line2 as well"
+                    })])
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j2", name="finish", arguments={
+                    "text": "final done"
+                })])
+            raise AssertionError(f"Unexpected graph message: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # 3. Subagent Fake Client
+    import textwrap
+
+    class FakeChildClient:
+        def __init__(self):
+            self.turn_n1 = 0
+            self.turn_n2 = 0
+        def chat(self, messages, tools):
+            # The initial user prompt is the first message in the history with role == "user"
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            if "add line1" in user_msg:
+                self.turn_n1 += 1
+                if self.turn_n1 == 1:
+                    patch = textwrap.dedent("""\
+                        --- /dev/null
+                        +++ b/foo.py
+                        @@ -0,0 +1,1 @@
+                        +line1
+                        """)
+                    return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                        "patch": patch
+                    })])
+                return ChatResult(content="Done line1", tool_calls=[])
+            elif "add line2" in user_msg:
+                self.turn_n2 += 1
+                if self.turn_n2 == 1:
+                    patch = textwrap.dedent("""\
+                        --- a/foo.py
+                        +++ b/foo.py
+                        @@ -1,1 +1,2 @@
+                         line1
+                        +line2
+                        """)
+                    return ChatResult(content=None, tool_calls=[ToolCall(id="c2", name="apply_patch", arguments={
+                        "patch": patch
+                    })])
+                return ChatResult(content="Done line2", tool_calls=[])
+            raise AssertionError(f"Unexpected subagent prompt: {user_msg}")
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    # 4. Run task
+    result = RuntimeApp(tmp_path).run_task("replan and add line1 and line2 to foo.py", assume_yes=True, mode="graph")
+
+    # 5. Assertions
+    assert result.status == "success"
+    assert result.answer == "final done"
+    assert "foo.py" in result.changed_files
+
+    foo_file = tmp_path / "foo.py"
+    assert foo_file.exists()
+    assert foo_file.read_text(encoding="utf-8") == "line1\nline2\n"
+
 
 
 

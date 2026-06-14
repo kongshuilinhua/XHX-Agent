@@ -176,11 +176,19 @@ def _substitute_vars(prompt: str, done: dict[str, str]) -> str:
     return re.sub(r"\$([A-Za-z0-9_]+)", lambda m: done.get(m.group(1), m.group(0)), prompt)
 
 
-def _run_dag_node(ctx: OrchestratorContext, node: DAGNode, done: dict[str, str], turn: int) -> tuple[list[str], str]:
+def _run_dag_node(
+    ctx: OrchestratorContext,
+    node: DAGNode,
+    done: dict[str, str],
+    turn: int,
+    seed_files: list[str] | None = None,
+) -> tuple[list[str], str]:
     """执行单节点：变量替换 → 跑子 agent → 返回 (changed_files, result_text)。"""
     prompt = _substitute_vars(node.prompt, done)
     if node.agent_type == "edit":
-        text, changed = run_write_subagent(ctx, description=node.node_id, prompt=prompt, turn=turn)
+        text, changed = run_write_subagent(
+            ctx, description=node.node_id, prompt=prompt, turn=turn, seed_files=seed_files
+        )
         return changed, text
     text = run_subagent(ctx, description=node.node_id, prompt=prompt, agent_type="explore", turn=turn)
     return [], text
@@ -282,6 +290,7 @@ class GraphOrchestrator:
             from xhx_agent.planner.planner import DAGScheduler
 
             ctx.subagent_claims.clear()  # 每轮重置，防止前序轮 edit 节点占用导致 CONFLICT
+            prior_changed = list(state["changed_files"])
             nodes = state["nodes"]
             plan = DAGPlan(root=str(ctx.original_workspace), nodes=nodes)
             changed: list[str] = []
@@ -295,7 +304,7 @@ class GraphOrchestrator:
                     f"Running DAG node {node.node_id} ({node.agent_type}).",
                     node_id=node.node_id, agent_type=node.agent_type,
                 )
-                ch, text = _run_dag_node(ctx, node, done, turn=1)
+                ch, text = _run_dag_node(ctx, node, done, turn=1, seed_files=prior_changed)
                 with changed_lock:
                     changed.extend(ch)
                 return True, text  # 异常交给 DAGScheduler 捕获 → 该节点 failed、下游 blocked
