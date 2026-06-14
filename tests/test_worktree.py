@@ -89,10 +89,12 @@ def test_worktree_cleanup_recovers_when_remove_fails(tmp_path: Path, monkeypatch
     def fake_run(cmd, **kw):
         # 模拟 "git worktree remove" 总失败；其余 git 命令照常真跑（prune/branch -D）。
         if cmd[:3] == ["git", "worktree", "remove"]:
+
             class _R:
                 returncode = 1
                 stderr = "simulated lock"
                 stdout = ""
+
             return _R()
         return real_run(cmd, **kw)
 

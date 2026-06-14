@@ -80,7 +80,6 @@ class ConsoleState:
     last_model: str = ""
     last_call_ms: int = 0
 
-
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
             self._reset_for_run(event)

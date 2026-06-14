@@ -192,6 +192,3 @@ def test_console_state_tracks_last_model_and_duration() -> None:
     # They should keep the previous/default values or fallback to 0/""
     assert state.last_model == "deepseek-x"
     assert state.last_call_ms == 0
-
-
-

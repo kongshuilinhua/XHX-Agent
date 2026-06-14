@@ -138,6 +138,7 @@ def test_timeline_renders_p3_p4_graph_events(tmp_path) -> None:
 
 def test_textual_conversation_coloring(tmp_path) -> None:
     from rich.text import Text
+
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
     app.messages.append("user> hello")
     app.messages.append("system> init")
@@ -863,7 +864,6 @@ def test_textual_context_command_summarizes_current_state(tmp_path) -> None:
     assert "Context —" in app.detail_text
 
 
-
 def test_textual_evidence_command_summarizes_policy_decisions(tmp_path) -> None:
     state = ConsoleState()
     state.reduce(
@@ -966,6 +966,7 @@ def test_textual_mode_command_shows_selectable_picker_and_applies(tmp_path) -> N
             assert "mode: graph" in app.messages[-1]
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1000,6 +1001,7 @@ def test_textual_picker_navigation_wraps_around(tmp_path) -> None:
             assert option_list.highlighted == 0
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1024,9 +1026,16 @@ def test_textual_threads_prior_messages_across_turns(tmp_path) -> None:
             ]
             rel = save_transcript(tmp_path, run_id, messages)
             return RunResult(
-                run_id=run_id, status="success", changed_files=[], commands=[],
-                verification="not_executed", summary_path=f".xhx/logbook/{run_id}.md",
-                risk_summary=[], answer=f"answer {self.turn}", transcript_path=rel, mode="loop",
+                run_id=run_id,
+                status="success",
+                changed_files=[],
+                commands=[],
+                verification="not_executed",
+                summary_path=f".xhx/logbook/{run_id}.md",
+                risk_summary=[],
+                answer=f"answer {self.turn}",
+                transcript_path=rel,
+                mode="loop",
             )
 
     runtime = MemoryRuntime()
@@ -1056,9 +1065,14 @@ def test_textual_plan_preview_uses_background_worker(tmp_path) -> None:
         started.set()
         assert release.wait(timeout=2)
         return PlanPreview(
-            run_id="dry-1", status="success", summary=f"Preview {task}", step_count=1,
-            context_budget_tokens=6000, context_used_tokens_estimate=120,
-            trace_path=".xhx/traces/dry-1.jsonl", risk_summary=[],
+            run_id="dry-1",
+            status="success",
+            summary=f"Preview {task}",
+            step_count=1,
+            context_budget_tokens=6000,
+            context_used_tokens_estimate=120,
+            trace_path=".xhx/traces/dry-1.jsonl",
+            risk_summary=[],
         )
 
     runtime.preview_plan = blocking_preview
@@ -1325,9 +1339,7 @@ def test_textual_snapshot_status_line() -> None:
     )
     state.is_streaming = True  # type: ignore[attr-defined]
 
-    snapshot = TextualSnapshot.from_state(
-        state, workspace="/repo", profile="mock", auto_repair=False, assume_yes=True
-    )
+    snapshot = TextualSnapshot.from_state(state, workspace="/repo", profile="mock", auto_repair=False, assume_yes=True)
     assert "state: running" in snapshot.status_line
     assert "mode: loop" in snapshot.status_line
     assert "turn: 3" in snapshot.status_line
@@ -1437,6 +1449,7 @@ def test_textual_statusline_widget(tmp_path) -> None:
             assert "state: idle" in str(statusline_widget.content)
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1461,7 +1474,7 @@ def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
         profiles=[
             ModelProfile(name="mock1", provider="openai-compatible", model="gpt-4"),
             ModelProfile(name="mock2", provider="mock", model="deepseek-chat"),
-        ]
+        ],
     )
     monkeypatch.setattr("xhx_agent.tui.textual_app.load_profiles", lambda ws: fake_profiles)
 
@@ -1474,6 +1487,7 @@ def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
             await pilot.pause()
 
             from textual.widgets import Input, OptionList
+
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1488,6 +1502,7 @@ def test_textual_app_interactive_model_selection(tmp_path, monkeypatch) -> None:
             assert pilot.app.profile == "mock2"
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1525,6 +1540,7 @@ def test_textual_app_interactive_session_selection(tmp_path) -> None:
             await pilot.pause()
 
             from textual.widgets import Input, OptionList
+
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1540,6 +1556,7 @@ def test_textual_app_interactive_session_selection(tmp_path) -> None:
             assert pilot.app.active_detail == "overview"
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1564,6 +1581,7 @@ def test_textual_app_interactive_permission_confirmation(tmp_path) -> None:
             await pilot.pause()
 
             from textual.widgets import Input, OptionList
+
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1579,6 +1597,7 @@ def test_textual_app_interactive_permission_confirmation(tmp_path) -> None:
             assert len(pilot.app.query("#active_options")) == 0
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1590,7 +1609,7 @@ def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None
         profiles=[
             ModelProfile(name="mock1", provider="openai-compatible", model="gpt-4"),
             ModelProfile(name="mock2", provider="mock", model="deepseek-chat"),
-        ]
+        ],
     )
     monkeypatch.setattr("xhx_agent.tui.textual_app.load_profiles", lambda ws: fake_profiles)
 
@@ -1603,6 +1622,7 @@ def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None
             await pilot.pause()
 
             from textual.widgets import Input, OptionList
+
             assert pilot.app.query_one("#active_options", OptionList) is not None
 
             await pilot.press("escape")
@@ -1614,6 +1634,7 @@ def test_textual_app_interactive_selection_escape(tmp_path, monkeypatch) -> None
             assert input_widget.has_focus
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1662,6 +1683,7 @@ def test_textual_app_interactive_command_selection(tmp_path) -> None:
             await pilot.pause()
 
             from textual.widgets import Input, OptionList
+
             active_options = pilot.app.query_one("#active_options", OptionList)
             assert active_options is not None
             assert not active_options.has_focus
@@ -1701,6 +1723,7 @@ def test_textual_app_interactive_command_selection(tmp_path) -> None:
             assert input_widget.value == "/resume "
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1710,6 +1733,7 @@ def test_textual_app_input_focus_retention(tmp_path) -> None:
     async def run_app() -> None:
         async with app.run_test() as pilot:
             from textual.widgets import Input
+
             input_widget = pilot.app.query_one("#input", Input)
             # Verify it has focus initially
             assert input_widget.has_focus
@@ -1723,6 +1747,7 @@ def test_textual_app_input_focus_retention(tmp_path) -> None:
             assert input_widget.has_focus
 
     import asyncio
+
     asyncio.run(run_app())
 
 
@@ -1784,7 +1809,9 @@ def test_textual_timeline_translates_runtime_events_into_messages(tmp_path) -> N
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
 
     app.handle_runtime_event(
-        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}})
+        RuntimeEvent(
+            type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}}
+        )
     )
     app.handle_runtime_event(
         RuntimeEvent(
@@ -1793,9 +1820,7 @@ def test_textual_timeline_translates_runtime_events_into_messages(tmp_path) -> N
             payload={"tool": "search", "status": "failed", "summary": "error detail", "turn": 1},
         )
     )
-    app.handle_runtime_event(
-        RuntimeEvent(type="graph_review", message="round 1: passed", payload={"round": 1})
-    )
+    app.handle_runtime_event(RuntimeEvent(type="graph_review", message="round 1: passed", payload={"round": 1}))
     app.handle_runtime_event(
         RuntimeEvent(type="verification_start", message="", payload={"command": "python -m pytest"})
     )
@@ -1849,7 +1874,9 @@ def test_textual_auto_memory_suggests_and_writes_on_success(tmp_path, monkeypatc
 
     # 把客户端搭建链路 stub 掉（否则 mock+tmp_path 下 get_profile/build_chat_client 可能抛异常被
     # _maybe_suggest_memories 的 try/except 吞掉，导致拿不到写入而假失败）。
-    monkeypatch.setattr("xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})())
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})()
+    )
     monkeypatch.setattr("xhx_agent.tui.textual_app.get_profile", lambda ws, name: object())
     monkeypatch.setattr("xhx_agent.tui.textual_app.build_chat_client", lambda profile: object())
 
@@ -1878,7 +1905,9 @@ def test_textual_auto_memory_skips_when_declined(tmp_path, monkeypatch) -> None:
     from xhx_agent.memory.store import MemoryRecord
 
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", runtime=FakeRuntime())
-    monkeypatch.setattr("xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})())
+    monkeypatch.setattr(
+        "xhx_agent.tui.textual_app.load_config", lambda ws: type("C", (), {"default_profile": "mock"})()
+    )
     monkeypatch.setattr("xhx_agent.tui.textual_app.get_profile", lambda ws, name: object())
     monkeypatch.setattr("xhx_agent.tui.textual_app.build_chat_client", lambda profile: object())
     cand = MemoryRecord(name="test-fact", description="a fact", mtype="project", body="x")
@@ -1896,7 +1925,6 @@ def test_textual_auto_memory_skips_when_declined(tmp_path, monkeypatch) -> None:
     app.run_task("do something", announce_user=False, reset_cancel=False)
 
     assert calls["wrote"] is False
-
 
 
 def test_textual_run_task_saves_complete_view_log_at_turn_end(tmp_path) -> None:
@@ -1953,10 +1981,30 @@ def test_textual_verbose_and_tools_commands(tmp_path) -> None:
 
     state = ConsoleState()
     # Feed tool activity
-    state.reduce(RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "test-query"}}))
-    state.reduce(RuntimeEvent(type="tool_result", message="", payload={"tool": "search", "status": "success", "summary": "found 3 files", "turn": 1}))
-    state.reduce(RuntimeEvent(type="tool_start", message="", payload={"tool": "verify", "turn": 1, "arguments": {"command": "pytest"}}))
-    state.reduce(RuntimeEvent(type="tool_result", message="", payload={"tool": "verify", "status": "failed", "summary": "tests failed", "turn": 1}))
+    state.reduce(
+        RuntimeEvent(
+            type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "test-query"}}
+        )
+    )
+    state.reduce(
+        RuntimeEvent(
+            type="tool_result",
+            message="",
+            payload={"tool": "search", "status": "success", "summary": "found 3 files", "turn": 1},
+        )
+    )
+    state.reduce(
+        RuntimeEvent(
+            type="tool_start", message="", payload={"tool": "verify", "turn": 1, "arguments": {"command": "pytest"}}
+        )
+    )
+    state.reduce(
+        RuntimeEvent(
+            type="tool_result",
+            message="",
+            payload={"tool": "verify", "status": "failed", "summary": "tests failed", "turn": 1},
+        )
+    )
 
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock", state=state)
 
@@ -1987,7 +2035,9 @@ def test_textual_verbose_and_tools_commands(tmp_path) -> None:
     app.verbose = True
     app.messages.clear()
     app.handle_runtime_event(
-        RuntimeEvent(type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}})
+        RuntimeEvent(
+            type="tool_start", message="", payload={"tool": "search", "turn": 1, "arguments": {"query": "hello"}}
+        )
     )
     # Timeline should have args: inline
     joined = "\n".join(app.messages)
@@ -2061,13 +2111,3 @@ def test_textual_app_model_thinking_rendering(tmp_path) -> None:
     )
     expected_verbose = "b" * 500 + "…"
     assert expected_verbose in app.messages[-1]
-
-
-
-
-
-
-
-
-
-

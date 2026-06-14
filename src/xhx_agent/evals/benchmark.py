@@ -142,7 +142,12 @@ def render_benchmark_report(profile: str, results: list[BenchmarkResult]) -> Ben
             f"| `{mode}` | {int(s['runs'])} | {s['success_rate']:.0%} | {s['mean_turns']} | "
             f"{s['mean_tokens']} | {s['mean_duration']} | {int(s['total_files_changed'])} |"
         )
-    lines += ["", "## 逐任务明细", "| 任务 | 范式 | 状态 | 轮数 | tokens | 耗时(s) | 改动 |", "|---|---|---|---|---|---|---|"]
+    lines += [
+        "",
+        "## 逐任务明细",
+        "| 任务 | 范式 | 状态 | 轮数 | tokens | 耗时(s) | 改动 |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for r in results:
         lines.append(
             f"| {r.fixture_id} | `{r.mode}` | {r.status} | {r.turns} | "

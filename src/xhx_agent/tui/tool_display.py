@@ -35,11 +35,11 @@ def tool_header(tool: str, arguments: dict) -> str:
         patch = arguments.get("patch")
         if patch:
             # Look for "*** Update File: <file>", "*** Add File: <file>", etc.
-            match = re.search(r'\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+)', patch)
+            match = re.search(r"\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+)", patch)
             if match:
                 return f"apply_patch {match.group(1).strip()}"
             # Look for "+++ b/<file>"
-            match_git = re.search(r'\+\+\+\s+b/(.+)', patch)
+            match_git = re.search(r"\+\+\+\s+b/(.+)", patch)
             if match_git:
                 return f"apply_patch {match_git.group(1).strip()}"
         return "apply_patch"

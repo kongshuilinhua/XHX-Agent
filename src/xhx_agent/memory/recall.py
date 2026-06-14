@@ -17,8 +17,28 @@ _CJK = re.compile(r"[一-鿿]")
 _BACKTICK = re.compile(r"`([^`]+)`")
 _DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 _CODE_EXT = {
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".rb", ".c", ".h", ".cpp",
-    ".md", ".json", ".toml", ".yaml", ".yml", ".txt", ".cfg", ".ini", ".sh", ".sql",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".java",
+    ".go",
+    ".rs",
+    ".rb",
+    ".c",
+    ".h",
+    ".cpp",
+    ".md",
+    ".json",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".cfg",
+    ".ini",
+    ".sh",
+    ".sql",
 }
 _MAX_BODY_CHARS = 280
 

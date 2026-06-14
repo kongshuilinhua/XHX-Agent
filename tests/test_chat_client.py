@@ -89,4 +89,3 @@ def test_chat_result_carries_optional_token_usage() -> None:
     assert used.usage.prompt == 10
     assert used.usage.completion == 4
     assert used.usage.total == 14
-

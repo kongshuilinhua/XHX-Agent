@@ -32,7 +32,11 @@ def test_compaction_effectiveness():
         {"role": "user", "content": "very long message " * 10},
         {"role": "assistant", "content": "response " * 10},
         {"role": "user", "content": "another long message " * 10},
-        {"role": "assistant", "content": "ok", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "ok",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}],
+        },
         {"role": "tool", "tool_call_id": "c1", "content": "result"},
         {"role": "user", "content": "tail"},
     ]
@@ -80,11 +84,13 @@ def test_compaction_keep_recent_ge_body():
 
 def test_loop_integration_compaction(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+
     RuntimeApp(tmp_path).init_project()
 
     # Monkeypatch compact_messages to track it
     calls = []
     original_compact = loopmod.compact_messages
+
     def mock_compact(messages, summarize_fn, **kwargs):
         calls.append(messages)
         # Force a small threshold so it triggers compaction during the loop run
@@ -95,21 +101,31 @@ def test_loop_integration_compaction(tmp_path, monkeypatch):
     # Let's monkeypatch MockModelClient.chat to return several tool calls so the conversation grows
     turn_responses = [
         # Turn 1: calls tool
-        {"content": "first response", "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"path": "README.md"}}]},
+        {
+            "content": "first response",
+            "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"path": "README.md"}}],
+        },
         # Turn 2: calls another tool
-        {"content": "second response", "tool_calls": [{"id": "t2", "name": "read_file", "arguments": {"path": "README.md"}}]},
+        {
+            "content": "second response",
+            "tool_calls": [{"id": "t2", "name": "read_file", "arguments": {"path": "README.md"}}],
+        },
         # Turn 3: answers
-        {"content": "all done", "tool_calls": []}
+        {"content": "all done", "tool_calls": []},
     ]
 
     original_chat = MockModelClient.chat
+
     def mock_chat(self, messages, tools):
         if turn_responses:
             r = turn_responses.pop(0)
             from xhx_agent.models.types import ChatResult, ToolCall
+
             return ChatResult(
                 content=r["content"],
-                tool_calls=[ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]) for tc in r["tool_calls"]]
+                tool_calls=[
+                    ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]) for tc in r["tool_calls"]
+                ],
             )
         return original_chat(self, messages, tools)
 
@@ -130,8 +146,8 @@ def test_compact_token_sliding_window():
     messages = [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "hello " * 200},  # ~200 tokens
-        {"role": "assistant", "content": "hi " * 200},   # ~200 tokens
-        {"role": "user", "content": "short"},           # keep this verbatim
+        {"role": "assistant", "content": "hi " * 200},  # ~200 tokens
+        {"role": "user", "content": "short"},  # keep this verbatim
     ]
     res = compact_messages(
         messages,
@@ -216,6 +232,7 @@ def test_compact_iterative_summary():
     ]
 
     recorded_prompts = []
+
     def record_summarize(prompt: str) -> str:
         recorded_prompts.append(prompt)
         return "updated summary content"
@@ -238,4 +255,3 @@ def test_compact_iterative_summary():
     assert "old_read.py" in summary_content
     assert "new_read.py" in summary_content
     assert "old_mod.py" in summary_content
-

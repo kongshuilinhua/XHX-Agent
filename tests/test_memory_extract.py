@@ -1,13 +1,5 @@
-from rich.console import Console
-
-from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.memory.extract import parse_memory_candidates, propose_memories
-from xhx_agent.memory.store import MemoryRecord
 from xhx_agent.models.mock import MockModelClient
-from xhx_agent.runtime.app import RunResult, RuntimeApp
-
-
-
 
 
 def test_checkpoint_1_strict_parsing():
@@ -50,8 +42,7 @@ def test_checkpoint_2_body_tolerance():
 def test_checkpoint_3_deduplication_and_limit():
     # Existing names check (slugified match)
     text = (
-        "MEMORY | type=project | name=already-existing | desc=desc\n"
-        "MEMORY | type=project | name=new-one | desc=desc\n"
+        "MEMORY | type=project | name=already-existing | desc=desc\nMEMORY | type=project | name=new-one | desc=desc\n"
     )
     candidates = parse_memory_candidates(text, existing_names={"already-existing"})
     assert len(candidates) == 1
@@ -108,6 +99,3 @@ def test_checkpoint_5_mock_determinism():
     client = MockModelClient()
     candidates = propose_memories(client, "task text", "transcript text")
     assert candidates == []
-
-
-

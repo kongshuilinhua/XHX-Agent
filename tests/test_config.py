@@ -1,5 +1,5 @@
-from pathlib import Path
-from xhx_agent.runtime.config import default_config, load_config
+from xhx_agent.runtime.config import default_config
+
 
 def test_config_load_defaults() -> None:
     cfg = default_config()

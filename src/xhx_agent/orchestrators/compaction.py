@@ -22,6 +22,7 @@ _SUMMARY_PREFIX = "[Earlier turns compacted to save context]"
 
 def _estimate_single_message_tokens(message: dict[str, Any]) -> int:
     from xhx_agent.context.compiler import _estimate_tokens
+
     total = _estimate_tokens(str(message.get("content") or ""))
     for tc in message.get("tool_calls") or []:
         total += _estimate_tokens(str(tc.get("function", {}).get("arguments", "")))

@@ -1,12 +1,12 @@
 from xhx_agent.runtime.session import (
     SessionEntry,
     format_follow_up,
+    format_session_meta,
     list_sessions,
     load_latest_session,
     load_session,
-    record_session,
-    format_session_meta,
     prune_legacy_sessions,
+    record_session,
 )
 
 
@@ -111,7 +111,9 @@ def test_list_conversations_collapses_turns_of_one_conversation(tmp_path) -> Non
 
     # Three turns of one console conversation share a conversation_id.
     record_session(tmp_path, "你好", _ResultStub("run-a1", "success", "passed", [], None), conversation_id="conv-1")
-    record_session(tmp_path, "你能做什么", _ResultStub("run-a2", "success", "passed", [], None), conversation_id="conv-1")
+    record_session(
+        tmp_path, "你能做什么", _ResultStub("run-a2", "success", "passed", [], None), conversation_id="conv-1"
+    )
     record_session(tmp_path, "不要触屏", _ResultStub("run-a3", "success", "passed", [], None), conversation_id="conv-1")
     # A standalone one-shot run (no conversation_id) stands alone.
     record_session(tmp_path, "one-shot", _ResultStub("run-b", "success", "passed", [], None))
@@ -131,7 +133,8 @@ def test_list_conversations_collapses_turns_of_one_conversation(tmp_path) -> Non
 
 
 def test_view_log_roundtrip(tmp_path) -> None:
-    from xhx_agent.runtime.session import save_view_log, load_view_log
+    from xhx_agent.runtime.session import load_view_log, save_view_log
+
     lines = ["user> hi", "  ⟶ tool search", "assistant> ok"]
     rel = save_view_log(tmp_path, "run-v", lines)
     assert rel.endswith("run-v.view.json")
@@ -140,19 +143,23 @@ def test_view_log_roundtrip(tmp_path) -> None:
 
 def test_load_view_log_missing_returns_none(tmp_path) -> None:
     from xhx_agent.runtime.session import load_view_log
+
     assert load_view_log(tmp_path, ".xhx/sessions/nope.view.json") is None
     assert load_view_log(tmp_path, None) is None
 
 
 def test_session_entry_new_fields_default() -> None:
     # Old JSON representation without the new fields
-    old_json = '{"run_id": "run-old", "task": "do old", "status": "success", "verification": "passed", "changed_files": []}'
+    old_json = (
+        '{"run_id": "run-old", "task": "do old", "status": "success", "verification": "passed", "changed_files": []}'
+    )
     entry = SessionEntry.model_validate_json(old_json)
     assert entry.view_path is None
     assert entry.turn_count == 0
     assert entry.updated_at is not None
     # Check that updated_at is a valid ISO format string
     from datetime import datetime
+
     datetime.fromisoformat(entry.updated_at)
 
 
@@ -173,6 +180,7 @@ def test_record_session_stores_view_path_and_turn_count(tmp_path) -> None:
 
 def test_resolve_run_id_exact_prefix_suffix() -> None:
     from xhx_agent.runtime.session import resolve_run_id
+
     entries = [
         SessionEntry(run_id="run-12345678", task="t1", status="success"),
         SessionEntry(run_id="run-87654321", task="t2", status="success"),
@@ -195,6 +203,7 @@ def test_resolve_run_id_exact_prefix_suffix() -> None:
 
 def test_resolve_run_id_ambiguous_returns_candidates() -> None:
     from xhx_agent.runtime.session import resolve_run_id
+
     entries = [
         SessionEntry(run_id="run-12345678", task="t1", status="success"),
         SessionEntry(run_id="run-1234aaaa", task="t2", status="success"),
@@ -206,6 +215,7 @@ def test_resolve_run_id_ambiguous_returns_candidates() -> None:
 
 def test_resolve_run_id_miss() -> None:
     from xhx_agent.runtime.session import resolve_run_id
+
     entries = [
         SessionEntry(run_id="run-12345678", task="t1", status="success"),
     ]
@@ -215,8 +225,10 @@ def test_resolve_run_id_miss() -> None:
 
 
 def test_format_session_line_shape() -> None:
+    from datetime import UTC, datetime, timedelta
+
     from xhx_agent.runtime.session import format_session_line
-    from datetime import datetime, UTC, timedelta
+
     now = datetime.now(UTC)
 
     # 1. Just now
@@ -224,15 +236,33 @@ def test_format_session_line_shape() -> None:
     assert "刚刚" in format_session_line(e1, now)
 
     # 2. Minutes ago
-    e2 = SessionEntry(run_id="run-12345678", task="task 2", status="success", turn_count=2, updated_at=(now - timedelta(minutes=5)).isoformat())
+    e2 = SessionEntry(
+        run_id="run-12345678",
+        task="task 2",
+        status="success",
+        turn_count=2,
+        updated_at=(now - timedelta(minutes=5)).isoformat(),
+    )
     assert "5分钟前" in format_session_line(e2, now)
 
     # 3. Hours ago
-    e3 = SessionEntry(run_id="run-12345678", task="task 3", status="success", turn_count=2, updated_at=(now - timedelta(hours=3)).isoformat())
+    e3 = SessionEntry(
+        run_id="run-12345678",
+        task="task 3",
+        status="success",
+        turn_count=2,
+        updated_at=(now - timedelta(hours=3)).isoformat(),
+    )
     assert "3小时前" in format_session_line(e3, now)
 
     # 4. Days ago
-    e4 = SessionEntry(run_id="run-12345678", task="task 4", status="success", turn_count=2, updated_at=(now - timedelta(days=2)).isoformat())
+    e4 = SessionEntry(
+        run_id="run-12345678",
+        task="task 4",
+        status="success",
+        turn_count=2,
+        updated_at=(now - timedelta(days=2)).isoformat(),
+    )
     assert "2天前" in format_session_line(e4, now)
 
     # 5. Long task truncation
@@ -245,7 +275,8 @@ def test_format_session_line_shape() -> None:
 
 
 def test_format_session_meta() -> None:
-    from datetime import datetime, UTC, timedelta
+    from datetime import UTC, datetime, timedelta
+
     now = datetime.now(UTC)
 
     # 1. 5 minutes ago, status="success", turn_count=3, run_id="run-12345678"
@@ -282,6 +313,7 @@ def test_prune_legacy_sessions(tmp_path) -> None:
     # Record 3 sessions with view_path, and 2 sessions without view_path
     # (use dict/fake-like result, or minimal result object)
     from xhx_agent.runtime.app import RunResult
+
     res = RunResult(
         run_id="run-1",
         status="success",

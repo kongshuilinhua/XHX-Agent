@@ -247,12 +247,13 @@ def test_loop_runs_explore_dispatch_batch_in_parallel(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             self.n += 1
             if self.n == 1:
-                return ChatResult(content=None, tool_calls=[
-                    ToolCall(id="d1", name="dispatch",
-                             arguments={"prompt": "explore A", "agent_type": "explore"}),
-                    ToolCall(id="d2", name="dispatch",
-                             arguments={"prompt": "explore B", "agent_type": "explore"}),
-                ])
+                return ChatResult(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(id="d1", name="dispatch", arguments={"prompt": "explore A", "agent_type": "explore"}),
+                        ToolCall(id="d2", name="dispatch", arguments={"prompt": "explore B", "agent_type": "explore"}),
+                    ],
+                )
             return ChatResult(content="done")
 
     monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())

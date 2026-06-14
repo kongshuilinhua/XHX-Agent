@@ -71,9 +71,27 @@ def test_recall_determinism_and_ranking(tmp_path):
     workspace = tmp_path
 
     # Write 3 memory records
-    write_memory(workspace, name="uv-command", description="Use uv for dependency management", mtype="project", body="uv run pytest is used for running tests.")
-    write_memory(workspace, name="python-version", description="Project python interpreter", mtype="project", body="We run python 3.11. dependency is important.")
-    write_memory(workspace, name="ignored-memory", description="random text data", mtype="project", body="lorem ipsum dolor sit amet.")
+    write_memory(
+        workspace,
+        name="uv-command",
+        description="Use uv for dependency management",
+        mtype="project",
+        body="uv run pytest is used for running tests.",
+    )
+    write_memory(
+        workspace,
+        name="python-version",
+        description="Project python interpreter",
+        mtype="project",
+        body="We run python 3.11. dependency is important.",
+    )
+    write_memory(
+        workspace,
+        name="ignored-memory",
+        description="random text data",
+        mtype="project",
+        body="lorem ipsum dolor sit amet.",
+    )
 
     # 1. Determinism
     q = "dependency uv run"
@@ -104,8 +122,20 @@ def test_lifecycle_verification(tmp_path):
     workspace = tmp_path
 
     # Write memories referencing files
-    write_memory(workspace, name="existent-file", description="refers to an existent file", mtype="project", body="referring to `src/existing.py` in code.")
-    write_memory(workspace, name="nonexistent-file", description="refers to a nonexistent file", mtype="project", body="referring to `src/missing.py` in code.")
+    write_memory(
+        workspace,
+        name="existent-file",
+        description="refers to an existent file",
+        mtype="project",
+        body="referring to `src/existing.py` in code.",
+    )
+    write_memory(
+        workspace,
+        name="nonexistent-file",
+        description="refers to a nonexistent file",
+        mtype="project",
+        body="referring to `src/missing.py` in code.",
+    )
 
     # Create the existent file (make parent dir first)
     (workspace / "src").mkdir(parents=True, exist_ok=True)
@@ -137,7 +167,13 @@ def test_compiler_injection(tmp_path):
     assert len(memory_items_empty) == 0
 
     # 2. Write a relevant memory
-    write_memory(workspace, name="testing-setup", description="We use pytest for testing.", mtype="project", body="Run tests with pytest.")
+    write_memory(
+        workspace,
+        name="testing-setup",
+        description="We use pytest for testing.",
+        mtype="project",
+        body="Run tests with pytest.",
+    )
 
     # Run with a query matching the memory (e.g. task matches 'testing')
     pack_match = compile_context_pack(workspace=workspace, task="How do we do testing?", scan=scan)
@@ -152,7 +188,6 @@ def test_orchestrator_injection(tmp_path, monkeypatch):
     from xhx_agent.memory.store import write_memory
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
-
 
     (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
     app = RuntimeApp(tmp_path)
@@ -177,7 +212,13 @@ def test_orchestrator_injection(tmp_path, monkeypatch):
     captured_messages.clear()
 
     # Case 2: Relevant memory exists
-    write_memory(tmp_path, name="python-run", description="We run python", mtype="project", body="Use python version 3.11 always.")
+    write_memory(
+        tmp_path,
+        name="python-run",
+        description="We run python",
+        mtype="project",
+        body="Use python version 3.11 always.",
+    )
     res2 = app.run_task("verify python", profile_name="mock", mode="loop")
     assert res2.status == "success"
     assert len(captured_messages) > 0
@@ -189,6 +230,7 @@ def test_orchestrator_injection(tmp_path, monkeypatch):
 def test_repl_slash_commands_and_autocomplete(tmp_path):
     # 1. Autocomplete check
     from xhx_agent.cli.completion import XhxCompleter
+
     completer = XhxCompleter(tmp_path)
     res = completer.get_completions("/")
     assert "/help" in res
@@ -210,20 +252,12 @@ def test_cli_subcommand(tmp_path, monkeypatch):
     assert "No memories recorded yet." in result.output
 
     # 2. Write memory
-    write_memory(tmp_path, name="command-test", description="Test CLI subcommand", mtype="project", body="Body of command test.")
+    write_memory(
+        tmp_path, name="command-test", description="Test CLI subcommand", mtype="project", body="Body of command test."
+    )
 
     # 3. Run memory command again
     result2 = runner.invoke(app, ["memory"])
     assert result2.exit_code == 0
     assert "command-test" in result2.output
     assert "Test CLI subcommand" in result2.output
-
-
-
-
-
-
-
-
-
-
