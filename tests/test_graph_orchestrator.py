@@ -280,3 +280,45 @@ def test_plan_function() -> None:
     assert len(nodes) == 0
 
 
+def test_variable_substitution_and_node_execution(monkeypatch) -> None:
+    from xhx_agent.orchestrators.graph import _substitute_vars, _run_dag_node
+    from xhx_agent.planner.modes import DAGNode
+
+    # 1. 变量替换测试
+    done = {"n1": "value1", "n2": "value2"}
+    assert _substitute_vars("use $n1 and $n2", done) == "use value1 and value2"
+    assert _substitute_vars("use $n1 and $unknown", done) == "use value1 and $unknown"
+
+    # 2. _run_dag_node explore 测试
+    ctx = "fake_ctx"
+    node_explore = DAGNode(node_id="n1", prompt="explore $n2", agent_type="explore")
+
+    explore_called = []
+    def fake_run_subagent(context, description, prompt, agent_type, turn):
+        explore_called.append((description, prompt, agent_type, turn))
+        return "explore result"
+
+    monkeypatch.setattr("xhx_agent.orchestrators.graph.run_subagent", fake_run_subagent)
+
+    changed, text = _run_dag_node(ctx, node_explore, {"n2": "val2"}, 1)
+    assert changed == []
+    assert text == "explore result"
+    assert explore_called == [("n1", "explore val2", "explore", 1)]
+
+    # 3. _run_dag_node edit 测试
+    node_edit = DAGNode(node_id="n3", prompt="edit $n2", agent_type="edit")
+
+    edit_called = []
+    def fake_run_write_subagent(context, description, prompt, turn):
+        edit_called.append((description, prompt, turn))
+        return "edit result", ["src/calc.py"]
+
+    monkeypatch.setattr("xhx_agent.orchestrators.graph.run_write_subagent", fake_run_write_subagent)
+
+    changed, text = _run_dag_node(ctx, node_edit, {"n2": "val2"}, 1)
+    assert changed == ["src/calc.py"]
+    assert text == "edit result"
+    assert edit_called == [("n3", "edit val2", 1)]
+
+
+

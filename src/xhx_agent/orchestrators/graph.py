@@ -25,6 +25,7 @@ from xhx_agent.models import build_chat_client
 from xhx_agent.models.routing import build_routed_client
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
+from xhx_agent.orchestrators.subagent import run_subagent, run_write_subagent
 from xhx_agent.planner.modes import DAGNode
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -132,6 +133,21 @@ def _plan(ctx: OrchestratorContext, client: Any) -> tuple[str | None, list[DAGNo
     ]
     result = chat_and_count(ctx, client, messages, [], turn=0)
     return _parse_dag(result.content or "", ctx.task)
+
+
+def _substitute_vars(prompt: str, done: dict[str, str]) -> str:
+    """把 prompt 里的 $<id> 替换成已完成节点的 result。未知 id 原样保留。"""
+    return re.sub(r"\$([A-Za-z0-9_]+)", lambda m: done.get(m.group(1), m.group(0)), prompt)
+
+
+def _run_dag_node(ctx: OrchestratorContext, node: DAGNode, done: dict[str, str], turn: int) -> tuple[list[str], str]:
+    """执行单节点：变量替换 → 跑子 agent → 返回 (changed_files, result_text)。"""
+    prompt = _substitute_vars(node.prompt, done)
+    if node.agent_type == "edit":
+        text, changed = run_write_subagent(ctx, description=node.node_id, prompt=prompt, turn=turn)
+        return changed, text
+    text = run_subagent(ctx, description=node.node_id, prompt=prompt, agent_type="explore", turn=turn)
+    return [], text
 
 
 class _GraphState(TypedDict):
