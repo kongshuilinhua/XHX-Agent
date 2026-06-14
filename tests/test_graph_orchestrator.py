@@ -1025,6 +1025,66 @@ def test_graph_repair_budget_exhausted(tmp_path, monkeypatch):
     assert result.restore_plan_path is not None
 
 
+def test_graph_joiner_summary_lists_changed_files(tmp_path, monkeypatch):
+    """防假成功：joiner 的 summary 必须含真实改动文件清单（edit 改了 README.md → 列出它）。"""
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+    monkeypatch.setattr(graphmod, "run_write_subagent",
+        lambda ctx, description, prompt, turn, seed_files=None: ("edited", ["README.md"]))
+
+    seen = {}
+
+    class FakeClient:
+        def chat(self, messages, tools):
+            s = messages[0]["content"]
+            if "PLANNER" in s:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit readme", "deps": []}]})])
+            if "JOINER" in s:
+                seen["summary"] = next(m["content"] for m in messages if m["role"] == "user")
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish",
+                    arguments={"text": "done"})])
+            raise AssertionError("unexpected")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
+    result = RuntimeApp(tmp_path).run_task("edit the readme", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert "Files actually changed this run: ['README.md']" in seen["summary"]
+
+
+def test_graph_joiner_summary_marks_no_changes(tmp_path, monkeypatch):
+    """防假成功：explore-only(无改动)时 joiner summary 标 NONE，杜绝它谎称改过文件。"""
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+    monkeypatch.setattr(graphmod, "run_subagent",
+        lambda ctx, description, prompt, agent_type, turn: "explored, suggest changing X")
+
+    seen = {}
+
+    class FakeClient:
+        def chat(self, messages, tools):
+            s = messages[0]["content"]
+            if "PLANNER" in s:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "explore", "prompt": "look", "deps": []}]})])
+            if "JOINER" in s:
+                seen["summary"] = next(m["content"] for m in messages if m["role"] == "user")
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish",
+                    arguments={"text": "investigated"})])
+            raise AssertionError("unexpected")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
+    result = RuntimeApp(tmp_path).run_task("look around", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert "Files actually changed this run: NONE" in seen["summary"]
+
+
 
 
 

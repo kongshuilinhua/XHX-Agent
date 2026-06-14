@@ -38,6 +38,11 @@ PLANNER_PROMPT = (
     "call submit_dag with a MINIMAL task DAG. A simple task = a single node; split into multiple nodes only "
     "when they can run independently or one truly depends on another.\n"
     "- Only if the request is pure conversation or a question answerable WITHOUT the repository, call answer_user.\n"
+    "Node types: agent_type='explore' is READ-ONLY (it can search and read but CANNOT modify any file); "
+    "agent_type='edit' makes the actual changes via apply_patch. If the request requires creating, modifying, "
+    "fixing, refactoring, or otherwise changing the repository, the DAG MUST include at least one 'edit' node "
+    "that performs the change — explore nodes alone can NEVER fulfil such a task. Use explore only to gather "
+    "context that an 'edit' node then depends on.\n"
     "DAG rules: ids unique; every dep references an existing id; no cycles; a node's prompt may use $<id> to "
     "insert a dependency's result, and every $<id> used MUST appear in that node's deps."
 )
@@ -75,7 +80,15 @@ _PLANNER_TOOLS = [
                             "type": "object",
                             "properties": {
                                 "id": {"type": "string"},
-                                "agent_type": {"type": "string", "enum": ["explore", "edit"]},
+                                "agent_type": {
+                                    "type": "string",
+                                    "enum": ["explore", "edit"],
+                                    "description": (
+                                        "explore = READ-ONLY investigation (cannot modify files); "
+                                        "edit = make changes via apply_patch. Any task that changes the "
+                                        "repository needs at least one 'edit' node."
+                                    ),
+                                },
                                 "prompt": {
                                     "type": "string",
                                     "description": "Self-contained instruction for the sub-agent; may use $<id>.",
@@ -203,7 +216,11 @@ JOINER_PROMPT = (
     "explaining precisely what is missing so a new plan can fix it.\n"
     "Prefer finishing. Do not call replan for minor stylistic gaps.\n"
     "If a verification result is provided, weigh it: do not finish claiming success when verification "
-    "failed unless it cannot be fixed."
+    "failed unless it cannot be fixed.\n"
+    "Ground your answer in facts: 'Files actually changed this run' lists the REAL modifications. NEVER claim "
+    "you created, modified, fixed, or refactored a file that is not in that list — a read-only explore node "
+    "can only suggest changes, not make them. If the task required changing the repository but no files were "
+    "changed, the work is NOT done: call replan to actually perform the edit."
 )
 
 
@@ -397,6 +414,8 @@ class GraphOrchestrator:
                 f"Original task: {ctx.task}\n\nSub-agent execution results:\n"
                 + "\n".join(f"Node {n.node_id} ({n.agent_type}) [{n.status}]: {n.result}" for n in state["nodes"])
             )
+            changed = sorted(set(state["changed_files"]))
+            summary += f"\n\nFiles actually changed this run: {changed if changed else 'NONE'}"
             vstat = state.get("verification", "skipped_no_changes")
             summary += f"\n\nVerification result: {vstat}"
             if state.get("verification_failure"):
