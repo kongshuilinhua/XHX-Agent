@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -36,9 +37,13 @@ WORKER_MAX_TURNS = 4
 WORKER_TOOLS = {"search", "read_file", "apply_patch"}
 
 COORDINATOR_PROMPT = (
-    "You are the COORDINATOR of a multi-agent coding workflow. Break the user's task into a short ordered "
-    "list of concrete, independent sub-tasks (at most 5). Output ONLY the list, one sub-task per line prefixed "
-    "with '- '. No preamble, no numbering, no explanation. If the task is already atomic, output a single line."
+    "You are the COORDINATOR of a multi-agent coding workflow.\n"
+    "Match effort to the request:\n"
+    "- If you can fully satisfy it without reading or changing the repository, just answer: reply with a "
+    "single message that STARTS with 'ANSWER: ' followed by your full natural-language response.\n"
+    "- Otherwise, break it into the FEWEST concrete, independent sub-tasks that can each stand alone "
+    "(at most 5), one per line prefixed with '- '. Never split work that is really a single step.\n"
+    "No preamble, no numbering, no explanation."
 )
 WORKER_PROMPT = (
     "You are a WORKER agent in a multi-agent workflow. Accomplish ONLY the assigned sub-task using the tools. "
@@ -59,10 +64,19 @@ class _GraphState(TypedDict):
     worker_results: list[str]
     review_passed: bool
     review_reason: str
+    answer: str | None
 
 
-def _coordinate(ctx: OrchestratorContext, client: Any) -> list[str]:
-    """LLM 把任务拆成子任务列表（解析 '- ' 行；解析不出就整体作为单个子任务）。"""
+@dataclass
+class Coordination:
+    """coordinator 的产出：要么直接回答（answer），要么一组待执行子任务（subtasks）。"""
+
+    answer: str | None
+    subtasks: list[str]
+
+
+def _coordinate(ctx: OrchestratorContext, client: Any) -> Coordination:
+    """LLM 判别量级：闲聊/可直接回答→answer 直答；需改代码→拆子任务（解析 '- ' 行，兜底整体单子任务）。"""
     messages = [
         {
             "role": "system",
@@ -74,11 +88,14 @@ def _coordinate(ctx: OrchestratorContext, client: Any) -> list[str]:
         {"role": "user", "content": ctx.task},
     ]
     result = chat_and_count(ctx, client, messages, [], turn=0)
-    lines = [ln.strip() for ln in (result.content or "").splitlines()]
+    content = (result.content or "").strip()
+    if content.upper().startswith("ANSWER:"):
+        return Coordination(answer=content[len("ANSWER:"):].strip() or content, subtasks=[])
+    lines = [ln.strip() for ln in content.splitlines()]
     subtasks = [ln[2:].strip() for ln in lines if ln.startswith("- ") and ln[2:].strip()]
     if not subtasks:
         subtasks = [ctx.task]
-    return subtasks[:MAX_SUBTASKS]
+    return Coordination(answer=None, subtasks=subtasks[:MAX_SUBTASKS])
 
 
 def _run_worker(ctx: OrchestratorContext, client: Any, subtask: str, turn: int) -> tuple[list[str], str]:
@@ -154,10 +171,15 @@ class GraphOrchestrator:
         max_rounds = min(MAX_REVIEW_ROUNDS, load_config(ctx.original_workspace).max_loop_turns)
 
         def coordinator(state: _GraphState) -> dict[str, Any]:
-            subtasks = _coordinate(ctx, client)
+            coord = _coordinate(ctx, client)
+            if coord.answer is not None:
+                # 量级匹配：闲聊/可直接回答的问题不拆任务、不启动写 worker，直接给出回答。
+                emit_event(ctx.event_callback, "graph_coordinator",
+                           "Answered directly (no code work needed).", round=state["rounds"])
+                return {"subtasks": [], "answer": coord.answer, "review_passed": True}
             emit_event(ctx.event_callback, "graph_coordinator",
-                       f"Decomposed task into {len(subtasks)} sub-task(s).", round=state["rounds"])
-            return {"subtasks": subtasks}
+                       f"Decomposed task into {len(coord.subtasks)} sub-task(s).", round=state["rounds"])
+            return {"subtasks": coord.subtasks}
 
         def execute(state: _GraphState) -> dict[str, Any]:
             changed: list[str] = []
@@ -179,6 +201,10 @@ class GraphOrchestrator:
             emit_event(ctx.event_callback, "graph_review", reason, passed=passed, round=state["rounds"])
             return {"review_passed": passed, "review_reason": reason, "rounds": state["rounds"] + 1}
 
+        def route_after_coordinator(state: _GraphState) -> str:
+            # 没有子任务（coordinator 已直接回答）→ 直接结束；否则进入执行。
+            return "done" if not state["subtasks"] else "execute"
+
         def route(state: _GraphState) -> str:
             if state["review_passed"] or state["rounds"] >= max_rounds:
                 return "done"
@@ -189,7 +215,7 @@ class GraphOrchestrator:
         graph.add_node("execute", execute)
         graph.add_node("review", review)
         graph.set_entry_point("coordinator")
-        graph.add_edge("coordinator", "execute")
+        graph.add_conditional_edges("coordinator", route_after_coordinator, {"execute": "execute", "done": END})
         graph.add_edge("execute", "review")
         graph.add_conditional_edges("review", route, {"execute": "execute", "done": END})
         compiled = graph.compile()
@@ -198,9 +224,13 @@ class GraphOrchestrator:
         emit_event(ctx.event_callback, "run_start", "Graph run started.", run_id=ctx.run_id, task=ctx.task)
         final: dict[str, Any] = compiled.invoke({
             "rounds": 0, "subtasks": [], "changed_files": [], "worker_results": [],
-            "review_passed": False, "review_reason": "",
+            "review_passed": False, "review_reason": "", "answer": None,
         })
 
+        # 量级匹配：闲聊由 coordinator 直答；编码任务则把 worker 结果作为回答输出（让用户看到做了什么）。
+        answer = final.get("answer")
+        if answer is None and final["worker_results"]:
+            answer = "\n".join(r for r in final["worker_results"] if r)
         changed_files = sorted(set(final["changed_files"]))
         status = "success" if final["review_passed"] else "failed"
         risks: list[str] = [] if final["review_passed"] else [final["review_reason"]]
@@ -222,4 +252,4 @@ class GraphOrchestrator:
             run_id=ctx.run_id, status=status, turns=final["rounds"], changed_files=changed_files,
             commands=[], verification=verification_status,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks, metrics=metrics, mode=ctx.mode or "graph")
+            risk_summary=risks, metrics=metrics, mode=ctx.mode or "graph", answer=answer)

@@ -11,18 +11,27 @@ def test_coordinate_parsing():
     # 1. Normal parsing of "- a\n- b"
     client.chat.return_value = MagicMock(content="- subtask a\n- subtask b")
     res1 = _coordinate(ctx, client)
-    assert res1 == ["subtask a", "subtask b"]
+    assert res1.answer is None
+    assert res1.subtasks == ["subtask a", "subtask b"]
 
     # 2. Fallback to original task when no "- " is present
     client.chat.return_value = MagicMock(content="no subtask prefix")
     res2 = _coordinate(ctx, client)
-    assert res2 == ["original task"]
+    assert res2.answer is None
+    assert res2.subtasks == ["original task"]
 
     # 3. Capped to MAX_SUBTASKS (5)
     client.chat.return_value = MagicMock(content="- a\n- b\n- c\n- d\n- e\n- f\n- g")
     res3 = _coordinate(ctx, client)
-    assert len(res3) == 5
-    assert res3 == ["a", "b", "c", "d", "e"]
+    assert res3.answer is None
+    assert len(res3.subtasks) == 5
+    assert res3.subtasks == ["a", "b", "c", "d", "e"]
+
+    # 4. Conversational request → direct answer, no sub-tasks (量级匹配出口)
+    client.chat.return_value = MagicMock(content="ANSWER: I am xhx-agent, a local coding agent.")
+    res4 = _coordinate(ctx, client)
+    assert res4.subtasks == []
+    assert res4.answer == "I am xhx-agent, a local coding agent."
 
 
 def test_graph_worker_commits_changes(tmp_path, monkeypatch):
@@ -122,6 +131,35 @@ def test_graph_reviewer_always_fails(tmp_path, monkeypatch):
     assert result.status == "failed"
     assert result.turns == 2
     assert any("FAIL: broken test" in r for r in result.risk_summary)
+
+
+def test_graph_answers_conversational_directly(tmp_path, monkeypatch):
+    """闲聊问题：coordinator 直接回答，不拆任务、不启动 worker、不跑 review。"""
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+
+    class ChatFake:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "COORDINATOR" in system:
+                return ChatResult(content="ANSWER: I am xhx-agent. I help you read and change this repo.")
+            raise AssertionError("worker/reviewer should not be called for a conversational request")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: ChatFake())
+    events = []
+
+    result = RuntimeApp(tmp_path).run_task(
+        "介绍一下你自己", assume_yes=True, mode="graph", event_callback=events.append
+    )
+
+    assert result.status == "success"
+    assert result.changed_files == []
+    assert result.answer == "I am xhx-agent. I help you read and change this repo."
+    # 没有任何 worker 子任务事件
+    assert not [e for e in events if e.type == "graph_worker"]
 
 
 def test_graph_multiple_subtasks(tmp_path, monkeypatch):
