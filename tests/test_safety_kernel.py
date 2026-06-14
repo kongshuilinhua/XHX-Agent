@@ -278,3 +278,8 @@ def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None
     assert result_cmd.status == "denied"
     assert "拦截" in result_cmd.summary or "blocked" in result_cmd.summary.lower() or "阶段" in result_cmd.summary
 
+    # run_verification 在只读阶段也应被拦截，且不能因 TerminalResult 缺 command 而崩溃（回归）
+    result_verify = kernel.run_verification("pytest", assume_yes=True)
+    assert result_verify.status == "deny"
+    assert result_verify.command == "pytest"
+

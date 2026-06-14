@@ -211,7 +211,7 @@ class SafeExecutionKernel:
     ) -> TerminalResult:
         if self.read_only_phase:
             policy = PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason="Blocked in read-only phase")
-            result = TerminalResult(status="deny", exit_code=None, stdout="", stderr="", policy=policy, summary="Blocked in read-only phase")
+            result = TerminalResult(command=command, status="deny", exit_code=None, stdout="", stderr="", policy=policy, summary="Blocked in read-only phase")
             self.record_policy("terminal", command, policy, {"command": command}, event_callback)
             self.evidence.write_trace("verification", result.model_dump())
             return result
