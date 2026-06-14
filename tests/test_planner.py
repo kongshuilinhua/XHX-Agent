@@ -144,3 +144,36 @@ def test_dagnode_has_agent_fields() -> None:
     d = DAGNode(node_id="n2", description="d")
     assert d.agent_type == "explore" and d.prompt == ""
 
+
+def test_dag_scheduler_serializes_edit_nodes() -> None:
+    import threading
+    import time
+
+    from xhx_agent.planner.modes import DAGNode, DAGPlan
+    from xhx_agent.planner.planner import DAGScheduler
+
+    def make(agent_type):
+        # 两个无依赖同类型节点；用并发计数器测最大并发度
+        return DAGPlan(root="demo", nodes=[
+            DAGNode(node_id="a", agent_type=agent_type, dependencies=[]),
+            DAGNode(node_id="b", agent_type=agent_type, dependencies=[]),
+        ])
+
+    def run(plan):
+        lock = threading.Lock()
+        cur = {"n": 0, "max": 0}
+        def cb(node):
+            with lock:
+                cur["n"] += 1
+                cur["max"] = max(cur["max"], cur["n"])
+            time.sleep(0.05)  # 留出重叠窗口
+            with lock:
+                cur["n"] -= 1
+            return True, "ok"
+        DAGScheduler(__import__("pathlib").Path("demo")).execute(plan, cb)
+        return cur["max"]
+
+    assert run(make("explore")) == 2   # explore 并发
+    assert run(make("edit")) == 1      # edit 串行（一次只跑一个）
+
+

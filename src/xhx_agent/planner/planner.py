@@ -79,8 +79,11 @@ class DAGScheduler:
                         node_status[nid] = "blocked"
                 break
 
-            readonly_nodes = [n for n in ready_nodes if n.tool not in ("apply_patch", "terminal")]
-            write_nodes = [n for n in ready_nodes if n.tool in ("apply_patch", "terminal")]
+            def _is_write(n) -> bool:
+                return n.tool in ("apply_patch", "terminal") or getattr(n, "agent_type", "") == "edit"
+
+            readonly_nodes = [n for n in ready_nodes if not _is_write(n)]
+            write_nodes = [n for n in ready_nodes if _is_write(n)]
 
             if readonly_nodes:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(readonly_nodes), 8)) as executor:
