@@ -32,6 +32,7 @@ class ProjectConfig(BaseModel):
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"  # 只允许结构化补丁写，杜绝任意文件写
     max_parallel_subagents: int = 4  # graph DAG 并发执行的子 agent 数上限，防嵌套 LLM 调用烧 token/撞限流
+    max_graph_replans: int = 2  # graph joiner 判定不合格时回 planner 重规划的最多轮数（0=禁用 replan，单轮收尾）；防来回烧 token
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
 
