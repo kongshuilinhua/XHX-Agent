@@ -52,8 +52,9 @@ def test_graph_single_edit_node_changes_code(tmp_path, monkeypatch):
                 return ChatResult(content=None, tool_calls=[ToolCall(
                     id="p1", name="submit_dag",
                     arguments={"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit calc.py", "deps": []}]})])
-            if "SOLVER" in system:
-                return ChatResult(content="synthesis answer")
+            if "JOINER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "synthesis answer"})])
 
             # sub-agent
             self.w += 1
@@ -95,8 +96,9 @@ def test_graph_runs_dependent_nodes_with_variable_substitution(tmp_path, monkeyp
                         {"id": "n1", "agent_type": "explore", "prompt": "find file", "deps": []},
                         {"id": "n2", "agent_type": "edit", "prompt": "edit file based on $n1", "deps": ["n1"]},
                     ]})])
-            if "SOLVER" in system:
-                return ChatResult(content="synthesis done")
+            if "JOINER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "synthesis done"})])
             raise AssertionError("Should not call fallback client chat")
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
@@ -139,8 +141,9 @@ def test_graph_planner_fallback_on_bad_dag(tmp_path, monkeypatch):
                         {"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": ["n2"]},
                         {"id": "n2", "agent_type": "explore", "prompt": "p2", "deps": ["n1"]},
                     ]})])
-            if "SOLVER" in system:
-                return ChatResult(content="solver finished")
+            if "JOINER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "solver finished"})])
             return ChatResult(content="done")
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
@@ -310,7 +313,9 @@ def test_graph_runs_independent_explore_nodes_in_parallel(tmp_path, monkeypatch)
                         {"id": "n1", "agent_type": "explore", "prompt": "look A", "deps": []},
                         {"id": "n2", "agent_type": "explore", "prompt": "look B", "deps": []},
                     ]})])
-            return ChatResult(content="synthesized")  # SOLVER
+            if "JOINER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "synthesized"})])
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
     result = RuntimeApp(tmp_path).run_task("investigate", assume_yes=True, mode="graph")
@@ -339,7 +344,9 @@ def test_graph_node_failure_marks_failed(tmp_path, monkeypatch):
                     id="p1", name="submit_dag", arguments={"nodes": [
                         {"id": "n1", "agent_type": "explore", "prompt": "look A", "deps": []},
                     ]})])
-            return ChatResult(content="synthesized")
+            if "JOINER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "synthesized"})])
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
     result = RuntimeApp(tmp_path).run_task("investigate", assume_yes=True, mode="graph")
@@ -373,12 +380,89 @@ def test_graph_runs_independent_edit_nodes_in_parallel(tmp_path, monkeypatch):
                     {"id": "n1", "agent_type": "edit", "prompt": "edit A", "deps": []},
                     {"id": "n2", "agent_type": "edit", "prompt": "edit B", "deps": []},
                 ]})])
-            return ChatResult(content="synthesized")
+            if "JOINER" in messages[0]["content"]:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="j1", name="finish", arguments={"text": "synthesized"})])
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
     result = RuntimeApp(tmp_path).run_task("two edits", assume_yes=True, mode="graph")
     assert result.status == "success"
     assert sorted(done) == ["edit A", "edit B"]   # 都越过 barrier == 真并行
+
+
+def test_graph_joiner_replan_then_finish(tmp_path, monkeypatch):
+    """round1 joiner→replan；planner 被带反馈二次调用→新节点；round2 joiner→finish。"""
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+    RuntimeApp(tmp_path).init_project()
+
+    explored = []
+    monkeypatch.setattr(graphmod, "run_subagent",
+        lambda ctx, description, prompt, agent_type, turn: explored.append(prompt) or "r")
+
+    class FakeClient:
+        def __init__(self):
+            self.plans = 0
+            self.joins = 0
+        def chat(self, messages, tools):
+            s = messages[0]["content"]
+            if "PLANNER" in s:
+                self.plans += 1
+                pid = "a" if self.plans == 1 else "b"
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p", name="submit_dag",
+                    arguments={"nodes": [{"id": pid, "agent_type": "explore", "prompt": f"look{self.plans}", "deps": []}]})])
+            if "JOINER" in s:
+                self.joins += 1
+                if self.joins == 1:
+                    return ChatResult(content=None, tool_calls=[ToolCall(id="j", name="replan",
+                        arguments={"reason": "need more"})])
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j", name="finish",
+                    arguments={"text": "final answer"})])
+            raise AssertionError("unexpected")
+    fc = FakeClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fc)
+    result = RuntimeApp(tmp_path).run_task("t", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert result.answer == "final answer"
+    assert fc.plans == 2 and fc.joins == 2        # 重规划了一次
+    assert explored == ["look1", "look2"]          # 两轮都执行了
+
+
+def test_graph_replan_budget_exhausted_forces_finish(tmp_path, monkeypatch):
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+    RuntimeApp(tmp_path).init_project()
+    monkeypatch.setattr(graphmod, "run_subagent",
+        lambda ctx, description, prompt, agent_type, turn: "r")
+
+    class FakeClient:
+        def __init__(self):
+            self.plans = 0
+            self.joins = 0
+        def chat(self, messages, tools):
+            s = messages[0]["content"]
+            if "PLANNER" in s:
+                self.plans += 1
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p", name="submit_dag",
+                    arguments={"nodes": [{"id": f"n{self.plans}", "agent_type": "explore", "prompt": "x", "deps": []}]})])
+            if "JOINER" in s:
+                self.joins += 1
+                names = [t["function"]["name"] for t in tools]
+                if "replan" in names:               # 还能 replan 就一直 replan
+                    return ChatResult(content=None, tool_calls=[ToolCall(id="j", name="replan",
+                        arguments={"reason": "again"})])
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j", name="finish",
+                    arguments={"text": "forced finish"})])
+            raise AssertionError
+    fc = FakeClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fc)
+    result = RuntimeApp(tmp_path).run_task("t", assume_yes=True, mode="graph")
+    assert result.answer == "forced finish"
+    assert fc.plans == 3      # 默认 max_graph_replans=2 → 1 初规划 + 2 重规划
+    assert fc.joins == 3
+
 
 
 

@@ -1,9 +1,9 @@
 """graph 范式：LLMCompiler 式并行多 agent DAG 工作流（LangGraph 显式状态图）。
 
-控制流 = planner → execute → synthesize：
+控制流 = planner → execute → joiner：
 - planner(LLM, tool-calling)：二选一调用 answer_user（纯对话直答）或 submit_dag（产出带依赖+$变量的任务 DAG）。
 - execute：按拓扑序逐节点（P1 串行）跑隔离子 agent（explore 只读 / edit 写），前序结果经 $<id> 变量替换喂下游。
-- synthesize(LLM)：把各节点结论综合成最终回答。
+- joiner(LLM, tool-calling)：判定收尾或重规划。
 与 plan/loop 对照：graph 的特征是显式 DAG 编排 + 多 agent 协作，协议同样是 tool-calling。
 """
 
@@ -149,12 +149,24 @@ def _validate_dag(nodes: list[DAGNode]) -> None:
     topological_sort(nodes)  # 有环则抛 ValueError
 
 
-def _plan(ctx: OrchestratorContext, client: Any) -> tuple[str | None, list[DAGNode]]:
+def _plan(
+    ctx: OrchestratorContext,
+    client: Any,
+    feedback: str | None = None,
+    prior_nodes: list[DAGNode] | None = None,
+) -> tuple[str | None, list[DAGNode]]:
+    sys = PLANNER_PROMPT + "\n\n" + render_xhx_md(ctx.scan) + render_recalled_memories(ctx.original_workspace, ctx.task)
     messages = [
-        {"role": "system", "content": PLANNER_PROMPT + "\n\n"
-         + render_xhx_md(ctx.scan) + render_recalled_memories(ctx.original_workspace, ctx.task)},
+        {"role": "system", "content": sys},
         {"role": "user", "content": ctx.task},
     ]
+    if feedback:
+        prior = "\n".join(f"- {n.node_id} ({n.agent_type}): {n.result}" for n in (prior_nodes or []))
+        messages.append({"role": "user", "content":
+            "A previous attempt produced these sub-agent results:\n" + (prior or "(none)") +
+            "\n\nA reviewer judged the result INSUFFICIENT:\n" + feedback +
+            "\n\nProduce a corrective task DAG that specifically addresses the gap (or call answer_user if it "
+            "can now be answered directly). Do NOT repeat work already done correctly."})
     result = chat_and_count(ctx, client, messages, _PLANNER_TOOLS, turn=0)
     return _interpret_plan(result, ctx.task)
 
@@ -174,10 +186,57 @@ def _run_dag_node(ctx: OrchestratorContext, node: DAGNode, done: dict[str, str],
     return [], text
 
 
-SYNTHESIZE_PROMPT = (
-    "You are the SOLVER of a multi-agent workflow. Given the user's task and each sub-agent's result, "
-    "write a concise final answer for the user. Reply in natural language, no tool calls."
+JOINER_PROMPT = (
+    "You are the JOINER of a multi-agent coding workflow. You are given the user's task and each "
+    "sub-agent's result. Decide by calling EXACTLY ONE tool:\n"
+    "- call finish(text=...) with a concise final answer for the user when the results sufficiently "
+    "accomplish the task;\n"
+    "- call replan(reason=...) ONLY if the results are clearly insufficient, wrong, or a node failed, "
+    "explaining precisely what is missing so a new plan can fix it.\n"
+    "Prefer finishing. Do not call replan for minor stylistic gaps."
 )
+
+
+def _join_tools(can_replan: bool) -> list[dict]:
+    finish = {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": "Deliver the final natural-language answer to the user. The work is sufficient.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "Full final answer."}},
+                "required": ["text"],
+            },
+        },
+    }
+    if not can_replan:
+        return [finish]
+    replan = {
+        "type": "function",
+        "function": {
+            "name": "replan",
+            "description": "Send the task back to the planner because results are insufficient or wrong.",
+            "parameters": {
+                "type": "object",
+                "properties": {"reason": {"type": "string", "description": "What is missing / wrong."}},
+                "required": ["reason"],
+            },
+        },
+    }
+    return [finish, replan]
+
+
+def _interpret_join(result: Any) -> tuple[str, str]:
+    """解读 joiner tool-calling。返回 (decision, payload)：('finish', answer) | ('replan', reason)。
+    没调工具时把纯文本当 finish 答案兜底。"""
+    for tc in result.tool_calls or []:
+        args = tc.arguments if isinstance(tc.arguments, dict) else {}
+        if tc.name == "finish":
+            return "finish", (str(args.get("text") or "").strip() or "(no answer)")
+        if tc.name == "replan":
+            return "replan", (str(args.get("reason") or "").strip() or "results insufficient")
+    return "finish", ((result.content or "").strip() or "(no answer)")
 
 
 class _GraphState(TypedDict):
@@ -185,6 +244,9 @@ class _GraphState(TypedDict):
     nodes: list[DAGNode]
     changed_files: list[str]
     dag_ok: bool
+    replan_count: int
+    joiner_feedback: str | None
+    joiner_decision: str | None
 
 
 class GraphOrchestrator:
@@ -205,7 +267,8 @@ class GraphOrchestrator:
         )
 
         def planner(state: _GraphState) -> dict[str, Any]:
-            answer, nodes = _plan(ctx, client)
+            answer, nodes = _plan(ctx, client, feedback=state.get("joiner_feedback"),
+                                  prior_nodes=state.get("nodes"))
             if answer is not None:
                 emit_event(ctx.event_callback, "graph_planner", "Answered directly (no code work needed).")
                 return {"answer": answer, "nodes": []}
@@ -218,6 +281,7 @@ class GraphOrchestrator:
             from xhx_agent.planner.modes import DAGPlan
             from xhx_agent.planner.planner import DAGScheduler
 
+            ctx.subagent_claims.clear()  # 每轮重置，防止前序轮 edit 节点占用导致 CONFLICT
             nodes = state["nodes"]
             plan = DAGPlan(root=str(ctx.original_workspace), nodes=nodes)
             changed: list[str] = []
@@ -245,30 +309,38 @@ class GraphOrchestrator:
                 "dag_ok": dag_ok,
             }
 
-        def synthesize(state: _GraphState) -> dict[str, Any]:
+        def joiner(state: _GraphState) -> dict[str, Any]:
+            from xhx_agent.runtime.config import load_config
+            can_replan = state["replan_count"] < load_config(ctx.original_workspace).max_graph_replans
             summary = (
-                f"Original task: {ctx.task}\n\n"
-                "Sub-agent execution results:\n"
-                + "\n".join(f"Node {n.node_id} ({n.agent_type}): {n.result}" for n in state["nodes"])
+                f"Original task: {ctx.task}\n\nSub-agent execution results:\n"
+                + "\n".join(f"Node {n.node_id} ({n.agent_type}) [{n.status}]: {n.result}" for n in state["nodes"])
             )
-            messages = [
-                {"role": "system", "content": SYNTHESIZE_PROMPT},
-                {"role": "user", "content": summary},
-            ]
-            result = chat_and_count(ctx, client, messages, [], turn=0)
-            return {"answer": result.content or ""}
+            messages = [{"role": "system", "content": JOINER_PROMPT}, {"role": "user", "content": summary}]
+            result = chat_and_count(ctx, client, messages, _join_tools(can_replan), turn=0)
+            decision, payload = _interpret_join(result)
+            if decision == "replan" and can_replan:
+                emit_event(ctx.event_callback, "graph_joiner",
+                           f"Replan (round {state['replan_count'] + 1}): {payload[:80]}", decision="replan")
+                return {"joiner_decision": "replan", "joiner_feedback": payload,
+                        "replan_count": state["replan_count"] + 1}
+            emit_event(ctx.event_callback, "graph_joiner", "Finished.", decision="finish")
+            return {"joiner_decision": "finish", "answer": payload}
 
         def route_after_planner(state: _GraphState) -> str:
             return "done" if not state.get("nodes") else "execute"
 
+        def route_after_joiner(state: _GraphState) -> str:
+            return "replan" if state.get("joiner_decision") == "replan" else "done"
+
         graph = StateGraph(_GraphState)
         graph.add_node("planner", planner)
         graph.add_node("execute", execute)
-        graph.add_node("synthesize", synthesize)
+        graph.add_node("joiner", joiner)
         graph.set_entry_point("planner")
         graph.add_conditional_edges("planner", route_after_planner, {"execute": "execute", "done": END})
-        graph.add_edge("execute", "synthesize")
-        graph.add_edge("synthesize", END)
+        graph.add_edge("execute", "joiner")
+        graph.add_conditional_edges("joiner", route_after_joiner, {"replan": "planner", "done": END})
         compiled = graph.compile()
 
         ctx.evidence.write_trace("run_start", {"task": ctx.task, "profile": ctx.profile.name, "orchestrator": "graph"})
@@ -279,6 +351,7 @@ class GraphOrchestrator:
         try:
             final: dict[str, Any] = compiled.invoke({
                 "nodes": [], "changed_files": [], "answer": None, "dag_ok": True,
+                "replan_count": 0, "joiner_feedback": None, "joiner_decision": None,
             })
         except Exception as e:
             status = "failed"
@@ -288,6 +361,9 @@ class GraphOrchestrator:
                 "changed_files": [],
                 "answer": None,
                 "dag_ok": False,
+                "replan_count": 0,
+                "joiner_feedback": None,
+                "joiner_decision": None,
             }
 
         answer = final.get("answer")
@@ -302,7 +378,7 @@ class GraphOrchestrator:
 
         summary = write_report(
             workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
-            plan=["Graph workflow: planner -> serial execute -> synthesize."],
+            plan=["Graph workflow: planner -> execute -> joiner (bounded replan)."],
             changed_files=changed_files, commands=[], verification=verification_status, risks=risks)
 
         # 保存 transcript 补齐
@@ -327,7 +403,7 @@ class GraphOrchestrator:
                 messages.append({"role": "user", "content": f"Execute node {n.node_id} ({n.agent_type}): {n.prompt}"})
                 messages.append({"role": "assistant", "content": n.result or "No result"})
             if answer is not None:
-                messages.append({"role": "system", "content": SYNTHESIZE_PROMPT})
+                messages.append({"role": "system", "content": JOINER_PROMPT})
                 messages.append({"role": "assistant", "content": answer})
 
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
