@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import uuid
 from typing import TYPE_CHECKING
 
 from xhx_agent.models import build_chat_client
@@ -111,23 +113,28 @@ def run_write_subagent(
     返回 (浓缩结论, 已合并进父工作区的文件列表)。父工作区 = ctx.tool_context.workspace。
     非 git 仓库时降级为就地执行（无隔离，但仍记 claim 做冲突检测）。
     """
-    import dataclasses
-
     from xhx_agent.safety.worktree import WorktreeContext
 
     allowed = AGENT_TOOLSETS["edit"]
     label = (description or prompt[:40] or "edit").strip()
-    sub_run_id = f"{ctx.run_id}-edit{turn}-{len(ctx.subagent_claims)}"
+    sub_run_id = f"{ctx.run_id}-edit{turn}-{uuid.uuid4().hex[:8]}"
     emit_event(ctx.event_callback, "subagent_start", f"dispatch[edit]: {label}", turn=turn, agent_type="edit")
 
-    with WorktreeContext(ctx.original_workspace, sub_run_id) as wt:
+    wt = WorktreeContext(ctx.original_workspace, sub_run_id)
+    with ctx.subagent_lock:          # ① 串行化 worktree 创建（git 锁争用）
+        wt.__enter__()
+    try:
         run_ctx = ctx
         if wt.is_active:
             sub_tool_context = ctx.tool_context.model_copy(update={"workspace": wt.active_path})
             run_ctx = dataclasses.replace(ctx, tool_context=sub_tool_context)
-        answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)
+        answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)   # 锁外并行（各自 worktree）
         merge_root = wt.active_path if wt.is_active else ctx.tool_context.workspace
-        applied, conflicts = _merge_into_parent(ctx, merge_root, changed, label)
+        with ctx.subagent_lock:      # ② 串行化合并（claims + 文件拷贝）
+            applied, conflicts = _merge_into_parent(ctx, merge_root, changed, label)
+    finally:
+        with ctx.subagent_lock:      # ③ 串行化 worktree 清理（git 锁）
+            wt.__exit__(None, None, None)
 
     parts = [f"[sub-agent edit] {answer or 'edit sub-agent finished.'}"]
     if applied:

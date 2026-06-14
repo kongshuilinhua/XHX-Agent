@@ -246,3 +246,112 @@ def test_system_prompts_advertise_dispatch():
     assert "dispatch" in PLAN_SYSTEM_PROMPT
     desc = default_tool_registry().definition("dispatch").description
     assert "read_file" in desc  # 指引"单个已知文件直接读"，避免过度委派
+
+
+def test_merge_into_parent_conflict_detection(tmp_path):
+    import threading
+    from unittest.mock import MagicMock
+
+    from xhx_agent.orchestrators.subagent import _merge_into_parent
+
+    # Setup directories
+    parent_workspace = tmp_path / "parent"
+    parent_workspace.mkdir()
+    merge_root = tmp_path / "child"
+    merge_root.mkdir()
+
+    # Create dummy parent files
+    file_a = parent_workspace / "file_a.txt"
+    file_b = parent_workspace / "file_b.txt"
+    file_a.write_text("parent a", encoding="utf-8")
+    file_b.write_text("parent b", encoding="utf-8")
+
+    # Create dummy child files
+    child_file_a = merge_root / "file_a.txt"
+    child_file_b = merge_root / "file_b.txt"
+    child_file_a.write_text("child a", encoding="utf-8")
+    child_file_b.write_text("child b", encoding="utf-8")
+
+    # Mock ctx
+    ctx = MagicMock()
+    ctx.tool_context.workspace = parent_workspace
+    ctx.subagent_claims = {}
+    ctx.subagent_lock = threading.Lock()
+
+    # Call merge_into_parent for file_a under label "agent_1"
+    applied, conflicts = _merge_into_parent(ctx, merge_root, ["file_a.txt"], "agent_1")
+    assert applied == ["file_a.txt"]
+    assert conflicts == []
+    assert ctx.subagent_claims["file_a.txt"] == "agent_1"
+    assert file_a.read_text(encoding="utf-8") == "child a"
+
+    # Call merge_into_parent for file_a under label "agent_2" (conflict expected)
+    applied_2, conflicts_2 = _merge_into_parent(ctx, merge_root, ["file_a.txt"], "agent_2")
+    assert applied_2 == []
+    assert conflicts_2 == ["file_a.txt"]
+    assert ctx.subagent_claims["file_a.txt"] == "agent_1"  # first claimant wins
+    assert file_a.read_text(encoding="utf-8") == "child a"  # file content not overwritten by agent_2
+
+    # Call merge_into_parent for file_b under label "agent_2" (no conflict, different file)
+    applied_3, conflicts_3 = _merge_into_parent(ctx, merge_root, ["file_b.txt"], "agent_2")
+    assert applied_3 == ["file_b.txt"]
+    assert conflicts_3 == []
+    assert ctx.subagent_claims["file_b.txt"] == "agent_2"
+    assert file_b.read_text(encoding="utf-8") == "child b"
+
+
+def test_sub_run_id_uses_uuid(tmp_path, monkeypatch):
+    import uuid
+    from unittest.mock import MagicMock
+
+    import xhx_agent.orchestrators.subagent as submod
+    from xhx_agent.orchestrators.base import OrchestratorContext
+
+    ctx = OrchestratorContext(
+        app=MagicMock(),
+        task="test",
+        run_id="test-run",
+        workspace=tmp_path,
+        original_workspace=tmp_path,
+        profile=MagicMock(),
+        scan=MagicMock(),
+        evidence=MagicMock(),
+        kernel=MagicMock(),
+        tool_context=MagicMock(),
+    )
+
+    # Mock uuid4 to return a fixed uuid
+    fake_uuid = MagicMock()
+    fake_uuid.hex = "abcdef123456"
+    monkeypatch.setattr(uuid, "uuid4", lambda: fake_uuid)
+
+    # Let's mock _drive_write_loop and _merge_into_parent so we can run run_write_subagent without hitting git/LLM
+    monkeypatch.setattr(submod, "_drive_write_loop", lambda ctx, prompt, allowed, turn: ("result", []))
+    monkeypatch.setattr(submod, "_merge_into_parent", lambda ctx, merge_root, changed, label: ([], []))
+
+    # Mock WorktreeContext to do nothing
+    class FakeWorktreeContext:
+        def __init__(self, workspace, sub_run_id):
+            self.sub_run_id = sub_run_id
+            self.active_path = workspace
+            self.is_active = True
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    import xhx_agent.safety.worktree as wtmod
+    monkeypatch.setattr(wtmod, "WorktreeContext", FakeWorktreeContext)
+
+    # Let's run to verify run_write_subagent uses uuid-based run id and does not rely on len(subagent_claims)
+    wt_instances = []
+    def intercept_wt(workspace, sub_run_id):
+        wt_instances.append(sub_run_id)
+        return FakeWorktreeContext(workspace, sub_run_id)
+
+    monkeypatch.setattr(wtmod, "WorktreeContext", intercept_wt)
+
+    submod.run_write_subagent(ctx, description="test", prompt="edit prompt", turn=1)
+    assert len(wt_instances) == 1
+    assert "test-run-edit1-abcdef12" in wt_instances[0]
+
