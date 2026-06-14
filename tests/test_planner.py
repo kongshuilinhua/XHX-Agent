@@ -133,3 +133,14 @@ def test_runtime_app_routes_by_mode(tmp_path: Path) -> None:
     res_research = app.run_task("analyze this repo", mode="linear")
     assert res_research.status == "success"
     assert res_research.verification == "skipped_no_changes"
+
+
+def test_dagnode_has_agent_fields() -> None:
+    from xhx_agent.planner.modes import DAGNode
+    n = DAGNode(node_id="n1", description="d", agent_type="edit", prompt="do x", dependencies=[])
+    assert n.agent_type == "edit"
+    assert n.prompt == "do x"
+    # 默认值（向后兼容现有调用）
+    d = DAGNode(node_id="n2", description="d")
+    assert d.agent_type == "explore" and d.prompt == ""
+
