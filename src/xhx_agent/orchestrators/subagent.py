@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from xhx_agent.models import build_chat_client
 from xhx_agent.models.routing import build_routed_client
+from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import emit_event
 
 if TYPE_CHECKING:
@@ -24,7 +25,6 @@ AGENT_TOOLSETS: dict[str, set[str]] = {
 }
 # 写型 agent_type：跑在自己的 git worktree 里、改完串行合并回父工作区。
 WRITE_AGENT_TYPES: set[str] = {"edit"}
-MAX_SUBAGENT_TURNS = 4
 SUBAGENT_SYSTEM_PROMPT = (
     "You are a focused sub-agent dispatched by a parent coding agent. Use ONLY the provided read-only "
     "tools to investigate, then reply with a concise, self-contained conclusion (a few sentences). "
@@ -71,7 +71,8 @@ def run_subagent(
     )
 
     answer = ""
-    for _ in range(MAX_SUBAGENT_TURNS):
+    max_turns = load_config(ctx.original_workspace).max_subagent_turns
+    for _ in range(max_turns):
         result = chat_and_count(ctx, client, messages, schemas, turn=turn)
         if not result.tool_calls:
             answer = result.content or ""
@@ -159,7 +160,8 @@ def _drive_write_loop(ctx: OrchestratorContext, prompt: str, allowed: set[str], 
     ]
     answer = ""
     changed: list[str] = []
-    for _ in range(MAX_SUBAGENT_TURNS):
+    max_turns = load_config(ctx.original_workspace).max_subagent_turns
+    for _ in range(max_turns):
         result = chat_and_count(ctx, client, messages, schemas, turn=turn)
         if not result.tool_calls:
             answer = result.content or ""

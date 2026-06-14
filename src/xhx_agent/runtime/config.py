@@ -28,6 +28,7 @@ class ProjectConfig(BaseModel):
     workspace_root: str = "."
     max_file_bytes: int = 200_000  # 单文件读取上限，防超大文件撑爆上下文预算
     max_loop_turns: int = 20  # loop 自主循环的硬上限，防模型无限迭代
+    max_subagent_turns: int = 12  # 子 agent（dispatch / graph 节点）循环上限；停止靠"无工具调用"，这是防跑飞的宽松安全网（对标 max_loop_turns，4 太紧会让 explore 撞限）
     default_language_targets: list[str] = Field(default_factory=lambda: ["python", "javascript", "typescript"])
     write_policy: Literal["apply_patch_only"] = "apply_patch_only"  # 只允许结构化补丁写，杜绝任意文件写
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
