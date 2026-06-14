@@ -1085,6 +1085,33 @@ def test_graph_joiner_summary_marks_no_changes(tmp_path, monkeypatch):
     assert "Files actually changed this run: NONE" in seen["summary"]
 
 
+def test_graph_planner_emits_progress_before_llm_call(tmp_path, monkeypatch):
+    """planner 调用前先发进度事件，避免界面在 LLM 调用期间(最长 60s)定格成卡死。"""
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+
+    class ChatFake:
+        def chat(self, messages, tools):
+            if "PLANNER" in messages[0]["content"]:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="answer_user", arguments={"text": "hi"})])
+            raise AssertionError("only planner should run for a chat request")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: ChatFake())
+    events = []
+    RuntimeApp(tmp_path).run_task("你好", assume_yes=True, mode="graph", event_callback=events.append)
+
+    planner_msgs = [e.message for e in events if getattr(e, "type", "") == "graph_planner"]
+    assert "Planning the task…" in planner_msgs                        # 调用前进度
+    assert any("Answered directly" in m for m in planner_msgs)         # 调用后结果
+    # 进度在结果之前 → 用户在 LLM 调用期间就能看到活动
+    assert planner_msgs.index("Planning the task…") < next(
+        i for i, m in enumerate(planner_msgs) if "Answered directly" in m)
+
+
 
 
 

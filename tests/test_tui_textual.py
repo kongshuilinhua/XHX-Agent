@@ -122,6 +122,20 @@ def test_textual_command_console_app_can_render_initial_shell(tmp_path) -> None:
     asyncio.run(run_app())
 
 
+def test_timeline_renders_p3_p4_graph_events(tmp_path) -> None:
+    """P3/P4 新增的 graph_joiner/graph_verify/graph_repair 事件必须在时间线可见，否则这些阶段无反馈。"""
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+    for et, msg in [
+        ("graph_planner", "Planning the task…"),
+        ("graph_joiner", "Reviewing results…"),
+        ("graph_verify", "Verifying 1 command(s)…"),
+        ("graph_repair", "Verification failed; repairing (attempt 1)."),
+    ]:
+        line = app._timeline_line_for_event(RuntimeEvent(type=et, message=msg, payload={}))
+        assert line is not None, f"{et} should render a timeline line"
+        assert msg in line
+
+
 def test_textual_conversation_coloring(tmp_path) -> None:
     from rich.text import Text
     app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")

@@ -300,6 +300,9 @@ class GraphOrchestrator:
         )
 
         def planner(state: _GraphState) -> dict[str, Any]:
+            # 调用前先发进度，否则 planner 这次 LLM 调用期间界面零反馈、看起来卡死。
+            emit_event(ctx.event_callback, "graph_planner",
+                       "Re-planning with feedback…" if state.get("joiner_feedback") else "Planning the task…")
             answer, nodes = _plan(ctx, client, feedback=state.get("joiner_feedback"),
                                   prior_nodes=state.get("nodes"))
             if answer is not None:
@@ -359,6 +362,8 @@ class GraphOrchestrator:
             checkpoint = ctx.kernel.create_checkpoint(changed)
             emit_event(ctx.event_callback, "checkpoint", "Checkpoint created.",
                        checkpoint_id=checkpoint.id, changed_files=changed)
+            emit_event(ctx.event_callback, "graph_verify",
+                       f"Verifying {len(vplan.commands)} command(s)…")  # 跑测试前进度，测试可能慢
 
             results: list[Any] = []
             cmds: list[str] = []
@@ -420,6 +425,7 @@ class GraphOrchestrator:
             summary += f"\n\nVerification result: {vstat}"
             if state.get("verification_failure"):
                 summary += f"\nVerification failure output:\n{state['verification_failure'][:1500]}"
+            emit_event(ctx.event_callback, "graph_joiner", "Reviewing results…")  # 调用前进度，防界面定格
             messages = [{"role": "system", "content": JOINER_PROMPT}, {"role": "user", "content": summary}]
             result = chat_and_count(ctx, client, messages, _join_tools(can_replan), turn=0)
             decision, payload = _interpret_join(result)
