@@ -184,6 +184,7 @@ class _GraphState(TypedDict):
     answer: str | None
     nodes: list[DAGNode]
     changed_files: list[str]
+    dag_ok: bool
 
 
 class GraphOrchestrator:
@@ -212,36 +213,34 @@ class GraphOrchestrator:
             return {"nodes": nodes}
 
         def execute(state: _GraphState) -> dict[str, Any]:
-            from xhx_agent.planner.planner import topological_sort
+            import threading
+
+            from xhx_agent.planner.modes import DAGPlan
+            from xhx_agent.planner.planner import DAGScheduler
+
             nodes = state["nodes"]
-            ordered = topological_sort(nodes)
-            done = {}
+            plan = DAGPlan(root=str(ctx.original_workspace), nodes=nodes)
             changed: list[str] = []
-            for node in ordered:
+            changed_lock = threading.Lock()
+
+            def _cb(node: DAGNode) -> tuple[bool, str]:
+                # 变量替换：读已完成依赖的 result（DAGScheduler 在依赖波次已把 result 写回节点）。
+                done = {n.node_id: n.result for n in nodes if n.result is not None}
                 emit_event(
-                    ctx.event_callback,
-                    "graph_node",
+                    ctx.event_callback, "graph_node",
                     f"Running DAG node {node.node_id} ({node.agent_type}).",
-                    node_id=node.node_id,
-                    agent_type=node.agent_type,
+                    node_id=node.node_id, agent_type=node.agent_type,
                 )
-                node.status = "running"
-                try:
-                    ch, text = _run_dag_node(ctx, node, done, turn=1)
-                    node.result = text
-                    node.status = "success"
-                    done[node.node_id] = text
+                ch, text = _run_dag_node(ctx, node, done, turn=1)
+                with changed_lock:
                     changed.extend(ch)
-                except Exception as e:
-                    node.status = "failed"
-                    node.result = f"Error: {e}"
-                    idx = ordered.index(node)
-                    for blocked_node in ordered[idx + 1:]:
-                        blocked_node.status = "blocked"
-                    raise e
+                return True, text  # 异常交给 DAGScheduler 捕获 → 该节点 failed、下游 blocked
+
+            dag_ok = DAGScheduler(ctx.original_workspace).execute(plan, _cb)
             return {
                 "nodes": nodes,
                 "changed_files": state["changed_files"] + changed,
+                "dag_ok": dag_ok,
             }
 
         def synthesize(state: _GraphState) -> dict[str, Any]:
@@ -277,7 +276,7 @@ class GraphOrchestrator:
         risks: list[str] = []
         try:
             final: dict[str, Any] = compiled.invoke({
-                "nodes": [], "changed_files": [], "answer": None,
+                "nodes": [], "changed_files": [], "answer": None, "dag_ok": True,
             })
         except Exception as e:
             status = "failed"
@@ -286,10 +285,14 @@ class GraphOrchestrator:
                 "nodes": [],
                 "changed_files": [],
                 "answer": None,
+                "dag_ok": False,
             }
 
         answer = final.get("answer")
         changed_files = sorted(set(final.get("changed_files", [])))
+        if status != "failed" and not final.get("dag_ok", True):
+            status = "failed"
+            risks.append("One or more DAG nodes failed.")
         if status != "failed":
             status = "success"
 

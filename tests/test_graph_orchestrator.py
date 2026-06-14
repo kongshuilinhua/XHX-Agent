@@ -282,4 +282,70 @@ def test_variable_substitution_and_node_execution(monkeypatch) -> None:
     assert edit_called == [("n3", "edit val2", 1)]
 
 
+def test_graph_runs_independent_explore_nodes_in_parallel(tmp_path, monkeypatch):
+    """两个无依赖 explore 节点应并发执行（Barrier 证明；串行则超时凑不齐）。"""
+    import threading
+
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+    barrier = threading.Barrier(2, timeout=5)
+    done_prompts: list[str] = []
+
+    def fake_run_subagent(ctx, description, prompt, agent_type, turn):
+        barrier.wait()
+        done_prompts.append(prompt)
+        return f"explored:{prompt}"
+
+    monkeypatch.setattr(graphmod, "run_subagent", fake_run_subagent)
+
+    class FakeClient:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag", arguments={"nodes": [
+                        {"id": "n1", "agent_type": "explore", "prompt": "look A", "deps": []},
+                        {"id": "n2", "agent_type": "explore", "prompt": "look B", "deps": []},
+                    ]})])
+            return ChatResult(content="synthesized")  # SOLVER
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
+    result = RuntimeApp(tmp_path).run_task("investigate", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert sorted(done_prompts) == ["look A", "look B"]   # 都越过 barrier == 真并行
+    assert result.answer == "synthesized"
+
+
+def test_graph_node_failure_marks_failed(tmp_path, monkeypatch):
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+
+    def fake_run_subagent(ctx, description, prompt, agent_type, turn):
+        raise ValueError("Simulated explore node failure")
+
+    monkeypatch.setattr(graphmod, "run_subagent", fake_run_subagent)
+
+    class FakeClient:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag", arguments={"nodes": [
+                        {"id": "n1", "agent_type": "explore", "prompt": "look A", "deps": []},
+                    ]})])
+            return ChatResult(content="synthesized")
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: FakeClient())
+    result = RuntimeApp(tmp_path).run_task("investigate", assume_yes=True, mode="graph")
+    assert result.status == "failed"
+    assert any("DAG nodes failed" in r for r in result.risk_summary)
+
+
+
 
