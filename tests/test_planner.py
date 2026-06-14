@@ -145,7 +145,7 @@ def test_dagnode_has_agent_fields() -> None:
     assert d.agent_type == "explore" and d.prompt == ""
 
 
-def test_dag_scheduler_serializes_edit_nodes() -> None:
+def test_dag_scheduler_runs_ready_nodes_in_parallel() -> None:
     import threading
     import time
 
@@ -174,6 +174,6 @@ def test_dag_scheduler_serializes_edit_nodes() -> None:
         return cur["max"]
 
     assert run(make("explore")) == 2   # explore 并发
-    assert run(make("edit")) == 1      # edit 串行（一次只跑一个）
+    assert run(make("edit")) == 2      # edit 也并发（安全由 subagent 层保证）
 
 

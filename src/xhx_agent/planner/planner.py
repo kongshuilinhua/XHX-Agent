@@ -40,7 +40,7 @@ class DAGScheduler:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
 
-    def execute(self, plan: DAGPlan, execute_node_callback) -> bool:
+    def execute(self, plan: DAGPlan, execute_node_callback, max_workers: int = 8) -> bool:
         try:
             topological_sort(plan.nodes)
         except ValueError:
@@ -79,49 +79,26 @@ class DAGScheduler:
                         node_status[nid] = "blocked"
                 break
 
-            def _is_write(n) -> bool:
-                return n.tool in ("apply_patch", "terminal") or getattr(n, "agent_type", "") == "edit"
+            workers = min(len(ready_nodes), max_workers)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(execute_node_callback, node): node for node in ready_nodes}
+                for future in concurrent.futures.as_completed(futures):
+                    node = futures[future]
+                    node.status = "running"
+                    node_status[node.node_id] = "running"
+                    try:
+                        success, result_summary = future.result()
+                    except Exception as e:
+                        success, result_summary = False, f"Exception: {e}"
 
-            readonly_nodes = [n for n in ready_nodes if not _is_write(n)]
-            write_nodes = [n for n in ready_nodes if _is_write(n)]
-
-            if readonly_nodes:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(readonly_nodes), 8)) as executor:
-                    futures = {executor.submit(execute_node_callback, node): node for node in readonly_nodes}
-                    for future in concurrent.futures.as_completed(futures):
-                        node = futures[future]
-                        node.status = "running"
-                        node_status[node.node_id] = "running"
-                        try:
-                            success, result_summary = future.result()
-                        except Exception as e:
-                            success, result_summary = False, f"Exception: {e}"
-
-                        if success:
-                            node.status = "success"
-                            node_status[node.node_id] = "success"
-                            node.result = result_summary
-                        else:
-                            node.status = "failed"
-                            node_status[node.node_id] = "failed"
-                            node.result = result_summary
-            else:
-                node = write_nodes[0]
-                node.status = "running"
-                node_status[node.node_id] = "running"
-                try:
-                    success, result_summary = execute_node_callback(node)
-                except Exception as e:
-                    success, result_summary = False, f"Exception: {e}"
-
-                if success:
-                    node.status = "success"
-                    node_status[node.node_id] = "success"
-                    node.result = result_summary
-                else:
-                    node.status = "failed"
-                    node_status[node.node_id] = "failed"
-                    node.result = result_summary
+                    if success:
+                        node.status = "success"
+                        node_status[node.node_id] = "success"
+                        node.result = result_summary
+                    else:
+                        node.status = "failed"
+                        node_status[node.node_id] = "failed"
+                        node.result = result_summary
 
         def _is_acceptable(status: str, node_id: str) -> bool:
             if status == "success":
