@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -23,12 +22,11 @@ from xhx_agent.evidence.report import write_report
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
 from xhx_agent.models.routing import build_routed_client
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
+from xhx_agent.orchestrators._toolturn import chat_and_count
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.orchestrators.subagent import run_subagent, run_write_subagent
 from xhx_agent.planner.modes import DAGNode
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
-from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import emit_event
 
 if TYPE_CHECKING:
@@ -150,109 +148,26 @@ def _run_dag_node(ctx: OrchestratorContext, node: DAGNode, done: dict[str, str],
     return [], text
 
 
+SYNTHESIZE_PROMPT = (
+    "You are the SOLVER of a multi-agent workflow. Given the user's task and each sub-agent's result, "
+    "write a concise final answer for the user. Reply in natural language, no tool calls."
+)
+
+
 class _GraphState(TypedDict):
-    rounds: int
-    subtasks: list[str]
+    answer: str | None
+    nodes: list[DAGNode]
     changed_files: list[str]
-    worker_results: list[str]
-    review_passed: bool
-    review_reason: str
-    answer: str | None
-
-
-@dataclass
-class Coordination:
-    """coordinator 的产出：要么直接回答（answer），要么一组待执行子任务（subtasks）。"""
-
-    answer: str | None
-    subtasks: list[str]
-
-
-def _coordinate(ctx: OrchestratorContext, client: Any) -> Coordination:
-    """LLM 判别量级：闲聊/可直接回答→answer 直答；需改代码→拆子任务（解析 '- ' 行，兜底整体单子任务）。"""
-    messages = [
-        {
-            "role": "system",
-            "content": COORDINATOR_PROMPT
-            + "\n\n"
-            + render_xhx_md(ctx.scan)
-            + render_recalled_memories(ctx.original_workspace, ctx.task),
-        },
-        {"role": "user", "content": ctx.task},
-    ]
-    result = chat_and_count(ctx, client, messages, [], turn=0)
-    content = (result.content or "").strip()
-    if content.upper().startswith("ANSWER:"):
-        return Coordination(answer=content[len("ANSWER:"):].strip() or content, subtasks=[])
-    lines = [ln.strip() for ln in content.splitlines()]
-    subtasks = [ln[2:].strip() for ln in lines if ln.startswith("- ") and ln[2:].strip()]
-    if not subtasks:
-        subtasks = [ctx.task]
-    return Coordination(answer=None, subtasks=subtasks[:MAX_SUBTASKS])
-
-
-def _run_worker(ctx: OrchestratorContext, client: Any, subtask: str, turn: int) -> tuple[list[str], str]:
-    """写型 worker 小循环：受限工具 tool-calling，真改代码，返回 (changed_files, 结果文本)。"""
-    schemas = [s for s in ctx.kernel.tool_registry.tool_schemas() if s["function"]["name"] in WORKER_TOOLS]
-    messages: list[dict] = [
-        {
-            "role": "system",
-            "content": WORKER_PROMPT
-            + "\n\n"
-            + render_xhx_md(ctx.scan)
-            + render_recalled_memories(ctx.original_workspace, ctx.task),
-        },
-        {"role": "user", "content": subtask},
-    ]
-    changed: list[str] = []
-    text = ""
-    for _ in range(WORKER_MAX_TURNS):
-        result = chat_and_count(ctx, client, messages, schemas, turn=0)
-        if not result.tool_calls:
-            text = result.content or ""
-            break
-        messages.append({
-            "role": "assistant",
-            "content": result.content or "",
-            "tool_calls": [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
-                for tc in result.tool_calls
-            ],
-        })
-        for tc in result.tool_calls:
-            if tc.name not in WORKER_TOOLS:
-                content = f"[graph] tool '{tc.name}' not available to worker."
-            else:
-                _tc, content, ch, _meta = _execute_tool_call_rich(ctx, tc, turn)
-                changed.extend(ch)
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
-    return changed, text or f"worked on: {subtask}"
-
-
-def _review(ctx: OrchestratorContext, client: Any, changed_files: list[str], worker_results: list[str]) -> tuple[bool, str]:
-    """LLM 评审：PASS / FAIL: reason。"""
-    summary = (
-        f"Original task: {ctx.task}\n"
-        f"Changed files: {sorted(set(changed_files)) or 'none'}\n"
-        f"Worker results:\n" + "\n".join(f"- {r}" for r in worker_results)
-    )
-    result = chat_and_count(
-        ctx, client, [{"role": "system", "content": REVIEWER_PROMPT}, {"role": "user", "content": summary}], [], turn=0
-    )
-    verdict = (result.content or "").strip()
-    passed = verdict.upper().startswith("PASS")
-    reason = "Review passed." if passed else (verdict or "Review did not pass.")
-    return passed, reason
 
 
 class GraphOrchestrator:
-    """graph 范式：tool-calling 多 agent 工作流（coordinator → execute → review，LangGraph）。"""
+    """graph 范式：LLMCompiler 式串行 DAG 编排工作流。"""
 
     name = "graph"
 
     def run(self, ctx: OrchestratorContext) -> RunResult:
         from xhx_agent.runtime.app import RunResult
+        from xhx_agent.runtime.session import save_transcript
 
         client = build_routed_client(
             ctx.original_workspace,
@@ -261,88 +176,144 @@ class GraphOrchestrator:
             event_callback=ctx.event_callback,
             build_client_func=build_chat_client,
         )
-        max_rounds = min(MAX_REVIEW_ROUNDS, load_config(ctx.original_workspace).max_loop_turns)
 
-        def coordinator(state: _GraphState) -> dict[str, Any]:
-            coord = _coordinate(ctx, client)
-            if coord.answer is not None:
-                # 量级匹配：闲聊/可直接回答的问题不拆任务、不启动写 worker，直接给出回答。
-                emit_event(ctx.event_callback, "graph_coordinator",
-                           "Answered directly (no code work needed).", round=state["rounds"])
-                return {"subtasks": [], "answer": coord.answer, "review_passed": True}
-            emit_event(ctx.event_callback, "graph_coordinator",
-                       f"Decomposed task into {len(coord.subtasks)} sub-task(s).", round=state["rounds"])
-            return {"subtasks": coord.subtasks}
+        def planner(state: _GraphState) -> dict[str, Any]:
+            answer, nodes = _plan(ctx, client)
+            if answer is not None:
+                emit_event(ctx.event_callback, "graph_planner", "Answered directly (no code work needed).")
+                return {"answer": answer, "nodes": []}
+            emit_event(ctx.event_callback, "graph_planner", f"Planned DAG with {len(nodes)} node(s).")
+            return {"nodes": nodes}
 
         def execute(state: _GraphState) -> dict[str, Any]:
+            from xhx_agent.planner.planner import topological_sort
+            nodes = state["nodes"]
+            ordered = topological_sort(nodes)
+            done = {}
             changed: list[str] = []
-            results: list[str] = []
-            for i, subtask in enumerate(state["subtasks"]):
-                emit_event(ctx.event_callback, "graph_worker", f"Worker on sub-task {i + 1}: {subtask[:60]}",
-                           round=state["rounds"], subtask_index=i)
-                ch, text = _run_worker(ctx, client, subtask, turn=state["rounds"] + 1)
-                changed.extend(ch)
-                results.append(text)
-            emit_event(ctx.event_callback, "graph_execute", "Executed sub-tasks.", round=state["rounds"])
+            for node in ordered:
+                emit_event(
+                    ctx.event_callback,
+                    "graph_node",
+                    f"Running DAG node {node.node_id} ({node.agent_type}).",
+                    node_id=node.node_id,
+                    agent_type=node.agent_type,
+                )
+                node.status = "running"
+                try:
+                    ch, text = _run_dag_node(ctx, node, done, turn=1)
+                    node.result = text
+                    node.status = "success"
+                    done[node.node_id] = text
+                    changed.extend(ch)
+                except Exception as e:
+                    node.status = "failed"
+                    node.result = f"Error: {e}"
+                    idx = ordered.index(node)
+                    for blocked_node in ordered[idx + 1:]:
+                        blocked_node.status = "blocked"
+                    raise e
             return {
+                "nodes": nodes,
                 "changed_files": state["changed_files"] + changed,
-                "worker_results": state["worker_results"] + results,
             }
 
-        def review(state: _GraphState) -> dict[str, Any]:
-            passed, reason = _review(ctx, client, state["changed_files"], state["worker_results"])
-            emit_event(ctx.event_callback, "graph_review", reason, passed=passed, round=state["rounds"])
-            return {"review_passed": passed, "review_reason": reason, "rounds": state["rounds"] + 1}
+        def synthesize(state: _GraphState) -> dict[str, Any]:
+            summary = (
+                f"Original task: {ctx.task}\n\n"
+                "Sub-agent execution results:\n"
+                + "\n".join(f"Node {n.node_id} ({n.agent_type}): {n.result}" for n in state["nodes"])
+            )
+            messages = [
+                {"role": "system", "content": SYNTHESIZE_PROMPT},
+                {"role": "user", "content": summary},
+            ]
+            result = chat_and_count(ctx, client, messages, [], turn=0)
+            return {"answer": result.content or ""}
 
-        def route_after_coordinator(state: _GraphState) -> str:
-            # 没有子任务（coordinator 已直接回答）→ 直接结束；否则进入执行。
-            return "done" if not state["subtasks"] else "execute"
-
-        def route(state: _GraphState) -> str:
-            if state["review_passed"] or state["rounds"] >= max_rounds:
-                return "done"
-            return "execute"
+        def route_after_planner(state: _GraphState) -> str:
+            return "done" if not state.get("nodes") else "execute"
 
         graph = StateGraph(_GraphState)
-        graph.add_node("coordinator", coordinator)
+        graph.add_node("planner", planner)
         graph.add_node("execute", execute)
-        graph.add_node("review", review)
-        graph.set_entry_point("coordinator")
-        graph.add_conditional_edges("coordinator", route_after_coordinator, {"execute": "execute", "done": END})
-        graph.add_edge("execute", "review")
-        graph.add_conditional_edges("review", route, {"execute": "execute", "done": END})
+        graph.add_node("synthesize", synthesize)
+        graph.set_entry_point("planner")
+        graph.add_conditional_edges("planner", route_after_planner, {"execute": "execute", "done": END})
+        graph.add_edge("execute", "synthesize")
+        graph.add_edge("synthesize", END)
         compiled = graph.compile()
 
         ctx.evidence.write_trace("run_start", {"task": ctx.task, "profile": ctx.profile.name, "orchestrator": "graph"})
         emit_event(ctx.event_callback, "run_start", "Graph run started.", run_id=ctx.run_id, task=ctx.task)
-        final: dict[str, Any] = compiled.invoke({
-            "rounds": 0, "subtasks": [], "changed_files": [], "worker_results": [],
-            "review_passed": False, "review_reason": "", "answer": None,
-        })
 
-        # 量级匹配：闲聊由 coordinator 直答；编码任务则把 worker 结果作为回答输出（让用户看到做了什么）。
+        status = "success"
+        risks: list[str] = []
+        try:
+            final: dict[str, Any] = compiled.invoke({
+                "nodes": [], "changed_files": [], "answer": None,
+            })
+        except Exception as e:
+            status = "failed"
+            risks.append(f"Execution error: {e}")
+            final = {
+                "nodes": [],
+                "changed_files": [],
+                "answer": None,
+            }
+
         answer = final.get("answer")
-        if answer is None and final["worker_results"]:
-            answer = "\n".join(r for r in final["worker_results"] if r)
-        changed_files = sorted(set(final["changed_files"]))
-        status = "success" if final["review_passed"] else "failed"
-        risks: list[str] = [] if final["review_passed"] else [final["review_reason"]]
-        verification_status = ("passed" if status == "success" else "failed") if changed_files else "skipped_no_changes"
+        changed_files = sorted(set(final.get("changed_files", [])))
+        if status != "failed":
+            status = "success"
+
+        verification_status = "not_executed" if changed_files else "skipped_no_changes"
 
         summary = write_report(
             workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
-            plan=[f"Graph workflow: coordinator -> execute -> review ({final['rounds']} round(s))."],
+            plan=["Graph workflow: planner -> serial execute -> synthesize."],
             changed_files=changed_files, commands=[], verification=verification_status, risks=risks)
+
+        # 保存 transcript 补齐
+        messages: list[dict[str, Any]] = []
+        messages.append({"role": "system", "content": PLANNER_PROMPT})
+        messages.append({"role": "user", "content": ctx.task})
+        if answer is not None and not final.get("nodes"):
+            messages.append({"role": "assistant", "content": f"ANSWER: {answer}"})
+        else:
+            nodes_repr = []
+            for n in final.get("nodes", []):
+                nodes_repr.append({
+                    "id": n.node_id,
+                    "agent_type": n.agent_type,
+                    "prompt": n.prompt,
+                    "deps": n.dependencies,
+                    "result": n.result,
+                    "status": n.status
+                })
+            messages.append({"role": "assistant", "content": json.dumps({"nodes": nodes_repr}, ensure_ascii=False)})
+            for n in final.get("nodes", []):
+                messages.append({"role": "user", "content": f"Execute node {n.node_id} ({n.agent_type}): {n.prompt}"})
+                messages.append({"role": "assistant", "content": n.result or "No result"})
+            if answer is not None:
+                messages.append({"role": "system", "content": SYNTHESIZE_PROMPT})
+                messages.append({"role": "assistant", "content": answer})
+
+        transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
+
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
         emit_event(ctx.event_callback, "run_end", "Graph task completed.", run_id=ctx.run_id,
                    status=status, verification=verification_status, changed_files=changed_files,
                    summary_path=str(summary.relative_to(ctx.original_workspace)))
+
         metrics = RunMetrics(
-            duration_seconds=round(time.time() - ctx.start_time, 2), turns=final["rounds"],
-            tokens_estimate=ctx.metrics_tracker["tokens"], files_changed_count=len(changed_files),
-            commands_run_count=0, repair_attempts=max(0, final["rounds"] - 1), success=(status == "success"))
+            duration_seconds=round(time.time() - ctx.start_time, 2), turns=1,
+            tokens_estimate=ctx.metrics_tracker.get("tokens", 0), files_changed_count=len(changed_files),
+            commands_run_count=0, repair_attempts=0, success=(status == "success"))
+
         return RunResult(
-            run_id=ctx.run_id, status=status, turns=final["rounds"], changed_files=changed_files,
+            run_id=ctx.run_id, status=status, turns=1, changed_files=changed_files,
             commands=[], verification=verification_status,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks, metrics=metrics, mode=ctx.mode or "graph", answer=answer)
+            risk_summary=risks, metrics=metrics, mode=ctx.mode or "graph", answer=answer,
+            transcript_path=transcript_rel)

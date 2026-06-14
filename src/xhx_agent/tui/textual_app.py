@@ -1252,7 +1252,7 @@ class TextualCommandConsoleApp(App[None]):
             glyph = "✗" if str(p.get("status")) in {"failed", "error", "denied"} else "✓"
             tail = f" → {summary}" if summary else ""
             return f"  {glyph} {p.get('tool', '?')}{tail}"
-        if et in {"graph_coordinator", "graph_worker", "graph_execute", "graph_review"}:
+        if et in {"graph_coordinator", "graph_worker", "graph_execute", "graph_review", "graph_planner", "graph_node"}:
             role = et.removeprefix("graph_")
             msg = (event.message or "").strip().replace("\n", " ")
             if len(msg) > 100:
