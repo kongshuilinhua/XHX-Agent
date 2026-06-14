@@ -398,6 +398,11 @@ class TextualCommandConsoleApp(App[None]):
         self.ui_thread_id: int | None = None
         self.auto_memory = True
         self.verbose = False
+        # 重绘合并：事件洪流（graph 等多 agent 模式）下，每事件全量重绘会把 worker 线程
+        # （call_from_thread 阻塞）与终端拖死。改为「事件只更新数据 + 置脏」，由 on_mount
+        # 安装的 set_interval 定时器把重绘频率封顶到 ~10fps。
+        self._render_pending = False
+        self._render_timer: Any = None
 
     @property
     def clipboard(self) -> str:
@@ -425,12 +430,20 @@ class TextualCommandConsoleApp(App[None]):
         self.ui_thread_id = threading.get_ident()
         self.widgets_ready = True
         self.refresh_snapshot()
+        # ~10fps 合并重绘：把事件洪流的重绘频率封顶，避免 UI 线程被 graph 等模式刷爆而卡死。
+        self._render_timer = self.set_interval(0.1, self._flush_render)
         try:
             self.query_one("#input", Input).focus()
         except Exception:
             pass
 
+    def _flush_render(self) -> None:
+        """定时器回调（UI 线程）：仅当有挂起的脏标记时才真正重绘一次。"""
+        if self._render_pending:
+            self.refresh_snapshot()
+
     def refresh_snapshot(self) -> None:
+        self._render_pending = False
         self.state.textual_messages = list(self.messages)  # type: ignore[attr-defined]
         snapshot = TextualSnapshot.from_state(
             self.state,
@@ -668,7 +681,10 @@ class TextualCommandConsoleApp(App[None]):
         )
 
     def handle_runtime_event(self, event: RuntimeEvent) -> None:
-        self.call_ui(self.apply_runtime_event, event)
+        # 运行时事件来自 worker 线程：只在 UI 线程做轻量数据更新（reduce + append + 置脏），
+        # 重绘交给 _flush_render 定时器合并。这样 worker 的 call_from_thread 每事件只阻塞微秒级，
+        # 而非一次全量重绘，从根上消除事件洪流导致的终端卡死。
+        self.call_ui(self._ingest_runtime_event, event)
 
     def confirm_terminal_command(self, command: str, decision: PolicyDecision) -> bool:
         if self.next_confirm_response is not None:
@@ -1273,12 +1289,18 @@ class TextualCommandConsoleApp(App[None]):
             return f"  💭 思考 ({model}) {oneline}"
         return None
 
-    def apply_runtime_event(self, event: RuntimeEvent) -> None:
+    def _ingest_runtime_event(self, event: RuntimeEvent) -> None:
+        """轻量数据更新（UI 线程）：归约状态、把可见事件追加进有序消息流，并置脏。不在此重绘。"""
         self.state.reduce(event)
         line = self._timeline_line_for_event(event)
         if line is not None:
             # 单一有序流：事件行与 user>/assistant>/system> 共用 self.messages，时序天然正确。
             self.messages.append(line)
+        self._render_pending = True
+
+    def apply_runtime_event(self, event: RuntimeEvent) -> None:
+        """直调/测试入口：数据更新后立即同步重绘（与历史行为一致）。"""
+        self._ingest_runtime_event(event)
         self.refresh_snapshot()
 
     def can_wait_for_interactive_confirmation(self) -> bool:
