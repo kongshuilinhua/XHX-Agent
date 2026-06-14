@@ -37,7 +37,8 @@
 
 ## 4. 节点 schema 与变量替换（核心决策）
 
-**决策 A：planner 用结构化 DAG（JSON），不用 LLMCompiler 的散文格式。** 理由：真模型（DeepSeek）出结构化 JSON 比解析自由文本鲁棒得多（前车之鉴：dispatch 不被采用、apply_patch 格式老错）。
+**决策 A（P1 落地后修订）：planner 用 tool-calling，不用文本哨兵也不用裸 JSON。** 给 planner 两个工具二选一：`answer_user(text)`（纯对话直答）/ `submit_dag(nodes=[...])`（任何要动仓库的任务，单行编辑=单个 edit 节点）。
+> 原方案是"`ANSWER:` 哨兵 或 裸 JSON"，但 P1 真模型 gate 实测它对 DeepSeek 不可靠（闲聊不加前缀→兜底成 edit 节点；编辑走 ANSWER 假装完成）。改 tool-calling 后 gate 全过（闲聊→answer_user、可并行→submit_dag 多节点、单行编辑→submit_dag 单 edit 节点）。结构化工具调用远比解析散文/裸 JSON 稳，也正合 xhx「全 tool-calling」。
 
 复用并轻扩 `modes.DAGNode`（它已有 `dependencies` + `result`，天然适配）：
 ```
