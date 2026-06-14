@@ -139,12 +139,16 @@ class LoopOrchestrator:
 
             reg = ctx.kernel.tool_registry
 
-            def _is_readonly(tc, reg=reg) -> bool:
+            def _is_parallel_safe(tc, reg=reg) -> bool:
+                # explore 子 agent 只读且隔离，可与只读工具一起并发；
+                # edit(写) 子 agent 有 worktree/合并并发隐患，仍走串行（Slice B 单独处理）。
+                if tc.name == "dispatch":
+                    return str(tc.arguments.get("agent_type", "explore")) != "edit"
                 d = reg.definition(tc.name)
                 return d is not None and d.read_only
 
-            all_readonly = len(result.tool_calls) >= 2 and all(_is_readonly(tc) for tc in result.tool_calls)
-            if all_readonly:
+            all_parallel_safe = len(result.tool_calls) >= 2 and all(_is_parallel_safe(tc) for tc in result.tool_calls)
+            if all_parallel_safe:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:

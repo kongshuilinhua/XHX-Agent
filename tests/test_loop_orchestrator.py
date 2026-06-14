@@ -213,3 +213,52 @@ def test_loop_restores_prior_messages(tmp_path, monkeypatch):
     assert "OLD SYSTEM — must be dropped" not in seen["contents"]
     assert "earlier question" in seen["contents"]
     assert seen["roles"][-1] == "user" and seen["contents"][-1] == "follow up"
+
+
+def test_loop_runs_explore_dispatch_batch_in_parallel(tmp_path, monkeypatch):
+    """一轮里多个 explore dispatch 应并发执行。
+
+    用 Barrier(2) 证明并行：两个子 agent 必须同时到达 barrier 才能越过；
+    若串行执行，第一个会一直等到 5s 超时触发 BrokenBarrierError，两个都越不过，completed 为空。
+    """
+    import threading
+
+    import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+
+    barrier = threading.Barrier(2, timeout=5)
+    completed: list[str] = []
+
+    def fake_run_subagent(ctx, *, description, prompt, agent_type="explore", turn=0):
+        barrier.wait()  # 仅当两个线程同时到达才返回；串行 → 超时 BrokenBarrierError
+        completed.append(prompt)
+        return f"[sub-agent explore] {prompt}"
+
+    monkeypatch.setattr(subagentmod, "run_subagent", fake_run_subagent)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def chat(self, messages, tools):
+            self.n += 1
+            if self.n == 1:
+                return ChatResult(content=None, tool_calls=[
+                    ToolCall(id="d1", name="dispatch",
+                             arguments={"prompt": "explore A", "agent_type": "explore"}),
+                    ToolCall(id="d2", name="dispatch",
+                             arguments={"prompt": "explore B", "agent_type": "explore"}),
+                ])
+            return ChatResult(content="done")
+
+    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())
+
+    result = RuntimeApp(tmp_path).run_task("investigate two modules", assume_yes=True, mode="loop")
+
+    assert result.status == "success"
+    # 两个 explore 都越过 barrier == 真并行；串行时 completed 为空、断言失败
+    assert sorted(completed) == ["explore A", "explore B"]
