@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -66,6 +67,8 @@ class OrchestratorContext:
     prior_messages: list[dict] | None = None
     # 写型子 agent 串行合并用：rel_path → 最先改它的子 agent 标签；用于跨子 agent 的冲突检测（先到先得）。
     subagent_claims: dict[str, str] = field(default_factory=dict)
+    # 并行写子 agent 用：串行化 git worktree 创建/清理 + _merge_into_parent（claims 与拷贝）的临界区。
+    subagent_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class Orchestrator(Protocol):
