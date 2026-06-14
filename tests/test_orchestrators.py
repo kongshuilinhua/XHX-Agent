@@ -60,9 +60,9 @@ def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
         def chat(self, messages, tools):
             system = messages[0]["content"]
             if "PLANNER" in system:
-                return ChatResult(
-                    content='{"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "tweak calc.py", "deps": []}]}'
-                )
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag",
+                    arguments={"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "tweak calc.py", "deps": []}]})])
             if "SOLVER" in system:
                 return ChatResult(content="done all")
             self.w += 1

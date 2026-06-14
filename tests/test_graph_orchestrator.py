@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 def test_graph_answers_conversational_directly(tmp_path, monkeypatch):
     """闲聊问题：planner 直接回答，不建图、不启动 execute/synthesize。"""
     import xhx_agent.orchestrators.graph as graphmod
-    from xhx_agent.models.types import ChatResult
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
     RuntimeApp(tmp_path).init_project()
@@ -13,7 +13,9 @@ def test_graph_answers_conversational_directly(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             system = messages[0]["content"]
             if "PLANNER" in system:
-                return ChatResult(content="ANSWER: I am xhx-agent. I help you read and change this repo.")
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="answer_user",
+                    arguments={"text": "I am xhx-agent. I help you read and change this repo."})])
             raise AssertionError("execute/synthesize should not be called for a conversational request")
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: ChatFake())
@@ -47,9 +49,9 @@ def test_graph_single_edit_node_changes_code(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             system = messages[0]["content"]
             if "PLANNER" in system:
-                return ChatResult(
-                    content='{"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit calc.py", "deps": []}]}'
-                )
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag",
+                    arguments={"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit calc.py", "deps": []}]})])
             if "SOLVER" in system:
                 return ChatResult(content="synthesis answer")
 
@@ -79,7 +81,7 @@ def test_graph_single_edit_node_changes_code(tmp_path, monkeypatch):
 
 def test_graph_runs_dependent_nodes_with_variable_substitution(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.graph as graphmod
-    from xhx_agent.models.types import ChatResult
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
     RuntimeApp(tmp_path).init_project()
@@ -88,12 +90,11 @@ def test_graph_runs_dependent_nodes_with_variable_substitution(tmp_path, monkeyp
         def chat(self, messages, tools):
             system = messages[0]["content"]
             if "PLANNER" in system:
-                return ChatResult(
-                    content='{"nodes": ['
-                            '{"id": "n1", "agent_type": "explore", "prompt": "find file", "deps": []},'
-                            '{"id": "n2", "agent_type": "edit", "prompt": "edit file based on $n1", "deps": ["n1"]}'
-                            ']}'
-                )
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag", arguments={"nodes": [
+                        {"id": "n1", "agent_type": "explore", "prompt": "find file", "deps": []},
+                        {"id": "n2", "agent_type": "edit", "prompt": "edit file based on $n1", "deps": ["n1"]},
+                    ]})])
             if "SOLVER" in system:
                 return ChatResult(content="synthesis done")
             raise AssertionError("Should not call fallback client chat")
@@ -121,9 +122,9 @@ def test_graph_runs_dependent_nodes_with_variable_substitution(tmp_path, monkeyp
     assert result.answer == "synthesis done"
 
 
-def test_graph_planner_fallback_on_bad_json(tmp_path, monkeypatch):
+def test_graph_planner_fallback_on_bad_dag(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.graph as graphmod
-    from xhx_agent.models.types import ChatResult
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
     RuntimeApp(tmp_path).init_project()
@@ -132,7 +133,12 @@ def test_graph_planner_fallback_on_bad_json(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             system = messages[0]["content"]
             if "PLANNER" in system:
-                return ChatResult(content="invalid json here {{{")
+                # submit_dag 带成环节点 → _nodes_from_args 兜底成单个 edit 节点（prompt=原任务）
+                return ChatResult(content=None, tool_calls=[ToolCall(
+                    id="p1", name="submit_dag", arguments={"nodes": [
+                        {"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": ["n2"]},
+                        {"id": "n2", "agent_type": "explore", "prompt": "p2", "deps": ["n1"]},
+                    ]})])
             if "SOLVER" in system:
                 return ChatResult(content="solver finished")
             return ChatResult(content="done")
@@ -153,68 +159,61 @@ def test_graph_planner_fallback_on_bad_json(tmp_path, monkeypatch):
     assert result.answer == "solver finished"
 
 
-def test_parse_dag_robustness() -> None:
-    from xhx_agent.orchestrators.graph import _parse_dag
+def test_nodes_from_args_fallback() -> None:
+    from xhx_agent.orchestrators.graph import _nodes_from_args
 
-    # 1. 闲聊 -> answer
-    ans, nodes = _parse_dag("ANSWER: Hello there!", "fallback task")
-    assert ans == "Hello there!"
-    assert nodes == []
-
-    # 1.1 闲聊大小写不敏感或有空格
-    ans, nodes = _parse_dag("answer:  How can I help?  ", "fallback task")
-    assert ans == "How can I help?"
-    assert nodes == []
-
-    # 2. 合法 JSON -> nodes
-    raw_json = '{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "find file", "deps": []}, {"id": "n2", "agent_type": "edit", "prompt": "edit file $n1", "deps": ["n1"]}]}'
-    ans, nodes = _parse_dag(raw_json, "fallback task")
-    assert ans is None
-    assert len(nodes) == 2
-    assert nodes[0].node_id == "n1"
-    assert nodes[0].agent_type == "explore"
-    assert nodes[0].prompt == "find file"
-    assert nodes[0].dependencies == []
-    assert nodes[1].node_id == "n2"
-    assert nodes[1].agent_type == "edit"
-    assert nodes[1].prompt == "edit file $n1"
+    # 合法节点
+    nodes = _nodes_from_args(
+        [{"id": "n1", "agent_type": "explore", "prompt": "find", "deps": []},
+         {"id": "n2", "agent_type": "edit", "prompt": "edit $n1", "deps": ["n1"]}],
+        "fallback task")
+    assert [n.node_id for n in nodes] == ["n1", "n2"]
     assert nodes[1].dependencies == ["n1"]
 
-    # 3. 带 ```json 围栏仍解析
-    fenced = "Some thinking here...\n```json\n" + raw_json + "\n```\nSome other tail..."
-    ans, nodes = _parse_dag(fenced, "fallback task")
-    assert ans is None
-    assert len(nodes) == 2
+    # 空 → 兜底单 edit
+    fb = _nodes_from_args([], "fallback task")
+    assert len(fb) == 1 and fb[0].agent_type == "edit" and fb[0].prompt == "fallback task"
 
-    # 4. 非法 JSON -> 兜底单 edit 节点
-    ans, nodes = _parse_dag("{invalid json", "fallback task")
-    assert ans is None
-    assert len(nodes) == 1
-    assert nodes[0].node_id == "n1"
-    assert nodes[0].agent_type == "edit"
-    assert nodes[0].prompt == "fallback task"
+    # 悬空 $ref → 兜底
+    fb = _nodes_from_args([{"id": "n1", "agent_type": "edit", "prompt": "use $n2", "deps": []}], "fallback task")
+    assert len(fb) == 1 and fb[0].prompt == "fallback task"
 
-    # 5. $ref 不在 deps -> 兜底
-    bad_ref = '{"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "use $n2", "deps": []}]}'
-    ans, nodes = _parse_dag(bad_ref, "fallback task")
-    assert ans is None
-    assert len(nodes) == 1
-    assert nodes[0].node_id == "n1"
-    assert nodes[0].agent_type == "edit"
-    assert nodes[0].prompt == "fallback task"
+    # 成环 → 兜底
+    fb = _nodes_from_args(
+        [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": ["n2"]},
+         {"id": "n2", "agent_type": "explore", "prompt": "p2", "deps": ["n1"]}], "fallback task")
+    assert len(fb) == 1 and fb[0].prompt == "fallback task"
 
-    # 6. 成环 -> 兜底
-    cyclic = '{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": ["n2"]}, {"id": "n2", "agent_type": "explore", "prompt": "p2", "deps": ["n1"]}]}'
-    ans, nodes = _parse_dag(cyclic, "fallback task")
-    assert ans is None
-    assert len(nodes) == 1
-    assert nodes[0].node_id == "n1"
-    assert nodes[0].agent_type == "edit"
-    assert nodes[0].prompt == "fallback task"
+
+def test_interpret_plan() -> None:
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.orchestrators.graph import _interpret_plan
+
+    # answer_user → 直答
+    r = ChatResult(content=None, tool_calls=[ToolCall(id="a", name="answer_user", arguments={"text": "hi there"})])
+    ans, nodes = _interpret_plan(r, "task")
+    assert ans == "hi there" and nodes == []
+
+    # submit_dag → DAG
+    r = ChatResult(content=None, tool_calls=[ToolCall(
+        id="b", name="submit_dag",
+        arguments={"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p", "deps": []}]})])
+    ans, nodes = _interpret_plan(r, "task")
+    assert ans is None and len(nodes) == 1 and nodes[0].node_id == "n1"
+
+    # 没调工具但有纯文本 → 当直答（闲聊兜底）
+    r = ChatResult(content="just a plain answer", tool_calls=[])
+    ans, nodes = _interpret_plan(r, "task")
+    assert ans == "just a plain answer" and nodes == []
+
+    # 没调工具也没文本 → 兜底单 edit
+    r = ChatResult(content=None, tool_calls=[])
+    ans, nodes = _interpret_plan(r, "the task")
+    assert ans is None and len(nodes) == 1 and nodes[0].agent_type == "edit" and nodes[0].prompt == "the task"
 
 
 def test_plan_function() -> None:
-    from xhx_agent.models.types import ChatResult
+    from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.orchestrators.graph import _plan
 
     ctx = MagicMock()
@@ -224,18 +223,19 @@ def test_plan_function() -> None:
 
     client = MagicMock()
 
-    # 1. 正常返回 JSON
-    client.chat.return_value = ChatResult(
-        content='{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": []}]}'
-    )
+    # 1. submit_dag → nodes
+    client.chat.return_value = ChatResult(content=None, tool_calls=[ToolCall(
+        id="p1", name="submit_dag",
+        arguments={"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": []}]})])
     ans, nodes = _plan(ctx, client)
     assert ans is None
     assert len(nodes) == 1
     assert nodes[0].node_id == "n1"
     assert nodes[0].prompt == "p1"
 
-    # 2. 返回闲聊
-    client.chat.return_value = ChatResult(content="ANSWER: Simple Q&A")
+    # 2. answer_user → 直答
+    client.chat.return_value = ChatResult(content=None, tool_calls=[ToolCall(
+        id="p2", name="answer_user", arguments={"text": "Simple Q&A"})])
     ans, nodes = _plan(ctx, client)
     assert ans == "Simple Q&A"
     assert len(nodes) == 0

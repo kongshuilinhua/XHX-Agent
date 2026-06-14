@@ -1,11 +1,10 @@
-"""graph 范式：tool-calling 多 agent 工作流（LangGraph 显式状态图）。
+"""graph 范式：LLMCompiler 式并行多 agent DAG 工作流（LangGraph 显式状态图）。
 
-控制流 = coordinator → execute → review，带条件重试回路（LangGraph StateGraph）。Phase 4 起三个节点
-都由**真 LLM + 原生 tool-calling** 驱动（不再是启发式 DAG）：
-- coordinator(LLM)：把任务拆成一组有序子任务。
-- execute：每个子任务交一个**写型 worker 小循环**（自己的消息历史、tool-calling 真改代码）。
-- review(LLM)：判 PASS/FAIL，FAIL 则回 execute 重试（≤ MAX_REVIEW_ROUNDS）。
-与统一的 plan/loop 形成对照：graph 的特征是 coordinator/worker/reviewer **多角色显式分工**，协议同样是 tool-calling。
+控制流 = planner → execute → synthesize：
+- planner(LLM, tool-calling)：二选一调用 answer_user（纯对话直答）或 submit_dag（产出带依赖+$变量的任务 DAG）。
+- execute：按拓扑序逐节点（P1 串行）跑隔离子 agent（explore 只读 / edit 写），前序结果经 $<id> 变量替换喂下游。
+- synthesize(LLM)：把各节点结论综合成最终回答。
+与 plan/loop 对照：graph 的特征是显式 DAG 编排 + 多 agent 协作，协议同样是 tool-calling。
 """
 
 from __future__ import annotations
@@ -32,64 +31,73 @@ from xhx_agent.runtime.events import emit_event
 if TYPE_CHECKING:
     from xhx_agent.runtime.app import RunResult
 
-MAX_REVIEW_ROUNDS = 2
-MAX_SUBTASKS = 5
-WORKER_MAX_TURNS = 4
-WORKER_TOOLS = {"search", "read_file", "apply_patch"}
-
-COORDINATOR_PROMPT = (
-    "You are the COORDINATOR of a multi-agent coding workflow.\n"
-    "Match effort to the request:\n"
-    "- If you can fully satisfy it without reading or changing the repository, just answer: reply with a "
-    "single message that STARTS with 'ANSWER: ' followed by your full natural-language response.\n"
-    "- Otherwise, break it into the FEWEST concrete, independent sub-tasks that can each stand alone "
-    "(at most 5), one per line prefixed with '- '. Never split work that is really a single step.\n"
-    "No preamble, no numbering, no explanation."
-)
-WORKER_PROMPT = (
-    "You are a WORKER agent in a multi-agent workflow. Accomplish ONLY the assigned sub-task using the tools. "
-    "Use relative paths; make all edits with apply_patch (unified diff or *** Begin Patch envelope). "
-    "When the sub-task is done, reply with a one-line result and no tool calls."
-)
-REVIEWER_PROMPT = (
-    "You are the REVIEWER of a multi-agent workflow. Given the original task and what the workers changed, "
-    "decide whether the work is complete and correct. Reply on a single line: 'PASS' if good, or "
-    "'FAIL: <short reason>' if more work is needed."
-)
-
 PLANNER_PROMPT = (
     "You are the PLANNER of a multi-agent coding workflow.\n"
-    "First match effort to the request:\n"
-    "- If you can fully satisfy it WITHOUT reading or changing the repository, reply with a single line "
-    "starting 'ANSWER: ' followed by your full natural-language response.\n"
-    "- Otherwise output a task DAG as ONE JSON object and nothing else:\n"
-    '  {"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "...", "deps": []}, ...]}\n'
-    "  Rules:\n"
-    "  - agent_type is \"explore\" (read-only investigation) or \"edit\" (makes code changes).\n"
-    "  - A node prompt may reference a dependency's result with $<id> (e.g. $n1); every $<id> used MUST be "
-    "in that node's deps.\n"
-    "  - Keep it MINIMAL: split into multiple nodes only when they can truly run independently or one truly "
-    "depends on another. A simple task = a single node.\n"
-    "  - ids unique; deps must reference existing ids and form a DAG (no cycles).\n"
-    "Output ONLY the ANSWER line, or ONLY the JSON object."
+    "Respond by calling EXACTLY ONE tool — never answer in plain text:\n"
+    "- If the request requires reading or changing the repository in ANY way (including a single-line edit), "
+    "call submit_dag with a MINIMAL task DAG. A simple task = a single node; split into multiple nodes only "
+    "when they can run independently or one truly depends on another.\n"
+    "- Only if the request is pure conversation or a question answerable WITHOUT the repository, call answer_user.\n"
+    "DAG rules: ids unique; every dep references an existing id; no cycles; a node's prompt may use $<id> to "
+    "insert a dependency's result, and every $<id> used MUST appear in that node's deps."
 )
 
+_PLANNER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "answer_user",
+            "description": (
+                "Answer the user directly. ONLY for pure conversation or a question you can fully answer "
+                "WITHOUT reading or changing the repository."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "Full natural-language answer."}},
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_dag",
+            "description": (
+                "Submit a task DAG for any request that requires reading or changing the repository — even a "
+                "one-line edit is a single 'edit' node. Sub-agents execute the nodes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nodes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "agent_type": {"type": "string", "enum": ["explore", "edit"]},
+                                "prompt": {
+                                    "type": "string",
+                                    "description": "Self-contained instruction for the sub-agent; may use $<id>.",
+                                },
+                                "deps": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["id", "agent_type", "prompt"],
+                        },
+                    }
+                },
+                "required": ["nodes"],
+            },
+        },
+    },
+]
 
-def _parse_dag(content: str, fallback_task: str) -> tuple[str | None, list[DAGNode]]:
-    """解析 planner 输出。返回 (answer, nodes)：answer 非空=闲聊直答；否则 nodes 非空。
 
-    鲁棒性优先：剥围栏、容错；任何解析/校验失败 → 兜底单个 edit 节点（edit 子 agent 可读可写，
-    对绝大多数任务都安全）。
-    """
-    text = (content or "").strip()
-    if text.upper().startswith("ANSWER:"):
-        return text[len("ANSWER:"):].strip() or text, []
-    # 剥可能的 ```json 围栏
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    raw = m.group(0) if m else text
+def _nodes_from_args(raw_nodes: Any, fallback_task: str) -> list[DAGNode]:
+    """从 submit_dag 的 nodes 参数构造 + 校验节点；任何失败兜底成单个 edit 节点。"""
     try:
-        data = json.loads(raw)
-        raw_nodes = data["nodes"]
+        if isinstance(raw_nodes, str):
+            raw_nodes = json.loads(raw_nodes)
         nodes = [
             DAGNode(
                 node_id=str(n["id"]),
@@ -102,9 +110,27 @@ def _parse_dag(content: str, fallback_task: str) -> tuple[str | None, list[DAGNo
         if not nodes:
             raise ValueError("empty nodes")
         _validate_dag(nodes)  # ids 唯一、deps∈ids、$ref⊆deps、无环（见下）
-        return None, nodes
+        return nodes
     except Exception:
-        return None, [DAGNode(node_id="n1", agent_type="edit", prompt=fallback_task, dependencies=[])]
+        return [DAGNode(node_id="n1", agent_type="edit", prompt=fallback_task, dependencies=[])]
+
+
+def _interpret_plan(result: Any, task: str) -> tuple[str | None, list[DAGNode]]:
+    """解读 planner 的 tool-calling 结果。返回 (answer, nodes)：answer 非空=直答；否则 nodes 非空。
+
+    优先看工具调用：answer_user→直答；submit_dag→DAG。模型没调工具时：有纯文本就当直答
+    （闲聊兜底），否则兜底单 edit 节点。
+    """
+    for tc in result.tool_calls or []:
+        args = tc.arguments if isinstance(tc.arguments, dict) else {}
+        if tc.name == "answer_user":
+            return (str(args.get("text") or "").strip() or "(no answer)"), []
+        if tc.name == "submit_dag":
+            return None, _nodes_from_args(args.get("nodes"), task)
+    content = (result.content or "").strip()
+    if content:
+        return content, []
+    return None, [DAGNode(node_id="n1", agent_type="edit", prompt=task, dependencies=[])]
 
 
 def _validate_dag(nodes: list[DAGNode]) -> None:
@@ -129,8 +155,8 @@ def _plan(ctx: OrchestratorContext, client: Any) -> tuple[str | None, list[DAGNo
          + render_xhx_md(ctx.scan) + render_recalled_memories(ctx.original_workspace, ctx.task)},
         {"role": "user", "content": ctx.task},
     ]
-    result = chat_and_count(ctx, client, messages, [], turn=0)
-    return _parse_dag(result.content or "", ctx.task)
+    result = chat_and_count(ctx, client, messages, _PLANNER_TOOLS, turn=0)
+    return _interpret_plan(result, ctx.task)
 
 
 def _substitute_vars(prompt: str, done: dict[str, str]) -> str:
