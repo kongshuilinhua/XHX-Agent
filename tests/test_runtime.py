@@ -74,6 +74,46 @@ def test_run_task_cancels_before_model_loop(tmp_path: Path) -> None:
     assert any(item["type"] == "cancel_requested" for item in trace_lines)
 
 
+def test_allowed_dirs_shared_and_persisted_across_runs(tmp_path: Path, monkeypatch) -> None:
+    """内核运行期授权的工作区外目录必须回流到 app 级，同会话后续 run 不再重复弹框。
+
+    回归 pydantic 复制 allowed_dirs 导致的「append 进副本、run 结束丢失」bug。
+    """
+    import xhx_agent.runtime.app as appmod
+
+    app = RuntimeApp(tmp_path)
+    app.init_project()
+
+    ext_dir = (tmp_path.parent / "external_proj").resolve()
+    real_select = appmod.select_orchestrator
+    captured: dict = {}
+
+    def wrap(mode):
+        orch = real_select(mode)
+        inner_run = orch.run
+
+        def run_capturing(ctx):
+            captured["tool_context"] = ctx.tool_context
+            # 模拟内核在运行期授权了一个工作区外目录（与 kernel 的 path_scope 放行同效）。
+            if ext_dir not in ctx.tool_context.allowed_dirs:
+                ctx.tool_context.allowed_dirs.append(ext_dir)
+            return inner_run(ctx)
+
+        orch.run = run_capturing
+        return orch
+
+    monkeypatch.setattr(appmod, "select_orchestrator", wrap)
+
+    app.run_task("analyze this repo", mode="linear")
+    # 同一个列表对象（共享引用），且授权目录已回流到 app 级。
+    assert captured["tool_context"].allowed_dirs is app.allowed_dirs
+    assert ext_dir in app.allowed_dirs
+
+    # 第二次 run 的 tool_context 仍带着上次授权（不会重新弹框）。
+    app.run_task("analyze again", mode="linear")
+    assert ext_dir in captured["tool_context"].allowed_dirs
+
+
 def test_python_fixture_mock_closed_loop(tmp_path: Path) -> None:
     fixture = Path(__file__).parent / "fixtures" / "python_bug"
     workspace = tmp_path / "python_bug"
@@ -918,6 +958,10 @@ def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path, monkeypatch) -
     seq = [
         ChatResult(
             content=None,
+            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "build stuff", "files_to_change": ["a.py", "b.py"]})],
+        ),
+        ChatResult(
+            content=None,
             tool_calls=[
                 ToolCall(
                     id="c1",
@@ -954,8 +998,8 @@ def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path, monkeypatch) -
     result = RuntimeApp(tmp_path).run_task("build stuff", profile_name="real", mode="plan")
 
     assert result.status == "success"
-    # Executed at least two change turns (not first-change-then-stop), plus the final text turn.
-    assert result.turns == 3
+    # Executed present_plan, then first change, second change, then final text.
+    assert result.turns == 4
     assert (tmp_path / "a.py").exists()
     assert (tmp_path / "b.py").exists()
 
@@ -990,6 +1034,10 @@ def test_plan_concurrently_executes_readonly_steps(tmp_path: Path, monkeypatch) 
                 ToolCall(id="c1", name="read_file", arguments={"path": "a.txt"}),
                 ToolCall(id="c2", name="read_file", arguments={"path": "b.txt"}),
             ],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "done exploring", "files_to_change": []})],
         ),
         ChatResult(content="done", tool_calls=[]),
     ]

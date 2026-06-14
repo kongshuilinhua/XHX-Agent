@@ -208,6 +208,13 @@ def test_subagent_plan_supports_dispatch(tmp_path, monkeypatch):
                 "agent_type": "explore"
             })]
         ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p2", name="present_plan", arguments={
+                "plan": "Mock plan text",
+                "files_to_change": []
+            })]
+        ),
         ChatResult(content="Plan done", tool_calls=[])
     ]
 

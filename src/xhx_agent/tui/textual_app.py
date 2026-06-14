@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from rich.text import Text
 from textual import events
@@ -17,6 +17,7 @@ from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from xhx_agent.cli.completion import XhxCompleter
+from xhx_agent.orchestrators.base import PlanReview
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -90,6 +91,14 @@ class PendingConfirmation:
         return f"{self.command} ({self.decision.risk.value})"
 
 
+@dataclass
+class PendingPlanReview:
+    plan: str
+    event: threading.Event = field(default_factory=threading.Event)
+    decision: Literal["execute", "revise", "cancel"] | None = None
+    feedback: str | None = None
+
+
 @dataclass(frozen=True)
 class TextualSnapshot:
     header: str
@@ -134,8 +143,11 @@ class TextualSnapshot:
         if state.last_model:
             tokens_str += f" · {state.last_model}"
 
+        from xhx_agent.safety.permission_mode import permission_mode_title
+        perm_title = permission_mode_title(state.permission_mode)
+
         status_line = (
-            f"state: {state.status}  •  mode: {state.mode}  •  turn: {state.context_turn or 0}"
+            f"state: {state.status}  •  mode: {state.mode}  •  perm: {perm_title}  •  turn: {state.context_turn or 0}"
             f"  •  tokens: {tokens_str}"
             f"  •  {ctx_str}"
             f"  •  verify: {state.verification}  •  changed: {len(state.changed_files)}"
@@ -386,6 +398,8 @@ class TextualCommandConsoleApp(App[None]):
         self.cancel_requested = False
         self.pending_steer: str | None = None
         self.pending_confirmation: PendingConfirmation | None = None
+        self.pending_plan_review: PendingPlanReview | None = None
+        self.pending_plan_review_feedback: PendingPlanReview | None = None
         # When a picker is active, holds the callback to run with the chosen option id
         # (or None if dismissed). This replaces stringly-typed active_detail dispatch.
         self._picker_on_select: Callable[[str | None], None] | None = None
@@ -500,6 +514,13 @@ class TextualCommandConsoleApp(App[None]):
             self.append_message("system> Use /exit to quit the console.")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        if getattr(self, "pending_plan_review_feedback", None) is not None:
+            review = self.pending_plan_review_feedback
+            self.pending_plan_review_feedback = None
+            event.input.value = ""
+            self.resolve_pending_plan_review("revise", event.value, review=review)
+            return
+
         stripped = event.value.strip()
         if stripped.startswith("/"):
             parts = stripped.split(" ", 1)
@@ -616,6 +637,8 @@ class TextualCommandConsoleApp(App[None]):
             cancel_check=self.is_cancel_requested,
             mode=self.orchestrator_mode,
             prior_messages=self.prior_messages,
+            permission_mode=self.state.permission_mode,
+            plan_review_callback=self.review_proposed_plan,
         )
         self.last_result = result
         self.apply_run_result(result)
@@ -704,6 +727,80 @@ class TextualCommandConsoleApp(App[None]):
         self.append_permission_result(command, decision, False)
         return False
 
+    def review_proposed_plan(self, plan: str) -> PlanReview:
+        if self.can_wait_for_interactive_confirmation():
+            review = PendingPlanReview(plan=plan)
+            self.call_ui(self.open_pending_plan_review, review)
+            review.event.wait()
+            self.call_ui(self.close_pending_plan_review, review)
+            decision = review.decision or "cancel"
+            return PlanReview(decision=decision, feedback=review.feedback)
+        return PlanReview(decision="execute", feedback=None)
+
+    def open_pending_plan_review(self, review: PendingPlanReview) -> None:
+        self.pending_plan_review = review
+        self.active_detail = "plan_proposed"
+        self.detail_text = review.plan
+        self._append_message("system> A plan has been proposed. Please review the details in the pane on the right.")
+        self.present_picker(
+            [
+                ("Execute (Run the plan)", "execute"),
+                ("Revise (Provide feedback)", "revise"),
+                ("Cancel (Abort run)", "cancel"),
+            ],
+            on_select=self._select_plan_review,
+            title="Plan Proposed",
+        )
+
+    def resolve_pending_plan_review(self, decision: Literal["execute", "revise", "cancel"], feedback: str | None = None, review: PendingPlanReview | None = None) -> bool:
+        rev = review or self.pending_plan_review
+        if rev is None or rev.event.is_set():
+            return False
+        rev.decision = decision
+        rev.feedback = feedback
+        rev.event.set()
+        self.append_message(f"system> plan review submitted: {decision}" + (f" ({feedback})" if feedback else ""))
+        return True
+
+    def close_pending_plan_review(self, review: PendingPlanReview) -> None:
+        if self.pending_plan_review is review:
+            self.pending_plan_review = None
+            self._picker_on_select = None
+            self._dismiss_picker_widget()
+            try:
+                input_widget = self.query_one("#input", Input)
+                input_widget.disabled = False
+                input_widget.placeholder = "Type a task or slash command. Press Tab or Right arrow to complete."
+                input_widget.focus()
+            except Exception:
+                pass
+            if self.active_detail == "plan_proposed":
+                self.active_detail = "overview"
+                self.detail_text = (
+                    "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
+                )
+            self.refresh_snapshot()
+
+    def _select_plan_review(self, selected_id: str | None) -> None:
+        decision = selected_id or "cancel"
+        review = self.pending_plan_review
+        if review is None:
+            return
+
+        if decision == "revise":
+            self.pending_plan_review_feedback = review
+            self._dismiss_picker_widget()
+            try:
+                input_widget = self.query_one("#input", Input)
+                input_widget.placeholder = "Enter plan revision feedback and press Enter:"
+                input_widget.value = ""
+                input_widget.focus()
+            except Exception:
+                pass
+            self.refresh_snapshot()
+        else:
+            self.resolve_pending_plan_review(decision, None)
+
     def handle_slash_command(self, command_line: str, *, use_worker: bool = False) -> bool:
         command, _, argument = command_line.partition(" ")
         argument = argument.strip()
@@ -717,12 +814,12 @@ class TextualCommandConsoleApp(App[None]):
             self.action_clear()
             return True
         if command == "/allow":
-            if not self.resolve_pending_confirmation(True):
+            if not self.resolve_pending_confirmation(True) and not self.resolve_pending_plan_review("execute"):
                 self.next_confirm_response = True
                 self.append_message("system> next permission prompt will be allowed once")
             return True
         if command == "/deny":
-            if not self.resolve_pending_confirmation(False):
+            if not self.resolve_pending_confirmation(False) and not self.resolve_pending_plan_review("cancel"):
                 self.next_confirm_response = False
                 self.append_message("system> next permission prompt will be declined once")
             return True
@@ -793,6 +890,19 @@ class TextualCommandConsoleApp(App[None]):
             return True
         if command == "/evidence":
             self.print_evidence_summary()
+            return True
+        if command == "/perm":
+            if argument:
+                from xhx_agent.safety.permission_mode import permission_mode_from_string, permission_mode_title
+                new_mode = permission_mode_from_string(argument)
+                self.state.permission_mode = new_mode
+                self.append_message(f"system> 权限模式: {permission_mode_title(new_mode)}")
+                self.set_detail("perm", f"权限模式: {permission_mode_title(new_mode)}")
+            else:
+                from xhx_agent.safety.permission_mode import permission_mode_title
+                self.append_message(f"system> 当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})")
+                self.set_detail("perm", f"当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})")
+            self.refresh_snapshot()
             return True
         if command == "/diff":
             self.print_diff_summary()
@@ -1586,7 +1696,30 @@ class TextualCommandConsoleApp(App[None]):
         if event.option_list.id == "active_options":
             self.resolve_interactive_selection(event.option.id)
 
+    def action_cycle_permission_mode(self) -> None:
+        from xhx_agent.safety.permission_mode import next_permission_mode, permission_mode_title
+        new_mode = next_permission_mode(self.state.permission_mode)
+        self.state.permission_mode = new_mode
+        self.append_message(f"system> 权限模式: {permission_mode_title(new_mode)}")
+        self.refresh_snapshot()
+
     def on_key(self, event: events.Key) -> None:
+        if event.key == "shift+tab":
+            event.stop()
+            event.prevent_default()
+            self.action_cycle_permission_mode()
+            return
+        elif event.key == "tab":
+            event.stop()
+            event.prevent_default()
+            # 接受当前自动补全建议（与 Right 箭头同效），兑现占位文案“Press Tab … to complete”；
+            # 无建议时仅右移光标，且不触发 Textual 默认的焦点遍历。
+            try:
+                self.query_one("#input", Input).action_cursor_right()
+            except Exception:
+                pass
+            return
+
         # Unified wrap-around navigation for whichever picker is active. The list never holds
         # focus (the input does), so Arrow keys bubble here; we drive the WrappingOptionList,
         # whose action_cursor_* wrap at both ends.

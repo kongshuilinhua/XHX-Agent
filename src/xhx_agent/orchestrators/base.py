@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from xhx_agent.evidence.store import EvidenceStore
 from xhx_agent.repo_intel.scanner import ProjectScan
@@ -26,6 +26,11 @@ if TYPE_CHECKING:
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
+
+@dataclass
+class PlanReview:
+    decision: Literal["execute", "revise", "cancel"]
+    feedback: str | None = None
 
 # 当 git worktree 隔离不可用（非 git 仓库，或建 worktree 失败）而直接在用户工作区执行时抛出。
 # 这种模式下失败的运行会把文件改动留在原地，没有自动的基线回滚。
@@ -60,6 +65,7 @@ class OrchestratorContext:
     autonomous: bool = False
     assume_yes: bool = False
     confirm_callback: ConfirmationCallback | None = None
+    plan_review_callback: Callable[[str], PlanReview] | None = None
     auto_repair: bool = False
     cancel_check: CancelCheck | None = None
     event_callback: EventCallback | None = None

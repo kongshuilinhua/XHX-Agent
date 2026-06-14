@@ -118,3 +118,16 @@ def test_schema_validation_ok():
     reg = default_tool_registry()
     plan = ModelPlan(summary="s", status="continue", steps=[ToolStep(tool="read_file", arguments={"path": "a.py"})])
     reg.validate_plan(plan)
+
+
+def test_present_plan_tool_schema() -> None:
+    reg = default_tool_registry()
+    definition = reg.definition("present_plan")
+    assert definition is not None
+    assert definition.read_only is True
+    assert "plan" in definition.parameters["properties"]
+    assert "plan" in definition.parameters["required"]
+    assert "files_to_change" in definition.parameters["properties"]
+
+    plan = ModelPlan(summary="s", steps=[ToolStep(tool="present_plan", arguments={"plan": "my plan", "files_to_change": ["a.py"]})])
+    reg.validate_plan(plan)

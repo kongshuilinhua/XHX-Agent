@@ -30,6 +30,15 @@ PLAN_SYSTEM_PROMPT = (
 )
 
 
+PLAN_PHASE1_PROMPT = (
+    "You are xhx-agent in PLAN mode (Phase 1: Planning). First investigate the codebase using read-only tools "
+    "(search, read_file, repo_query, dispatch with agent_type='explore'). Once you have a clear plan, "
+    "you MUST call the `present_plan` tool with a detailed description of your proposed plan and the list of "
+    "files you intend to change. You CANNOT write files or run commands in this planning phase. After you call "
+    "`present_plan`, the user will review it. If approved, you will proceed to the execution phase."
+)
+
+
 class PlanOrchestrator:
     """plan 范式：Plan-and-Execute（tool-calling）。批量规划→执行→验证路由 + 有界自修复（≤2）。"""
 
@@ -48,11 +57,19 @@ class PlanOrchestrator:
         )
         if hasattr(client, "set_delta_callback"):
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
+
         schemas = ctx.kernel.tool_registry.tool_schemas()
+        phase1_schemas = []
+        for s in schemas:
+            name = s["function"]["name"]
+            definition = ctx.kernel.tool_registry.definition(name)
+            if definition and (definition.read_only or name == "present_plan"):
+                phase1_schemas.append(s)
+
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": PLAN_SYSTEM_PROMPT
+                "content": PLAN_PHASE1_PROMPT
                 + "\n\n"
                 + render_xhx_md(ctx.scan)
                 + render_recalled_memories(ctx.original_workspace, ctx.task),
@@ -67,9 +84,145 @@ class PlanOrchestrator:
         max_turns = load_config(ctx.original_workspace).max_loop_turns
         state: dict[str, Any] = {"answer": None}
 
-        status, turns_used = self._drive(
-            ctx, client, schemas, messages, changed_files, risks, max_turns, start_turn=1, state=state
-        )
+        # Phase 1: Read-only Planning
+        ctx.kernel.read_only_phase = True
+        turn = 1
+        status = "success"
+        proposed_plan = None
+        proposed_files = []
+        planning_active = True
+
+        while planning_active and turn <= max_turns:
+            if ctx.cancel_check and ctx.cancel_check():
+                status = "cancelled"
+                risks.append("Run cancelled before model call.")
+                break
+
+            try:
+                result = chat_and_count(ctx, client, messages, phase1_schemas, turn=turn)
+            except ModelClientError as exc:
+                ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
+                emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)
+                status = "failed"
+                risks.append(exc.message)
+                break
+
+            if not result.tool_calls:
+                answer = result.content or ""
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({
+                    "role": "user",
+                    "content": "Please propose your technical plan by calling the `present_plan` tool."
+                })
+                turn += 1
+                continue
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": result.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                        }
+                        for tc in result.tool_calls
+                    ],
+                }
+            )
+
+            def _run(tc, t=turn):
+                return _execute_tool_call_rich(ctx, tc, t)
+
+            reg = ctx.kernel.tool_registry
+
+            def _is_readonly(tc, reg=reg) -> bool:
+                d = reg.definition(tc.name)
+                return d is not None and d.read_only
+
+            all_readonly = len(result.tool_calls) >= 2 and all(_is_readonly(tc) for tc in result.tool_calls)
+            if all_readonly:
+                import concurrent.futures
+
+                emit_event(
+                    ctx.event_callback,
+                    "subagent_concurrent",
+                    f"Concurrently exploring {len(result.tool_calls)} read-only steps.",
+                    turn=turn,
+                    step_count=len(result.tool_calls),
+                )
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
+                    outcomes = list(pool.map(_run, result.tool_calls))
+            else:
+                outcomes = [_run(tc) for tc in result.tool_calls]
+
+            for tc, content, changed, meta in outcomes:
+                changed_files.extend(changed)
+                if meta:
+                    entry = ctx.evidence.write_evidence(
+                        meta["evidence_kind"],
+                        meta["evidence_source"],
+                        meta["evidence_summary"],
+                        f"trace://{meta['trace_id']}",
+                        confidence=0.9 if meta["evidence_kind"] == "patch" else 0.8,
+                    )
+                    if meta["evidence_kind"] == "patch":
+                        ctx.evidence.write_trace(
+                            "patch_evidence_binding",
+                            {
+                                "turn": turn,
+                                "tool_trace_id": meta["trace_id"],
+                                "evidence_id": entry.id,
+                                "changed_files": list(changed),
+                            },
+                        )
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
+
+            present_plan_call = next((tc for tc in result.tool_calls if tc.name == "present_plan"), None)
+            if present_plan_call:
+                proposed_plan = present_plan_call.arguments.get("plan", "")
+                proposed_files = present_plan_call.arguments.get("files_to_change", [])
+
+                decision = "execute"
+                feedback = None
+                if ctx.plan_review_callback is not None and not ctx.assume_yes:
+                    emit_event(ctx.event_callback, "plan_proposed", "Plan proposed by model.", plan=proposed_plan, files=proposed_files)
+                    review = ctx.plan_review_callback(proposed_plan)
+                    decision = review.decision
+                    feedback = review.feedback
+
+                if decision == "execute":
+                    planning_active = False
+                    ctx.kernel.read_only_phase = False
+                    messages.append({
+                        "role": "user",
+                        "content": f"Your plan has been approved. Please start executing the plan now using the `apply_patch` tool. Approved plan:\n{proposed_plan}"
+                    })
+                elif decision == "revise":
+                    messages.append({
+                        "role": "user",
+                        "content": f"Your proposed plan was rejected with feedback: {feedback}\nPlease revise your plan and call `present_plan` again."
+                    })
+                elif decision == "cancel":
+                    status = "cancelled"
+                    planning_active = False
+                    risks.append("Run cancelled by user review.")
+
+            turn += 1
+
+        if status == "success" and turn > max_turns and planning_active:
+            status = "failed"
+            risks.append(f"plan did not finish planning within {max_turns} turn(s).")
+
+        # Phase 2: Execution & Verification
+        if status == "success":
+            status, turns_used = self._drive(
+                ctx, client, schemas, messages, changed_files, risks, max_turns, start_turn=turn, state=state
+            )
+        else:
+            turns_used = turn - 1
+
         answer = state["answer"]
 
         verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, checkpoint_path, restore_plan_path = (

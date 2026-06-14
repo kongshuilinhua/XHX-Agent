@@ -45,10 +45,15 @@ def test_plan_registry() -> None:
 
 def test_plan_conversational_no_changes(tmp_path, monkeypatch) -> None:
     import xhx_agent.orchestrators.plan as planmod
-    from xhx_agent.models.types import ChatResult
+    from xhx_agent.models.types import ChatResult, ToolCall
 
     class _Fake:
+        def __init__(self):
+            self.i = 0
         def chat(self, messages, tools):
+            if self.i == 0:
+                self.i += 1
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "No changes needed", "files_to_change": []})])
             return ChatResult(content="Nothing to change; here is my analysis.", tool_calls=[])
 
     monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
@@ -68,15 +73,20 @@ def _fake_chat_factory(monkeypatch, seq):
     import xhx_agent.orchestrators.plan as planmod
     from xhx_agent.models.types import ChatResult, ToolCall
 
-    def _make(patch_or_text):
-        if patch_or_text is None:
-            return ChatResult(content="Done; the fix is applied and tests pass.", tool_calls=[])
-        return ChatResult(
+    results = [
+        ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": patch_or_text})],
+            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "Fix implementation", "files_to_change": ["src/calc.py"]})],
         )
-
-    results = [_make(item) for item in seq]
+    ]
+    for item in seq:
+        if item is None:
+            results.append(ChatResult(content="Done; the fix is applied and tests pass.", tool_calls=[]))
+        else:
+            results.append(ChatResult(
+                content=None,
+                tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": item})],
+            ))
 
     class _Fake:
         def __init__(self):
@@ -197,4 +207,198 @@ def test_plan_with_fenced_unified_diff_patch(tmp_path, monkeypatch):
     assert "src/calc.py" in res.changed_files
     assert res.verification == "passed"
     assert (workspace / "src" / "calc.py").read_text(encoding="utf-8") == "def add(a: int, b: int) -> int:\n    return a + b\n"
+
+
+def _flexible_chat_factory(monkeypatch, response_sequence):
+    import xhx_agent.orchestrators.plan as planmod
+
+    class _Fake:
+        def __init__(self):
+            self.i = 0
+
+        def chat(self, messages, tools):
+            r = response_sequence[min(self.i, len(response_sequence) - 1)]
+            self.i += 1
+            return r
+
+    monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
+
+
+def test_plan_orchestrator_two_phase_execute(tmp_path, monkeypatch) -> None:
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.orchestrators.base import PlanReview
+
+    workspace = _python_bug_workspace(tmp_path)
+
+    # 1. Proposes plan (present_plan)
+    # 2. Applies patch
+    # 3. Done
+    responses = [
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": _FIX_PATCH})],
+        ),
+        ChatResult(content="Done!", tool_calls=[]),
+    ]
+    _flexible_chat_factory(monkeypatch, responses)
+
+    review_calls = []
+    def plan_review_cb(plan_text: str) -> PlanReview:
+        review_calls.append(plan_text)
+        return PlanReview(decision="execute")
+
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test",
+        profile_name="mock",
+        mode="plan",
+        assume_yes=False,
+        confirm_callback=lambda c, p: True,
+        plan_review_callback=plan_review_cb,
+    )
+
+    assert res.status == "success"
+    assert "src/calc.py" in res.changed_files
+    assert res.verification == "passed"
+    assert len(review_calls) == 1
+    assert "Fix calc.py" in review_calls[0]
+
+
+def test_plan_orchestrator_two_phase_revise(tmp_path, monkeypatch) -> None:
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.orchestrators.base import PlanReview
+
+    workspace = _python_bug_workspace(tmp_path)
+
+    # 1. Proposes bad plan (present_plan)
+    # 2. After feedback, proposes correct plan (present_plan)
+    # 3. Applies patch
+    # 4. Done
+    responses = [
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Bad plan", "files_to_change": []})],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p2", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": _FIX_PATCH})],
+        ),
+        ChatResult(content="Done!", tool_calls=[]),
+    ]
+    _flexible_chat_factory(monkeypatch, responses)
+
+    review_decisions = [
+        PlanReview(decision="revise", feedback="propose a better plan"),
+        PlanReview(decision="execute"),
+    ]
+    review_calls = []
+
+    def plan_review_cb(plan_text: str) -> PlanReview:
+        review_calls.append(plan_text)
+        return review_decisions.pop(0)
+
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test",
+        profile_name="mock",
+        mode="plan",
+        assume_yes=False,
+        confirm_callback=lambda c, p: True,
+        plan_review_callback=plan_review_cb,
+    )
+
+    assert res.status == "success"
+    assert "src/calc.py" in res.changed_files
+    assert len(review_calls) == 2
+    assert review_calls[0] == "Bad plan"
+    assert review_calls[1] == "Fix calc.py"
+
+
+def test_plan_orchestrator_two_phase_cancel(tmp_path, monkeypatch) -> None:
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.orchestrators.base import PlanReview
+
+    workspace = _python_bug_workspace(tmp_path)
+
+    # 1. Proposes plan (present_plan)
+    # 2. If it is run after cancel, it shouldn't execute
+    responses = [
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+        ),
+        ChatResult(content="Done!", tool_calls=[]),
+    ]
+    _flexible_chat_factory(monkeypatch, responses)
+
+    review_calls = []
+    def plan_review_cb(plan_text: str) -> PlanReview:
+        review_calls.append(plan_text)
+        return PlanReview(decision="cancel")
+
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test",
+        profile_name="mock",
+        mode="plan",
+        assume_yes=False,
+        confirm_callback=lambda c, p: True,
+        plan_review_callback=plan_review_cb,
+    )
+
+    assert res.status == "cancelled"
+    assert not res.changed_files
+    assert len(review_calls) == 1
+
+
+def test_plan_orchestrator_phase1_read_only_enforced(tmp_path, monkeypatch) -> None:
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.orchestrators.base import PlanReview
+
+    workspace = _python_bug_workspace(tmp_path)
+
+    # 1. Tries to apply patch in Phase 1 (should be blocked)
+    # 2. Model handles the error, calls present_plan
+    # 3. Model applies patch in Phase 2 (approved)
+    # 4. Done
+    responses = [
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="c0", name="apply_patch", arguments={"patch": _FIX_PATCH})],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+        ),
+        ChatResult(
+            content=None,
+            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": _FIX_PATCH})],
+        ),
+        ChatResult(content="Done!", tool_calls=[]),
+    ]
+    _flexible_chat_factory(monkeypatch, responses)
+
+    review_calls = []
+    def plan_review_cb(plan_text: str) -> PlanReview:
+        review_calls.append(plan_text)
+        return PlanReview(decision="execute")
+
+    res = RuntimeApp(workspace).run_task(
+        "fix the failing test",
+        profile_name="mock",
+        mode="plan",
+        assume_yes=False,
+        confirm_callback=lambda c, p: True,
+        plan_review_callback=plan_review_cb,
+    )
+
+    assert res.status == "success"
+    assert "src/calc.py" in res.changed_files
+    assert len(review_calls) == 1
+
 

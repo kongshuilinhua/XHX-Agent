@@ -1,12 +1,12 @@
 from xhx_agent.runtime.session import (
     SessionEntry,
     format_follow_up,
+    format_session_meta,
     list_sessions,
     load_latest_session,
     load_session,
-    record_session,
-    format_session_meta,
     prune_legacy_sessions,
+    record_session,
 )
 
 
@@ -131,7 +131,7 @@ def test_list_conversations_collapses_turns_of_one_conversation(tmp_path) -> Non
 
 
 def test_view_log_roundtrip(tmp_path) -> None:
-    from xhx_agent.runtime.session import save_view_log, load_view_log
+    from xhx_agent.runtime.session import load_view_log, save_view_log
     lines = ["user> hi", "  ⟶ tool search", "assistant> ok"]
     rel = save_view_log(tmp_path, "run-v", lines)
     assert rel.endswith("run-v.view.json")
@@ -215,8 +215,9 @@ def test_resolve_run_id_miss() -> None:
 
 
 def test_format_session_line_shape() -> None:
+    from datetime import UTC, datetime, timedelta
+
     from xhx_agent.runtime.session import format_session_line
-    from datetime import datetime, UTC, timedelta
     now = datetime.now(UTC)
 
     # 1. Just now
@@ -245,7 +246,7 @@ def test_format_session_line_shape() -> None:
 
 
 def test_format_session_meta() -> None:
-    from datetime import datetime, UTC, timedelta
+    from datetime import UTC, datetime, timedelta
     now = datetime.now(UTC)
 
     # 1. 5 minutes ago, status="success", turn_count=3, run_id="run-12345678"

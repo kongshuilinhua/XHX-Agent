@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
 from xhx_agent.skills.hooks import hooks_manager
@@ -14,7 +14,7 @@ from xhx_agent.tools.patch import PatchResult, apply_patch
 from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
 
-ToolName = Literal["search", "read_file", "apply_patch", "repo_query"]
+ToolName = Literal["search", "read_file", "apply_patch", "repo_query", "present_plan"]
 
 
 class ToolExecutionResult(BaseModel):
@@ -32,6 +32,8 @@ class ToolExecutionResult(BaseModel):
 class ToolContext(BaseModel):
     workspace: Path
     max_file_bytes: int = 200_000
+    allowed_dirs: list[Path] = Field(default_factory=list)
+    permission_mode: str = "default"
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -170,6 +172,29 @@ class ToolDefinition:
 
 
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
+    "present_plan": ToolDefinition(
+        name="present_plan",
+        description="提交最终设计规划给用户进行确认。提交后将进入两段式的执行确认环节。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "plan": {"type": "string", "description": "拟定好的技术实现计划描述。"},
+                "files_to_change": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "计划要修改的文件路径列表。"
+                }
+            },
+            "required": ["plan"],
+        },
+        read_only=True,
+        runner=lambda ctx, args: ToolExecutionResult(
+            tool="present_plan",
+            status="success",
+            summary="实现计划已成功呈报，等待用户核准...",
+            trace_payload={"tool": "present_plan", **args},
+        ),
+    ),
     "search": ToolDefinition(
         name="search",
         description="在仓库内按文本搜索，返回匹配的文件/行。只读。",

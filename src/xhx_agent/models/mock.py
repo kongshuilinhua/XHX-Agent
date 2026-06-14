@@ -9,6 +9,22 @@ class MockModelClient:
     """Deterministic v0.1 planner for fixtures and local smoke tests."""
 
     def chat(self, messages: list[dict], tools: list[dict]) -> ChatResult:
+        has_present_plan_tool = any(t.get("function", {}).get("name") == "present_plan" for t in tools)
+        has_present_plan = False
+        for m in messages:
+            if m.get("role") == "assistant" and "tool_calls" in m:
+                for tc in m["tool_calls"]:
+                    func = tc.get("function") or {}
+                    if func.get("name") == "present_plan":
+                        has_present_plan = True
+                        break
+
+        if has_present_plan_tool and not has_present_plan:
+            return ChatResult(
+                content=None,
+                tool_calls=[ToolCall(id="mock_plan_call", name="present_plan", arguments={"plan": "Mock plan summary", "files_to_change": []})],
+            )
+
         has_tool_result = any(m.get("role") == "tool" for m in messages)
         last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
         edit_words = ("fix", "修", "改", "加", "patch", "refactor", "重构")

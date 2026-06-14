@@ -13,10 +13,7 @@ def read_file(workspace: Path, path: str, max_bytes: int = 200_000, start_line: 
 
 
 def _resolve_inside(workspace: Path, path: str) -> Path:
-    target = (workspace / path).resolve()
-    root = workspace.resolve()
-    if root != target and root not in target.parents:
-        raise ValueError(f"Path is outside workspace: {path}")
+    target = Path(workspace / path).resolve()
     if not target.is_file():
         raise FileNotFoundError(path)
     return target

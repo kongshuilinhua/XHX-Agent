@@ -34,6 +34,7 @@ class ProjectConfig(BaseModel):
     max_parallel_subagents: int = 4  # graph DAG 并发执行的子 agent 数上限，防嵌套 LLM 调用烧 token/撞限流
     max_graph_replans: int = 2  # graph joiner 判定不合格时回 planner 重规划的最多轮数（0=禁用 replan，单轮收尾）；防来回烧 token
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    default_permission_mode: str = "default"  # 默认权限模式 (default, auto, bypass)
 
 
 

@@ -13,6 +13,8 @@ from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
 from xhx_agent.safety.policy import PolicyDecision, decide_tool
+from xhx_agent.safety.risk import RiskLevel
+from xhx_agent.tools.paths import extract_glob_root, resolve_with_scope
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
 
@@ -27,24 +29,149 @@ class SafeExecutionKernel:
         self.run_id = run_id
         self.evidence = evidence
         self.tool_registry = tool_registry
+        self.read_only_phase: bool = False
 
     def execute_tool(
         self,
         context: ToolContext,
         step,
         turn: int,
+        confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
     ) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision]:
         d = self.tool_registry.definition(step.tool)
+        is_read_only = bool(d and d.read_only)
+
+        # 0. 只读规划阶段硬拦任何写/命令工具
+        if self.read_only_phase and not is_read_only:
+            reason = f"工具 {step.tool} 在计划规划(只读)阶段被拦截"
+            self.record_policy("tool", step.tool, PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason), {"turn": turn, "tool": step.tool}, event_callback)
+            return (
+                ToolExecutionResult(
+                    tool=step.tool,
+                    status="denied",
+                    summary=reason,
+                    trace_payload={"tool": step.tool, "status": "denied", "error": reason},
+                ),
+                None,
+                PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
+            )
+
+        # 1. 策略判定
         policy = decide_tool(
             step.tool,
-            read_only=bool(d and d.read_only),
+            read_only=is_read_only,
             destructive=bool(d and d.destructive),
         )
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
             # 被拒工具到此为止：不产生 tool_call、不执行；但上面已记 policy_decision，审计链完整。
             return None, None, policy
+
+        # 2. 路径越界预检与授权裁决
+        out_of_scope_paths = []
+        is_write = not is_read_only
+
+        if step.tool == "read_file":
+            path_arg = step.arguments.get("path")
+            if path_arg:
+                res = resolve_with_scope(context.workspace, context.allowed_dirs, path_arg)
+                if not res.in_scope:
+                    out_of_scope_paths.append(res)
+        elif step.tool == "search":
+            glob_arg = step.arguments.get("glob")
+            if glob_arg:
+                glob_root = extract_glob_root(context.workspace, glob_arg)
+                res = resolve_with_scope(context.workspace, context.allowed_dirs, glob_root)
+                if not res.in_scope:
+                    out_of_scope_paths.append(res)
+        elif step.tool == "apply_patch":
+            patch_arg = step.arguments.get("patch")
+            if patch_arg:
+                from xhx_agent.tools.patch import _parse_patch
+                try:
+                    ops = _parse_patch(patch_arg)
+                    for op in ops:
+                        res = resolve_with_scope(context.workspace, context.allowed_dirs, op.path)
+                        if not res.in_scope:
+                            out_of_scope_paths.append(res)
+                except Exception:
+                    pass
+
+        # 越界裁决
+        if out_of_scope_paths:
+            mode = context.permission_mode or "default"
+            for path_scope in out_of_scope_paths:
+                outside_root = path_scope.outside_root
+                if not outside_root:
+                    continue
+                outside_root_resolved = Path(outside_root).resolve()
+
+                # 裁决动作
+                allowed = False
+                if mode == "bypass":
+                    allowed = True
+                elif mode == "auto":
+                    allowed = not is_write
+                else:
+                    allowed = False  # default 模式下必须弹框
+
+                if allowed:
+                    if outside_root_resolved not in context.allowed_dirs:
+                        context.allowed_dirs.append(outside_root_resolved)
+                    self.record_policy(
+                        "path_scope",
+                        str(outside_root_resolved),
+                        PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Auto-allowed out-of-scope path under {mode} mode"),
+                        {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
+                        event_callback
+                    )
+                else:
+                    # 越界询问
+                    prompt = f"允许{'修改' if is_write else '读取'}工作区外目录?\n{outside_root_resolved}"
+                    decision_p = PolicyDecision(
+                        decision="confirm",
+                        risk=RiskLevel.CONFIRM,
+                        reason=f"Path is outside workspace under {mode} mode",
+                        requires_user=True,
+                    )
+
+                    confirmed = False
+                    if confirm_callback is not None:
+                        confirmed = confirm_callback(prompt, decision_p)
+
+                    if confirmed:
+                        if outside_root_resolved not in context.allowed_dirs:
+                            context.allowed_dirs.append(outside_root_resolved)
+                        self.record_policy(
+                            "path_scope",
+                            str(outside_root_resolved),
+                            PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason="User allowed out-of-scope path access"),
+                            {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
+                            event_callback
+                        )
+                    else:
+                        # 拒绝访问，返回干净的 denied 结果
+                        reason = f"用户拒绝访问工作区外路径: {outside_root_resolved}"
+                        self.record_policy(
+                            "path_scope",
+                            str(outside_root_resolved),
+                            PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
+                            {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
+                            event_callback
+                        )
+                        return (
+                            ToolExecutionResult(
+                                tool=step.tool,
+                                status="denied",
+                                summary=reason,
+                                trace_payload={"tool": step.tool, "status": "denied", "error": reason},
+                            ),
+                            None,
+                            PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
+                        )
+
+        # 3. 正常执行
         trace = self.evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
         result = self.tool_registry.execute(context, step)
         self.evidence.write_trace("tool_result", {"turn": turn, **result.trace_payload})
@@ -82,6 +209,13 @@ class SafeExecutionKernel:
         confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
     ) -> TerminalResult:
+        if self.read_only_phase:
+            policy = PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason="Blocked in read-only phase")
+            result = TerminalResult(status="deny", exit_code=None, stdout="", stderr="", policy=policy, summary="Blocked in read-only phase")
+            self.record_policy("terminal", command, policy, {"command": command}, event_callback)
+            self.evidence.write_trace("verification", result.model_dump())
+            return result
+
         result = run_terminal(
             self.workspace,
             command,
@@ -110,6 +244,17 @@ class SafeExecutionKernel:
         turn: int = 0,
     ) -> ToolExecutionResult:
         """命令工具（terminal/verify）的执行入口：过 decide_terminal 命令级闸门 + confirm，跑命令，转成 ToolExecutionResult。"""
+        if self.read_only_phase:
+            reason = f"命令执行在计划规划(只读)阶段被拦截: {command}"
+            self.record_policy("terminal", command, PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason), {"turn": turn, "command": command}, event_callback)
+            return ToolExecutionResult(
+                tool="terminal",
+                status="denied",
+                summary=reason,
+                trace_payload={"tool": "terminal", "command": command, "status": "denied", "error": reason},
+                error=reason,
+            )
+
         result = run_terminal(self.workspace, command, assume_yes=assume_yes, confirm_callback=confirm_callback)
         self.record_policy("terminal", command, result.policy, {"turn": turn, "command": command}, event_callback)
         self.evidence.write_trace(

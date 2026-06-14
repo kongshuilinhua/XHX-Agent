@@ -24,7 +24,7 @@ from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
-from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext
+from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext, PlanReview
 from xhx_agent.orchestrators.registry import select_orchestrator
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
@@ -108,6 +108,7 @@ class RuntimeApp:
     def __init__(self, workspace: Path | None = None, tool_registry: ToolRegistry | None = None) -> None:
         self.workspace = (workspace or Path.cwd()).resolve()
         self.tool_registry = tool_registry or default_tool_registry()
+        self.allowed_dirs: list[Path] = []
 
     def init_project(self) -> InitResult:
         ensure_xhx_dirs(self.workspace)
@@ -134,6 +135,8 @@ class RuntimeApp:
         cancel_check: CancelCheck | None = None,
         mode: str | None = None,
         prior_messages: list[dict] | None = None,
+        permission_mode: str | None = None,
+        plan_review_callback: Callable[[str], PlanReview] | None = None,
     ) -> RunResult:
         """任务总入口：worktree 隔离 → 选编排器 → 运行 → 成功则同步回主工作区。"""
         start_time = time.time()
@@ -171,7 +174,15 @@ class RuntimeApp:
                     "Load project configuration.",
                     f"Scan project languages: {', '.join(scan.detected_languages) or 'unknown'}.",
                 ]
-                tool_context = ToolContext(workspace=self.workspace, max_file_bytes=config.max_file_bytes)
+                tool_context = ToolContext(
+                    workspace=self.workspace,
+                    max_file_bytes=config.max_file_bytes,
+                    permission_mode=permission_mode or config.default_permission_mode,
+                )
+                # 共享同一个 allowed_dirs 列表对象：pydantic 会把构造参数复制成新列表，
+                # 构造后显式赋同一引用，使内核运行期授权的工作区外目录回流到 app 级，
+                # 同一会话后续 run 不再对已授权目录重复弹框。
+                tool_context.allowed_dirs = self.allowed_dirs
 
                 if cancel_requested(cancel_check):
                     return self._cancelled_before_planning(
@@ -201,6 +212,7 @@ class RuntimeApp:
                     mode=mode or "loop",
                     assume_yes=assume_yes,
                     confirm_callback=confirm_callback,
+                    plan_review_callback=plan_review_callback,
                     auto_repair=auto_repair,
                     cancel_check=cancel_check,
                     event_callback=event_callback,

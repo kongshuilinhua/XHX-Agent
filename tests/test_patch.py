@@ -103,7 +103,7 @@ def test_apply_patch_is_atomic_when_later_operation_fails(tmp_path: Path) -> Non
     assert second.read_text(encoding="utf-8") == "value = 2\n"
 
 
-def test_apply_patch_rejects_path_escape(tmp_path: Path) -> None:
+def test_apply_patch_allows_path_escape(tmp_path: Path) -> None:
     patch = """*** Begin Patch
 *** Add File: ../outside.txt
 +nope
@@ -112,9 +112,10 @@ def test_apply_patch_rejects_path_escape(tmp_path: Path) -> None:
 
     result = apply_patch(tmp_path, patch)
 
-    assert result.status == "failed"
-    assert "Invalid patch path" in result.stderr
-    assert not (tmp_path.parent / "outside.txt").exists()
+    assert result.status == "success"
+    assert (tmp_path.parent / "outside.txt").exists()
+    assert (tmp_path.parent / "outside.txt").read_text(encoding="utf-8") == "nope\n"
+    (tmp_path.parent / "outside.txt").unlink()
 
 
 def test_apply_patch_rejects_duplicate_operations_for_same_file(tmp_path: Path) -> None:

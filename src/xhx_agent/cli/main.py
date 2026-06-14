@@ -35,6 +35,7 @@ from xhx_agent.runtime.session import (
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
 
+
 def _ensure_utf8_console() -> None:
     """把 Windows 控制台切到 UTF-8，再构建 Rich Console。
 
@@ -445,9 +446,9 @@ def compact(
     config = load_config(workspace)
     active_profile = profile or config.default_profile
 
-    from xhx_agent.runtime.profiles import get_profile
-    from xhx_agent.models.routing import resolve_profile_for_role
     from xhx_agent.models import build_chat_client
+    from xhx_agent.models.routing import resolve_profile_for_role
+    from xhx_agent.runtime.profiles import get_profile
 
     try:
         prof = get_profile(workspace, active_profile)

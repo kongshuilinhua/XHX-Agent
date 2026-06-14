@@ -1,13 +1,6 @@
-from rich.console import Console
 
-from xhx_agent.cli.completion import XhxCompleter
 from xhx_agent.memory.extract import parse_memory_candidates, propose_memories
-from xhx_agent.memory.store import MemoryRecord
 from xhx_agent.models.mock import MockModelClient
-from xhx_agent.runtime.app import RunResult, RuntimeApp
-
-
-
 
 
 def test_checkpoint_1_strict_parsing():
