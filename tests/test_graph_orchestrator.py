@@ -567,6 +567,466 @@ def test_graph_replan_reedits_same_file_across_rounds(tmp_path, monkeypatch):
     assert foo_file.read_text(encoding="utf-8") == "line1\nline2\n"
 
 
+def test_graph_runs_real_verification_on_changes(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.verification.router import VerificationCommand, VerificationPlan
+
+    # 1. Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    init_file = tmp_path / "init.txt"
+    init_file.write_text("initial commit file", encoding="utf-8")
+    subprocess.run(["git", "add", "init.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # 2. Graph Fake Client
+    class FakeGraphClient:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit file", "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: passed" in summary
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # 3. Subagent Fake Client
+    import textwrap
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            if "edit file" in user_msg:
+                patch = textwrap.dedent("""\
+                    --- a/init.txt
+                    +++ b/init.txt
+                    @@ -1,1 +1,2 @@
+                     initial commit file
+                    +new change
+                    """)
+                return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                    "patch": patch
+                })])
+            return ChatResult(content="Done", tool_calls=[])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    # Mock infer_verification to run a stable, fast Python process that exits with 0
+    dummy_cmd = "python -m pytest --version"
+    def mock_infer_verification(workspace, changed_files=None):
+        return VerificationPlan(commands=[VerificationCommand(command=dummy_cmd, reason="test mock")])
+
+    monkeypatch.setattr("xhx_agent.verification.router.infer_verification", mock_infer_verification)
+
+    result = RuntimeApp(tmp_path).run_task("do a change", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert dummy_cmd in result.commands
+    assert len(result.verification_results) == 1
+    assert result.verification_results[0].status == "success"
+
+
+def test_graph_verification_skipped_when_no_changes(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    # Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    init_file = tmp_path / "init.txt"
+    init_file.write_text("initial commit file", encoding="utf-8")
+    subprocess.run(["git", "add", "init.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # Graph Fake Client (explore-only)
+    class FakeGraphClient:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "explore", "prompt": "just explore", "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: skipped_no_changes" in summary
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # Subagent Fake Client
+    import xhx_agent.orchestrators.subagent as subagentmod
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            return ChatResult(content="Explored", tool_calls=[])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    result = RuntimeApp(tmp_path).run_task("do explore", assume_yes=True, mode="graph")
+    assert result.status == "success"
+    assert result.verification == "skipped_no_changes"
+    assert result.commands == []
+
+
+def test_graph_verification_failed_surfaces(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.verification.router import VerificationCommand, VerificationPlan
+
+    # Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    init_file = tmp_path / "init.txt"
+    init_file.write_text("initial commit file", encoding="utf-8")
+    subprocess.run(["git", "add", "init.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # Graph Fake Client
+    class FakeGraphClient:
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit file", "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: failed" in summary
+                assert "Verification failure output:" in summary
+                assert any(x in summary.lower() for x in ["unrecognized", "usage", "option", "invalid"])
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "failed but done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # Subagent Fake Client
+    import textwrap
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            if "edit file" in user_msg:
+                patch = textwrap.dedent("""\
+                    --- a/init.txt
+                    +++ b/init.txt
+                    @@ -1,1 +1,2 @@
+                     initial commit file
+                    +new change
+                    """)
+                return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                    "patch": patch
+                })])
+            return ChatResult(content="Done", tool_calls=[])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    # Mock infer_verification to run a failing Python process
+    dummy_cmd = "python -m pytest --invalid-option-xyz"
+    def mock_infer_verification(workspace, changed_files=None):
+        return VerificationPlan(commands=[VerificationCommand(command=dummy_cmd, reason="test mock fail")])
+
+    monkeypatch.setattr("xhx_agent.verification.router.infer_verification", mock_infer_verification)
+
+    result = RuntimeApp(tmp_path).run_task("do a change", assume_yes=True, mode="graph")
+    # status is success because DAG nodes ran successfully, even though verification failed
+    assert result.status == "success"
+    assert result.verification == "failed"
+    assert dummy_cmd in result.commands
+    assert len(result.verification_results) == 1
+    assert result.verification_results[0].status == "failed"
+
+
+def test_graph_repairs_on_verification_failure(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    # Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    # Place a target file and a test file
+    calc_file = tmp_path / "calc.py"
+    calc_file.write_text("def add(a, b):\n    pass\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_calc.py"
+    test_file.write_text("from calc import add\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+    subprocess.run(["git", "add", "calc.py", "tests/test_calc.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # Graph Fake Client
+    class FakeGraphClient:
+        def __init__(self):
+            self.calls = 0
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                self.calls += 1
+                prompt = "edit calc.py incorrectly" if self.calls == 1 else "edit calc.py correctly"
+                node_id = f"n{self.calls}"
+                return ChatResult(content=None, tool_calls=[ToolCall(id=f"p{self.calls}", name="submit_dag", arguments={
+                    "nodes": [{"id": node_id, "agent_type": "edit", "prompt": prompt, "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: passed" in summary
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "final done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # Subagent Fake Client
+    import textwrap
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            if "incorrect" in user_msg:
+                patch = textwrap.dedent("""\
+                    --- a/calc.py
+                    +++ b/calc.py
+                    @@ -1,2 +1,2 @@
+                     def add(a, b):
+                    -    pass
+                    +    return a - b
+                    """)
+                return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                    "patch": patch
+                })])
+            elif "correct" in user_msg:
+                patch = textwrap.dedent("""\
+                    --- a/calc.py
+                    +++ b/calc.py
+                    @@ -1,2 +1,2 @@
+                     def add(a, b):
+                    -    return a - b
+                    +    return a + b
+                    """)
+                return ChatResult(content=None, tool_calls=[ToolCall(id="c2", name="apply_patch", arguments={
+                    "patch": patch
+                })])
+            return ChatResult(content="Done", tool_calls=[])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    result = RuntimeApp(tmp_path).run_task("fix calc", assume_yes=True, auto_repair=True, mode="graph")
+    assert result.status == "success"
+    assert result.verification == "passed"
+    assert fgc.calls == 2
+    assert result.repair_attempts == 1
+    assert "calc.py" in result.changed_files
+    assert calc_file.read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+
+def test_graph_no_repair_when_auto_repair_off(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    # Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    calc_file = tmp_path / "calc.py"
+    calc_file.write_text("def add(a, b):\n    pass\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_calc.py"
+    test_file.write_text("from calc import add\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+    subprocess.run(["git", "add", "calc.py", "tests/test_calc.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # Graph Fake Client
+    class FakeGraphClient:
+        def __init__(self):
+            self.calls = 0
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                self.calls += 1
+                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="submit_dag", arguments={
+                    "nodes": [{"id": "n1", "agent_type": "edit", "prompt": "edit calc.py incorrectly", "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: failed" in summary
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "failed but done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # Subagent Fake Client
+    import textwrap
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            if "incorrect" in user_msg:
+                patch = textwrap.dedent("""\
+                    --- a/calc.py
+                    +++ b/calc.py
+                    @@ -1,2 +1,2 @@
+                     def add(a, b):
+                    -    pass
+                    +    return a - b
+                    """)
+                return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                    "patch": patch
+                })])
+            return ChatResult(content="Done", tool_calls=[])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    # auto_repair is False by default
+    result = RuntimeApp(tmp_path).run_task("fix calc", assume_yes=True, auto_repair=False, mode="graph")
+    assert result.status == "success"
+    assert result.verification == "failed"
+    assert fgc.calls == 1
+    assert result.repair_attempts == 0
+    assert result.restore_plan_path is not None
+
+
+def test_graph_repair_budget_exhausted(tmp_path, monkeypatch):
+    import subprocess
+
+    import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    # Setup git repository
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+
+    calc_file = tmp_path / "calc.py"
+    calc_file.write_text("def add(a, b):\n    pass\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_calc.py"
+    test_file.write_text("from calc import add\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+    subprocess.run(["git", "add", "calc.py", "tests/test_calc.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    RuntimeApp(tmp_path).init_project()
+
+    # Graph Fake Client
+    class FakeGraphClient:
+        def __init__(self):
+            self.calls = 0
+        def chat(self, messages, tools):
+            system = messages[0]["content"]
+            if "PLANNER" in system:
+                self.calls += 1
+                node_id = f"n{self.calls}"
+                return ChatResult(content=None, tool_calls=[ToolCall(id=f"p{self.calls}", name="submit_dag", arguments={
+                    "nodes": [{"id": node_id, "agent_type": "edit", "prompt": "edit calc.py incorrectly", "deps": []}]
+                })])
+            if "JOINER" in system:
+                summary = next(m["content"] for m in messages if m["role"] == "user")
+                assert "Verification result: failed" in summary
+                return ChatResult(content=None, tool_calls=[ToolCall(id="j1", name="finish", arguments={
+                    "text": "failed but done"
+                })])
+            raise AssertionError(f"Unexpected: {messages}")
+
+    fgc = FakeGraphClient()
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: fgc)
+
+    # Subagent Fake Client
+    import textwrap
+    class FakeChildClient:
+        def chat(self, messages, tools):
+            # Always return a broken implementation
+            patch = textwrap.dedent("""\
+                --- a/calc.py
+                +++ b/calc.py
+                @@ -1,2 +1,2 @@
+                 def add(a, b):
+                -    pass
+                +    return a - b - 1
+                """)
+            return ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
+                "patch": patch
+            })])
+
+    fcc = FakeChildClient()
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: fcc)
+
+    # max_graph_replans is 2 by default. So 1 initial planning + 2 repair attempts.
+    result = RuntimeApp(tmp_path).run_task("fix calc", assume_yes=True, auto_repair=True, mode="graph")
+    assert result.status == "success"
+    assert result.verification == "failed"
+    # 1 initial planner call + 2 repair planner calls = 3 total calls
+    assert fgc.calls == 3
+    assert result.repair_attempts == 2
+    assert result.restore_plan_path is not None
+
+
+
+
 
 
 
