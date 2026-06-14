@@ -35,6 +35,7 @@ from xhx_agent.runtime.session import (
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.tui.textual_app import run_textual_console
 
+
 def _ensure_utf8_console() -> None:
     """把 Windows 控制台切到 UTF-8，再构建 Rich Console。
 
@@ -153,7 +154,10 @@ def run(
     ] = None,
     mode: Annotated[
         str | None,
-        typer.Option("--mode", help="Orchestrator paradigm: loop | plan | graph (linear = auto-classify fallback; default: auto-classified)."),
+        typer.Option(
+            "--mode",
+            help="Orchestrator paradigm: loop | plan | graph (linear = auto-classify fallback; default: auto-classified).",
+        ),
     ] = None,
 ) -> None:
     runtime = RuntimeApp()
@@ -250,9 +254,7 @@ def sessions() -> None:
 
 @app.command("chat")
 def chat(
-    profile: Annotated[
-        str | None, typer.Option("--profile", help="Model profile name.")
-    ] = None,
+    profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
 ) -> None:
     workspace = Path.cwd()
     config = load_config(workspace)
@@ -262,12 +264,8 @@ def chat(
 
 @app.command("tui")
 def tui(
-    fullscreen: Annotated[
-        bool, typer.Option("--fullscreen", help="Deprecated: fullscreen is now the default.")
-    ] = True,
-    profile: Annotated[
-        str | None, typer.Option("--profile", help="Model profile name.")
-    ] = None,
+    fullscreen: Annotated[bool, typer.Option("--fullscreen", help="Deprecated: fullscreen is now the default.")] = True,
+    profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
 ) -> None:
     workspace = Path.cwd()
     config = load_config(workspace)
@@ -410,11 +408,13 @@ def benchmark(
 @app.command("memory")
 def memory() -> None:
     from xhx_agent.memory import list_memories
+
     memories = list_memories(Path.cwd())
     if not memories:
         console.print("No memories recorded yet.")
         return
     from rich.table import Table
+
     table = Table(title="Memories")
     table.add_column("Name")
     table.add_column("Type")
@@ -427,7 +427,9 @@ def memory() -> None:
 @app.command("compact")
 def compact(
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
-    instructions: Annotated[str | None, typer.Option("--instructions", help="Focus/instructions for the summary.")] = None,
+    instructions: Annotated[
+        str | None, typer.Option("--instructions", help="Focus/instructions for the summary.")
+    ] = None,
 ) -> None:
     """Manually compact the message history transcript of the latest session."""
     runtime = RuntimeApp()
@@ -445,15 +447,13 @@ def compact(
     config = load_config(workspace)
     active_profile = profile or config.default_profile
 
-    from xhx_agent.runtime.profiles import get_profile
-    from xhx_agent.models.routing import resolve_profile_for_role
     from xhx_agent.models import build_chat_client
+    from xhx_agent.models.routing import resolve_profile_for_role
+    from xhx_agent.runtime.profiles import get_profile
 
     try:
         prof = get_profile(workspace, active_profile)
-        summarizer = build_chat_client(
-            resolve_profile_for_role(workspace, "summarize", prof.name)
-        )
+        summarizer = build_chat_client(resolve_profile_for_role(workspace, "summarize", prof.name))
         summarize_fn = getattr(summarizer, "summarize", None)
     except Exception as e:
         console.print(f"[red]Failed to initialize summarizer: {e}[/red]")
@@ -464,6 +464,7 @@ def compact(
         return
 
     from xhx_agent.orchestrators.compaction import compact_messages
+
     len_before = len(messages)
     try:
         compacted = compact_messages(
@@ -479,9 +480,10 @@ def compact(
     len_after = len(compacted)
     if len_after < len_before:
         from xhx_agent.runtime.session import save_transcript
+
         save_transcript(workspace, previous.run_id, compacted)
-        console.print(f"[green]Successfully compacted session {previous.run_id} from {len_before} to {len_after} messages.[/green]")
+        console.print(
+            f"[green]Successfully compacted session {previous.run_id} from {len_before} to {len_after} messages.[/green]"
+        )
     else:
         console.print("[yellow]No messages were compacted (already compacted or too short).[/yellow]")
-
-

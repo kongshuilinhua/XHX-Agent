@@ -45,18 +45,14 @@ def test_checkpoint_2_routing(monkeypatch):
     monkeypatch.setattr(submod, "run_write_subagent", fake_run_write)
     monkeypatch.setattr(submod, "run_subagent", fake_run_subagent)
 
-    ctx = SimpleNamespace(
-        event_callback=None,
-        evidence=MagicMock(),
-        kernel=MagicMock()
-    )
+    ctx = SimpleNamespace(event_callback=None, evidence=MagicMock(), kernel=MagicMock())
 
     # 1. agent_type="edit" -> run_write_subagent
-    tc_write = ToolCall(id="p1", name="dispatch", arguments={
-        "agent_type": "edit",
-        "description": "desc write",
-        "prompt": "prompt write"
-    })
+    tc_write = ToolCall(
+        id="p1",
+        name="dispatch",
+        arguments={"agent_type": "edit", "description": "desc write", "prompt": "prompt write"},
+    )
     tc, content, changed, meta = toolturnmod._execute_tool_call_rich(ctx, tc_write, 1)
 
     assert len(called_write) == 1
@@ -65,11 +61,11 @@ def test_checkpoint_2_routing(monkeypatch):
     assert changed == ["modified.py"]
 
     # 2. agent_type="explore" (or explore default) -> run_subagent
-    tc_read = ToolCall(id="p2", name="dispatch", arguments={
-        "agent_type": "explore",
-        "description": "desc read",
-        "prompt": "prompt read"
-    })
+    tc_read = ToolCall(
+        id="p2",
+        name="dispatch",
+        arguments={"agent_type": "explore", "description": "desc read", "prompt": "prompt read"},
+    )
     tc2, content2, changed2, meta2 = toolturnmod._execute_tool_call_rich(ctx, tc_read, 1)
 
     assert len(called_read) == 1
@@ -95,18 +91,25 @@ def test_checkpoint_3_worktree_isolation_and_merge(tmp_path, monkeypatch):
     parent_results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="dispatch", arguments={
-                "description": "edit subagent task",
-                "prompt": "change README.md using apply_patch",
-                "agent_type": "edit"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="p1",
+                    name="dispatch",
+                    arguments={
+                        "description": "edit subagent task",
+                        "prompt": "change README.md using apply_patch",
+                        "agent_type": "edit",
+                    },
+                )
+            ],
         ),
-        ChatResult(content="Parent done", tool_calls=[])
+        ChatResult(content="Parent done", tool_calls=[]),
     ]
 
     class FakeParentClient:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             r = parent_results[self.i]
             self.i += 1
@@ -115,27 +118,35 @@ def test_checkpoint_3_worktree_isolation_and_merge(tmp_path, monkeypatch):
     child_results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
-                "patch": """--- a/README.md
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="apply_patch",
+                    arguments={
+                        "patch": """--- a/README.md
 +++ b/README.md
 @@ -1,1 +1,1 @@
 -Hello World
 +Hello Subagent
 """
-            })]
+                    },
+                )
+            ],
         ),
-        ChatResult(content="Child done", tool_calls=[])
+        ChatResult(content="Child done", tool_calls=[]),
     ]
 
     class FakeChildClient:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             r = child_results[self.i]
             self.i += 1
             return r
 
     import xhx_agent.orchestrators.loop as loopmod
+
     original_build_routed_client = loopmod.build_routed_client
 
     def fake_build_routed_client(workspace, *, role, base_profile_name, event_callback=None, build_client_func=None):
@@ -143,7 +154,13 @@ def test_checkpoint_3_worktree_isolation_and_merge(tmp_path, monkeypatch):
             return FakeParentClient()
         elif role == "edit":
             return FakeChildClient()
-        return original_build_routed_client(workspace, role=role, base_profile_name=base_profile_name, event_callback=event_callback, build_client_func=build_client_func)
+        return original_build_routed_client(
+            workspace,
+            role=role,
+            base_profile_name=base_profile_name,
+            event_callback=event_callback,
+            build_client_func=build_client_func,
+        )
 
     monkeypatch.setattr(loopmod, "build_routed_client", fake_build_routed_client)
     monkeypatch.setattr(submod, "build_routed_client", fake_build_routed_client)
@@ -172,9 +189,7 @@ def test_checkpoint_4_conflicts_and_claims(tmp_path):
 
     claims = {}
     ctx = SimpleNamespace(
-        tool_context=ToolContext(workspace=parent_workspace),
-        subagent_claims=claims,
-        event_callback=None
+        tool_context=ToolContext(workspace=parent_workspace), subagent_claims=claims, event_callback=None
     )
 
     # Merge child1 -> should claim file and apply
@@ -226,14 +241,20 @@ def test_run_write_subagent_conflict(tmp_path, monkeypatch):
                 self.called = True
                 return ChatResult(
                     content=None,
-                    tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
-                        "patch": """--- a/a.py
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="apply_patch",
+                            arguments={
+                                "patch": """--- a/a.py
 +++ b/a.py
 @@ -1,1 +1,1 @@
 -parent
 +child2
 """
-                    })]
+                            },
+                        )
+                    ],
                 )
             return ChatResult(content="Done", tool_calls=[])
 
@@ -281,14 +302,20 @@ def test_checkpoint_5_non_git_fallback(tmp_path, monkeypatch):
                 self.called = True
                 return ChatResult(
                     content=None,
-                    tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
-                        "patch": """--- a/b.py
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="apply_patch",
+                            arguments={
+                                "patch": """--- a/b.py
 +++ b/b.py
 @@ -1,1 +1,1 @@
 -original
 +modified
 """
-                    })]
+                            },
+                        )
+                    ],
                 )
             return ChatResult(content="Done", tool_calls=[])
 

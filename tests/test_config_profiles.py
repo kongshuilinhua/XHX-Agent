@@ -86,9 +86,7 @@ def test_profiles_fall_back_to_global(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert profile.base_url == "https://api.deepseek.com/v1"
 
 
-def test_no_config_anywhere_uses_builtin_default(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_no_config_anywhere_uses_builtin_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # 全局家目录也空 → 回落到内置默认（占位，刻意不可连）。
     _set_global_home(monkeypatch, tmp_path / "empty-home")
     workspace = tmp_path / "anywhere"
@@ -98,9 +96,7 @@ def test_no_config_anywhere_uses_builtin_default(
     assert profile.model == "REPLACE_ME"  # 显眼占位，不会被误当真实配置
 
 
-def test_write_global_helpers_are_idempotent(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_write_global_helpers_are_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _set_global_home(monkeypatch, tmp_path / "home")
     assert write_global_config() is True
     assert write_global_profiles() is True

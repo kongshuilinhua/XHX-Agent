@@ -137,6 +137,7 @@ def test_runtime_app_routes_by_mode(tmp_path: Path) -> None:
 
 def test_dagnode_has_agent_fields() -> None:
     from xhx_agent.planner.modes import DAGNode
+
     n = DAGNode(node_id="n1", description="d", agent_type="edit", prompt="do x", dependencies=[])
     assert n.agent_type == "edit"
     assert n.prompt == "do x"
@@ -154,14 +155,18 @@ def test_dag_scheduler_runs_ready_nodes_in_parallel() -> None:
 
     def make(agent_type):
         # 两个无依赖同类型节点；用并发计数器测最大并发度
-        return DAGPlan(root="demo", nodes=[
-            DAGNode(node_id="a", agent_type=agent_type, dependencies=[]),
-            DAGNode(node_id="b", agent_type=agent_type, dependencies=[]),
-        ])
+        return DAGPlan(
+            root="demo",
+            nodes=[
+                DAGNode(node_id="a", agent_type=agent_type, dependencies=[]),
+                DAGNode(node_id="b", agent_type=agent_type, dependencies=[]),
+            ],
+        )
 
     def run(plan):
         lock = threading.Lock()
         cur = {"n": 0, "max": 0}
+
         def cb(node):
             with lock:
                 cur["n"] += 1
@@ -170,10 +175,9 @@ def test_dag_scheduler_runs_ready_nodes_in_parallel() -> None:
             with lock:
                 cur["n"] -= 1
             return True, "ok"
+
         DAGScheduler(__import__("pathlib").Path("demo")).execute(plan, cb)
         return cur["max"]
 
-    assert run(make("explore")) == 2   # explore 并发
-    assert run(make("edit")) == 2      # edit 也并发（安全由 subagent 层保证）
-
-
+    assert run(make("explore")) == 2  # explore 并发
+    assert run(make("edit")) == 2  # edit 也并发（安全由 subagent 层保证）

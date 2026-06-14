@@ -69,8 +69,11 @@ def run_subagent(
         {"role": "user", "content": prompt},
     ]
     emit_event(
-        ctx.event_callback, "subagent_start", f"dispatch[{agent_type}]: {description or prompt[:60]}",
-        turn=turn, agent_type=agent_type,
+        ctx.event_callback,
+        "subagent_start",
+        f"dispatch[{agent_type}]: {description or prompt[:60]}",
+        turn=turn,
+        agent_type=agent_type,
     )
 
     answer = ""
@@ -80,15 +83,20 @@ def run_subagent(
         if not result.tool_calls:
             answer = result.content or ""
             break
-        messages.append({
-            "role": "assistant",
-            "content": result.content or "",
-            "tool_calls": [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
-                for tc in result.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": result.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                    }
+                    for tc in result.tool_calls
+                ],
+            }
+        )
         for tc in result.tool_calls:
             if tc.name not in allowed:
                 content = f"[dispatch] tool '{tc.name}' is not allowed for a '{agent_type}' sub-agent."
@@ -123,20 +131,20 @@ def run_write_subagent(
     emit_event(ctx.event_callback, "subagent_start", f"dispatch[edit]: {label}", turn=turn, agent_type="edit")
 
     wt = WorktreeContext(ctx.original_workspace, sub_run_id)
-    with ctx.subagent_lock:          # ① 串行化 worktree 创建（git 锁争用）
+    with ctx.subagent_lock:  # ① 串行化 worktree 创建（git 锁争用）
         wt.__enter__()
     try:
         run_ctx = ctx
         if wt.is_active:
             sub_tool_context = ctx.tool_context.model_copy(update={"workspace": wt.active_path})
             run_ctx = dataclasses.replace(ctx, tool_context=sub_tool_context)
-            _seed_worktree(ctx, wt.active_path, seed_files)   # 播种：让本轮 edit 看得到前序已改文件
-        answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)   # 锁外并行（各自 worktree）
+            _seed_worktree(ctx, wt.active_path, seed_files)  # 播种：让本轮 edit 看得到前序已改文件
+        answer, changed = _drive_write_loop(run_ctx, prompt, allowed, turn)  # 锁外并行（各自 worktree）
         merge_root = wt.active_path if wt.is_active else ctx.tool_context.workspace
-        with ctx.subagent_lock:      # ② 串行化合并（claims + 文件拷贝）
+        with ctx.subagent_lock:  # ② 串行化合并（claims + 文件拷贝）
             applied, conflicts = _merge_into_parent(ctx, merge_root, changed, label)
     finally:
-        with ctx.subagent_lock:      # ③ 串行化 worktree 清理（git 锁）
+        with ctx.subagent_lock:  # ③ 串行化 worktree 清理（git 锁）
             wt.__exit__(None, None, None)
 
     parts = [f"[sub-agent edit] {answer or 'edit sub-agent finished.'}"]
@@ -148,9 +156,13 @@ def run_write_subagent(
             f"{len(conflicts)} file(s) — kept the earlier sub-agent's version: {', '.join(sorted(set(conflicts)))}"
         )
     emit_event(
-        ctx.event_callback, "subagent_done",
+        ctx.event_callback,
+        "subagent_done",
         f"edit sub-agent: merged {len(applied)} file(s), {len(conflicts)} conflict(s).",
-        turn=turn, agent_type="edit", merged=sorted(set(applied)), conflicts=sorted(set(conflicts)),
+        turn=turn,
+        agent_type="edit",
+        merged=sorted(set(applied)),
+        conflicts=sorted(set(conflicts)),
     )
     return " | ".join(parts), sorted(set(applied))
 
@@ -160,8 +172,11 @@ def _drive_write_loop(ctx: OrchestratorContext, prompt: str, allowed: set[str], 
     from xhx_agent.orchestrators._toolturn import _execute_tool_call_rich, chat_and_count
 
     client = build_routed_client(
-        ctx.original_workspace, role="edit", base_profile_name=ctx.profile.name,
-        event_callback=ctx.event_callback, build_client_func=build_chat_client,
+        ctx.original_workspace,
+        role="edit",
+        base_profile_name=ctx.profile.name,
+        event_callback=ctx.event_callback,
+        build_client_func=build_chat_client,
     )
     schemas = [s for s in ctx.kernel.tool_registry.tool_schemas() if s["function"]["name"] in allowed]
     messages: list[dict] = [
@@ -176,14 +191,20 @@ def _drive_write_loop(ctx: OrchestratorContext, prompt: str, allowed: set[str], 
         if not result.tool_calls:
             answer = result.content or ""
             break
-        messages.append({
-            "role": "assistant", "content": result.content or "",
-            "tool_calls": [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
-                for tc in result.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": result.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                    }
+                    for tc in result.tool_calls
+                ],
+            }
+        )
         for tc in result.tool_calls:
             if tc.name not in allowed:
                 content = f"[dispatch] tool '{tc.name}' is not allowed for this sub-agent."
@@ -225,6 +246,7 @@ def _merge_into_parent(
 def _seed_worktree(ctx: OrchestratorContext, worktree_root: Path, seed_files: list[str] | None) -> None:
     """把父工作区里\"前序已改文件\"拷进新建 worktree，使后续 edit 在其之上继续改（解决 worktree 从 HEAD 切出看不到未提交改动的问题）。"""
     import shutil
+
     if not seed_files:
         return
     parent = ctx.tool_context.workspace

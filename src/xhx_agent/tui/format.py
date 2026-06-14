@@ -53,4 +53,3 @@ def line_style(line: str) -> str:
         return "dim italic"
 
     return ""
-

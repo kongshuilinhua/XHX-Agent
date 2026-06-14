@@ -66,4 +66,3 @@ class ChatResult(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: TokenUsage | None = None
     reasoning: str | None = None
-

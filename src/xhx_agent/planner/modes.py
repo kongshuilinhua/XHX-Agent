@@ -16,9 +16,9 @@ class ExecutionMode(StrEnum):
 class DAGNode(BaseModel):
     node_id: str
     description: str = ""
-    agent_type: str = "explore"   # "explore"(只读) | "edit"(写)
-    prompt: str = ""              # 给子 agent 的指令，可含 $<node_id> 引用前序输出
-    tool: str = ""               # 兼容旧 DAGScheduler 测试；新流程不用
+    agent_type: str = "explore"  # "explore"(只读) | "edit"(写)
+    prompt: str = ""  # 给子 agent 的指令，可含 $<node_id> 引用前序输出
+    tool: str = ""  # 兼容旧 DAGScheduler 测试；新流程不用
     arguments: dict = Field(default_factory=dict)
     dependencies: list[str] = Field(default_factory=list)  # parent node IDs
     status: str = "pending"  # pending, running, success, failed, blocked

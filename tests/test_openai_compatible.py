@@ -522,6 +522,7 @@ def test_chat_stream_captures_usage_and_requests_include_usage(monkeypatch: pyte
 
     def handler(request: httpx.Request) -> httpx.Response:
         import json as _json
+
         captured_body.update(_json.loads(request.read().decode("utf-8")))
         body = (
             'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
@@ -607,4 +608,3 @@ def test_chat_stream_captures_reasoning(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.reasoning == "thinking"
     # Content delta callback should ONLY receive "ok", not "think" or "ing"
     assert deltas == ["ok"]
-

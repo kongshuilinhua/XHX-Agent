@@ -152,7 +152,7 @@ def _update_index(directory: Path, filename: str, record: MemoryRecord) -> None:
 
 def _line_points_to(line: str, filename: str) -> bool:
     match = _INDEX_LINE.search(line)
-    return bool(match) and match.group(1) == filename
+    return match is not None and match.group(1) == filename
 
 
 def write_memory(
@@ -173,10 +173,11 @@ def write_memory(
     directory.mkdir(parents=True, exist_ok=True)
     slug = slugify(name)
     filename = f"{slug}.md"
-    record = MemoryRecord(name=name, description=description, mtype=mtype, body=body, path=directory / filename)
-    record.path.write_text(_render_memory_file(record), encoding="utf-8")
+    target = directory / filename
+    record = MemoryRecord(name=name, description=description, mtype=mtype, body=body, path=target)
+    target.write_text(_render_memory_file(record), encoding="utf-8")
     _update_index(directory, filename, record)
-    return record.path
+    return target
 
 
 def list_memories(workspace: Path) -> list[MemoryRecord]:

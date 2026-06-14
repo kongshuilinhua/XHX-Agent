@@ -10,6 +10,7 @@ def test_human_tokens() -> None:
     assert human_tokens(0) == "0"
     assert human_tokens(-5) == "-5"
 
+
 def test_context_meter_ok() -> None:
     label, pct, level = context_meter(8800, 128000)
     assert "8.8k/128k" in label
@@ -18,15 +19,18 @@ def test_context_meter_ok() -> None:
     assert round(pct, 3) == 6.875
     assert level == "ok"
 
+
 def test_context_meter_warn() -> None:
     label, pct, level = context_meter(100000, 128000)
     assert pct is not None
     assert level == "warn"
 
+
 def test_context_meter_crit() -> None:
     label, pct, level = context_meter(120000, 128000)
     assert pct is not None
     assert level == "crit"
+
 
 def test_context_meter_none() -> None:
     label, pct, level = context_meter(0, 0)
@@ -68,4 +72,3 @@ def test_line_style() -> None:
     # Test default case
     assert line_style("ordinary text") == ""
     assert line_style("") == ""
-

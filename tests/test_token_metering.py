@@ -15,7 +15,7 @@ def test_estimate_message_tokens_positive():
     assert _estimate_message_tokens(msgs2_alt) == 0
 
     # 3. tool_calls arguments count
-    msgs3 = [{"role": "assistant", "content": "", "tool_calls": [{"function": {"arguments": "{\"query\":\"test\"}"}}]}]
+    msgs3 = [{"role": "assistant", "content": "", "tool_calls": [{"function": {"arguments": '{"query":"test"}'}}]}]
     assert _estimate_message_tokens(msgs3) > 0
 
 

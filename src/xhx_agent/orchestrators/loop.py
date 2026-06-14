@@ -54,9 +54,7 @@ class LoopOrchestrator:
         # 流式：把模型 content 增量实时 emit 成 model_delta 事件，喂给 Live 状态行。
         if hasattr(client, "set_delta_callback"):
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
-        summarizer = build_chat_client(
-            resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name)
-        )
+        summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
         summarize_fn = getattr(summarizer, "summarize", None)
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [

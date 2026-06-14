@@ -181,7 +181,7 @@ def test_apply_patch_unified_diff_add(tmp_path: Path) -> None:
     result = apply_patch(tmp_path, patch)
     assert result.status == "success"
     assert result.changed_files == ["new_file.py"]
-    assert (tmp_path / "new_file.py").read_text(encoding="utf-8") == "def hello():\n    print(\"hello\")\n"
+    assert (tmp_path / "new_file.py").read_text(encoding="utf-8") == 'def hello():\n    print("hello")\n'
 
 
 def test_apply_patch_fences(tmp_path: Path) -> None:

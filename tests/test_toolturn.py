@@ -31,20 +31,14 @@ def test_execute_tool_call_basic(tmp_path):
         isolated=False,
     )
 
-    patch_content = (
-        "*** Begin Patch\n"
-        "*** Update File: README.md\n"
-        "@@\n"
-        "-# hello\n"
-        "+# hello world\n"
-        "*** End Patch\n"
-    )
+    patch_content = "*** Begin Patch\n*** Update File: README.md\n@@\n-# hello\n+# hello world\n*** End Patch\n"
     tc = ToolCall(id="c1", name="apply_patch", arguments={"patch": patch_content})
 
     tc_res, content, changed = execute_tool_call(ctx, tc, turn=1)
     assert tc_res.id == "c1"
     assert "README.md" in content
     assert changed == ["README.md"]
+
 
 # Test that the new rich execution function returns meta info
 def test_rich_returns_patch_evidence_meta(tmp_path):
@@ -72,14 +66,7 @@ def test_rich_returns_patch_evidence_meta(tmp_path):
         isolated=False,
     )
 
-    patch_content = (
-        "*** Begin Patch\n"
-        "*** Update File: README.md\n"
-        "@@\n"
-        "-# hello\n"
-        "+# hello world\n"
-        "*** End Patch\n"
-    )
+    patch_content = "*** Begin Patch\n*** Update File: README.md\n@@\n-# hello\n+# hello world\n*** End Patch\n"
     tc = ToolCall(id="c1", name="apply_patch", arguments={"patch": patch_content})
 
     tc_res, content, changed, meta = _execute_tool_call_rich(ctx, tc, turn=1)
@@ -131,6 +118,7 @@ def test_tool_start_and_result_events_payload(tmp_path):
     tool_context = ToolContext(workspace=tmp_path, max_file_bytes=100000)
 
     events = []
+
     def callback(evt: RuntimeEvent):
         events.append(evt)
 
@@ -150,14 +138,7 @@ def test_tool_start_and_result_events_payload(tmp_path):
         event_callback=callback,
     )
 
-    patch_content = (
-        "*** Begin Patch\n"
-        "*** Update File: README.md\n"
-        "@@\n"
-        "-# hello\n"
-        "+# hello world\n"
-        "*** End Patch\n"
-    )
+    patch_content = "*** Begin Patch\n*** Update File: README.md\n@@\n-# hello\n+# hello world\n*** End Patch\n"
     tc = ToolCall(id="c1", name="apply_patch", arguments={"patch": patch_content})
 
     _execute_tool_call_rich(ctx, tc, turn=1)
@@ -173,7 +154,6 @@ def test_tool_start_and_result_events_payload(tmp_path):
     assert result_events[0].payload.get("status") == "success"
     assert "README.md" in result_events[0].payload.get("summary", "")
     assert result_events[0].payload.get("arguments") == {"patch": patch_content}
-
 
 
 def test_chat_and_count_no_usage_emits_no_token_event():
@@ -207,6 +187,7 @@ def test_chat_and_count_emits_model_and_duration() -> None:
 
     class FakeClient:
         model = "deepseek-x"
+
         def chat(self, messages, schemas):
             return ChatResult(content="ok", usage=TokenUsage(prompt=10, completion=6, total=16))
 
@@ -231,6 +212,7 @@ def test_chat_and_count_emits_turn() -> None:
 
     class FakeClient:
         model = "deepseek-x"
+
         def chat(self, messages, schemas):
             return ChatResult(content="ok", usage=TokenUsage(prompt=10, completion=6, total=16))
 
@@ -258,6 +240,7 @@ def test_chat_and_count_emits_model_thinking() -> None:
 
     class FakeClient:
         model = "deepseek-reasoner"
+
         def chat(self, messages, schemas):
             return ChatResult(content="ok", reasoning="thinking process details")
 
@@ -271,14 +254,13 @@ def test_chat_and_count_emits_model_thinking() -> None:
 
     # If reasoning is None, no event should be emitted
     events.clear()
+
     class FakeClientNoReasoning:
         model = "deepseek-chat"
+
         def chat(self, messages, schemas):
             return ChatResult(content="ok", reasoning=None)
 
     chat_and_count(ctx, FakeClientNoReasoning(), [{"role": "user", "content": "hi"}], [])
     thinking_events = [e for e in events if e.type == "model_thinking"]
     assert len(thinking_events) == 0
-
-
-
