@@ -189,3 +189,94 @@ def test_graph_multiple_subtasks(tmp_path, monkeypatch):
     assert len(worker_events) == 2
     assert "Worker on sub-task 1" in worker_events[0].message
     assert "Worker on sub-task 2" in worker_events[1].message
+
+
+def test_parse_dag_robustness() -> None:
+    from xhx_agent.orchestrators.graph import _parse_dag
+
+    # 1. 闲聊 -> answer
+    ans, nodes = _parse_dag("ANSWER: Hello there!", "fallback task")
+    assert ans == "Hello there!"
+    assert nodes == []
+
+    # 1.1 闲聊大小写不敏感或有空格
+    ans, nodes = _parse_dag("answer:  How can I help?  ", "fallback task")
+    assert ans == "How can I help?"
+    assert nodes == []
+
+    # 2. 合法 JSON -> nodes
+    raw_json = '{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "find file", "deps": []}, {"id": "n2", "agent_type": "edit", "prompt": "edit file $n1", "deps": ["n1"]}]}'
+    ans, nodes = _parse_dag(raw_json, "fallback task")
+    assert ans is None
+    assert len(nodes) == 2
+    assert nodes[0].node_id == "n1"
+    assert nodes[0].agent_type == "explore"
+    assert nodes[0].prompt == "find file"
+    assert nodes[0].dependencies == []
+    assert nodes[1].node_id == "n2"
+    assert nodes[1].agent_type == "edit"
+    assert nodes[1].prompt == "edit file $n1"
+    assert nodes[1].dependencies == ["n1"]
+
+    # 3. 带 ```json 围栏仍解析
+    fenced = "Some thinking here...\n```json\n" + raw_json + "\n```\nSome other tail..."
+    ans, nodes = _parse_dag(fenced, "fallback task")
+    assert ans is None
+    assert len(nodes) == 2
+
+    # 4. 非法 JSON -> 兜底单 edit 节点
+    ans, nodes = _parse_dag("{invalid json", "fallback task")
+    assert ans is None
+    assert len(nodes) == 1
+    assert nodes[0].node_id == "n1"
+    assert nodes[0].agent_type == "edit"
+    assert nodes[0].prompt == "fallback task"
+
+    # 5. $ref 不在 deps -> 兜底
+    bad_ref = '{"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "use $n2", "deps": []}]}'
+    ans, nodes = _parse_dag(bad_ref, "fallback task")
+    assert ans is None
+    assert len(nodes) == 1
+    assert nodes[0].node_id == "n1"
+    assert nodes[0].agent_type == "edit"
+    assert nodes[0].prompt == "fallback task"
+
+    # 6. 成环 -> 兜底
+    cyclic = '{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": ["n2"]}, {"id": "n2", "agent_type": "explore", "prompt": "p2", "deps": ["n1"]}]}'
+    ans, nodes = _parse_dag(cyclic, "fallback task")
+    assert ans is None
+    assert len(nodes) == 1
+    assert nodes[0].node_id == "n1"
+    assert nodes[0].agent_type == "edit"
+    assert nodes[0].prompt == "fallback task"
+
+
+def test_plan_function() -> None:
+    from unittest.mock import MagicMock
+    from xhx_agent.orchestrators.graph import _plan
+    from xhx_agent.models.types import ChatResult
+
+    ctx = MagicMock()
+    ctx.task = "some task to plan"
+    ctx.scan = MagicMock()
+    ctx.original_workspace = MagicMock()
+
+    client = MagicMock()
+
+    # 1. 正常返回 JSON
+    client.chat.return_value = ChatResult(
+        content='{"nodes": [{"id": "n1", "agent_type": "explore", "prompt": "p1", "deps": []}]}'
+    )
+    ans, nodes = _plan(ctx, client)
+    assert ans is None
+    assert len(nodes) == 1
+    assert nodes[0].node_id == "n1"
+    assert nodes[0].prompt == "p1"
+
+    # 2. 返回闲聊
+    client.chat.return_value = ChatResult(content="ANSWER: Simple Q&A")
+    ans, nodes = _plan(ctx, client)
+    assert ans == "Simple Q&A"
+    assert len(nodes) == 0
+
+
