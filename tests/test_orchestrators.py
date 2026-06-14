@@ -45,6 +45,7 @@ def test_select_orchestrator_defaults_and_errors() -> None:
 
 def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
     import xhx_agent.orchestrators.graph as graphmod
+    import xhx_agent.orchestrators.subagent as subagentmod
     from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
@@ -52,17 +53,18 @@ def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
     (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()
 
-    # tool-calling graph：coordinator(LLM 拆子任务) -> worker(apply_patch 真改) -> reviewer(PASS)。
     class _Fake:
         def __init__(self) -> None:
             self.w = 0
 
         def chat(self, messages, tools):
             system = messages[0]["content"]
-            if "COORDINATOR" in system:
-                return ChatResult(content="- tweak calc.py")
-            if "REVIEWER" in system:
-                return ChatResult(content="PASS")
+            if "PLANNER" in system:
+                return ChatResult(
+                    content='{"nodes": [{"id": "n1", "agent_type": "edit", "prompt": "tweak calc.py", "deps": []}]}'
+                )
+            if "SOLVER" in system:
+                return ChatResult(content="done all")
             self.w += 1
             if self.w == 1:
                 return ChatResult(content=None, tool_calls=[ToolCall(id="w1", name="apply_patch", arguments={
@@ -71,14 +73,14 @@ def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
             return ChatResult(content="done")
 
     monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: _Fake())
     events = []
 
     result = RuntimeApp(tmp_path).run_task("refactor math", assume_yes=True, mode="graph", event_callback=events.append)
 
     assert result.mode == "graph"
-    assert any(e.type == "graph_coordinator" for e in events)
-    assert any(e.type == "graph_execute" for e in events)
-    assert any(e.type == "graph_review" for e in events)
+    assert any(e.type == "graph_planner" for e in events)
+    assert any(e.type == "graph_node" for e in events)
     assert result.changed_files == ["src/calc.py"]
     assert result.status == "success"
 
