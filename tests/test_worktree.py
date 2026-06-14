@@ -66,3 +66,42 @@ def test_worktree_context_creation_and_sync_on_git_workspace(tmp_path: Path) -> 
         text=True,
     )
     assert wt_ctx.branch_name not in completed_branch.stdout
+
+
+def test_worktree_cleanup_recovers_when_remove_fails(tmp_path: Path, monkeypatch) -> None:
+    """`git worktree remove` 失败时（如 Windows 并行文件锁），__exit__ 应重试→兜底 rmtree+prune+删分支，零残留。"""
+    from xhx_agent.safety import worktree as wtmod
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "f.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    wt = WorktreeContext(tmp_path, "test-recover")
+    wt.__enter__()
+    assert wt.is_active
+
+    real_run = subprocess.run
+    monkeypatch.setattr(wtmod.time, "sleep", lambda *a: None)  # 跳过重试退避，测试快
+
+    def fake_run(cmd, **kw):
+        # 模拟 "git worktree remove" 总失败；其余 git 命令照常真跑（prune/branch -D）。
+        if cmd[:3] == ["git", "worktree", "remove"]:
+            class _R:
+                returncode = 1
+                stderr = "simulated lock"
+                stdout = ""
+            return _R()
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(wtmod.subprocess, "run", fake_run)
+    wt.__exit__(None, None, None)
+
+    # 零残留：worktree 目录删除、git worktree list 不含它、临时分支删除。
+    assert not wt.worktree_dir.exists()
+    listed = real_run(["git", "worktree", "list"], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert "test-recover" not in listed
+    branches = real_run(["git", "branch"], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert wt.branch_name not in branches

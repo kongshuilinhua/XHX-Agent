@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -98,19 +99,32 @@ class WorktreeContext:
 
         try:
             logger.info("Cleaning up Git worktree and branch...")
-            # 1. 移除 git worktree
-            completed = subprocess.run(
-                ["git", "worktree", "remove", "--force", str(self.worktree_dir)],
-                cwd=self.workspace,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if completed.returncode != 0:
-                logger.warning("Failed to remove Git worktree cleanly: %s", completed.stderr)
+            # 1. 移除 git worktree——Windows 上快速并行移除会撞文件句柄锁，重试几次。
+            removed = False
+            for attempt in range(3):
+                completed = subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(self.worktree_dir)],
+                    cwd=self.workspace,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if completed.returncode == 0:
+                    removed = True
+                    break
+                time.sleep(0.2 * (attempt + 1))
+            if not removed:
+                # 重试仍失败：强删目录 + prune 反注册死 worktree，避免 worktree 注册表/分支泄漏。
+                logger.warning("git worktree remove failed after retries (%s); forcing dir removal + prune.", completed.stderr)
+                if self.worktree_dir.exists():
+                    shutil.rmtree(self.worktree_dir, ignore_errors=True)
+                subprocess.run(
+                    ["git", "worktree", "prune"],
+                    cwd=self.workspace, check=False, capture_output=True, text=True, timeout=30,
+                )
 
-            # 2. 删除临时分支
+            # 2. 删除临时分支（worktree 已移除/反注册后才能删）。
             completed_branch = subprocess.run(
                 ["git", "branch", "-D", self.branch_name],
                 cwd=self.workspace,
@@ -122,7 +136,7 @@ class WorktreeContext:
             if completed_branch.returncode != 0:
                 logger.warning("Failed to delete temporary branch cleanly: %s", completed_branch.stderr)
 
-            # 3. 目录残留则强制清理
+            # 3. 目录残留兜底。
             if self.worktree_dir.exists():
                 shutil.rmtree(self.worktree_dir, ignore_errors=True)
 
