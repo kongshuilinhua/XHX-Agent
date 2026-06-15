@@ -1,18 +1,53 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
 import subprocess
+import threading
 from collections.abc import Callable
 from typing import Any
 
 
+def read_line_with_timeout(stream: Any, timeout: float = 5.0) -> str:
+    """Read a single line from stream in a separate thread with timeout."""
+    q: queue.Queue[tuple[str | None, Exception | None]] = queue.Queue()
+
+    def reader():
+        try:
+            line = stream.readline()
+            q.put((line, None))
+        except Exception as e:
+            q.put((None, e))
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        line, err = q.get(timeout=timeout)
+        if err:
+            raise err
+        return line or ""
+    except queue.Empty:
+        raise TimeoutError("Reading from MCP server timed out")
+
+
 class MCPClient:
-    def __init__(self, command: list[str] | None = None, is_mock: bool = False) -> None:
+    def __init__(
+        self,
+        command: list[str] | None = None,
+        is_mock: bool = False,
+        server_name: str | None = None,
+        allow_mock: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> None:
         self.command = command
-        self.is_mock = is_mock or (not command)
+        self.server_name = server_name
+        self.allow_mock = allow_mock
+        self.env = env
+        self.is_mock = is_mock or (allow_mock and not command)
         self.process: subprocess.Popen | None = None
         self._next_id = 1
-        self._mock_tools = [
+        self._mock_tools: list[dict[str, Any]] = [
             {
                 "name": "mcp_fetch_weather",
                 "description": "Get current weather for a city",
@@ -31,9 +66,14 @@ class MCPClient:
 
     def connect(self) -> None:
         if self.is_mock or not self.command:
+            if not self.allow_mock:
+                raise ValueError("No command specified and mock is disabled")
             return
 
         try:
+            merged_env = dict(os.environ)
+            if self.env:
+                merged_env.update(self.env)
             # Start MCP server subprocess
             self.process = subprocess.Popen(
                 self.command,
@@ -42,6 +82,7 @@ class MCPClient:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                env=merged_env,
             )
             # Initialize handshake
             self._send_request(
@@ -54,7 +95,9 @@ class MCPClient:
             )
             # Send initialized notification
             self._send_notification("initialized", {})
-        except Exception:
+        except Exception as e:
+            if not self.allow_mock:
+                raise RuntimeError(f"Failed to connect to MCP server: {e}")
             # Fallback to mock on connection error
             self.is_mock = True
             self.process = None
@@ -78,11 +121,13 @@ class MCPClient:
             self.process.stdin.write(json.dumps(msg) + "\n")
             self.process.stdin.flush()
 
-            line = self.process.stdout.readline()
+            line = read_line_with_timeout(self.process.stdout, timeout=5.0)
             if not line:
                 raise OSError("Empty response from MCP server stdout")
             return json.loads(line)
-        except Exception:
+        except Exception as e:
+            if not self.allow_mock:
+                raise RuntimeError(f"MCP request failed: {e}")
             # Fallback
             self.is_mock = True
             return {}
@@ -99,6 +144,19 @@ class MCPClient:
 
     def list_tools(self) -> list[dict[str, Any]]:
         if self.is_mock:
+            if self.server_name:
+                tools = []
+                for t in self._mock_tools:
+                    orig = t["name"][4:] if t["name"].startswith("mcp_") else t["name"]
+                    tools.append(
+                        {
+                            "name": f"mcp_{self.server_name}_{orig}",
+                            "original_name": orig,
+                            "description": t.get("description", ""),
+                            "inputSchema": t.get("inputSchema", {}),
+                        }
+                    )
+                return tools
             return self._mock_tools
 
         res = self._send_request("tools/list", {})
@@ -106,26 +164,33 @@ class MCPClient:
             tools = []
             for t in res["result"]["tools"]:
                 name = t["name"]
-                if not name.startswith("mcp_"):
-                    name = f"mcp_{name}"
+                if self.server_name:
+                    tool_name = f"mcp_{self.server_name}_{name}"
+                else:
+                    tool_name = f"mcp_{name}" if not name.startswith("mcp_") else name
                 tools.append(
                     {
-                        "name": name,
+                        "name": tool_name,
                         "original_name": t["name"],
                         "description": t.get("description", ""),
                         "inputSchema": t.get("inputSchema", {}),
                     }
                 )
             return tools
+        if not self.allow_mock:
+            return []
         return self._mock_tools
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if self.is_mock:
-            # Handle mock tool execution
-            if name == "mcp_fetch_weather":
+            tool_key = name
+            if self.server_name and name.startswith(f"mcp_{self.server_name}_"):
+                tool_key = f"mcp_{name[len(f'mcp_{self.server_name}_') :]}"
+
+            if tool_key == "mcp_fetch_weather":
                 city = arguments.get("city", "Beijing")
                 return {"content": [{"type": "text", "text": f"The weather in {city} is sunny, 22°C."}]}
-            if name == "mcp_calculate":
+            if tool_key == "mcp_calculate":
                 expr = arguments.get("expression", "2+2")
                 try:
                     import ast
@@ -172,8 +237,13 @@ class MCPClient:
             return {"content": [{"type": "text", "text": f"Mock tool {name} executed."}]}
 
         original_name = name
-        if name.startswith("mcp_"):
-            original_name = name[4:]
+        if self.server_name:
+            prefix = f"mcp_{self.server_name}_"
+            if name.startswith(prefix):
+                original_name = name[len(prefix) :]
+        else:
+            if name.startswith("mcp_"):
+                original_name = name[4:]
 
         res = self._send_request("tools/call", {"name": original_name, "arguments": arguments})
         if "result" in res:
@@ -184,11 +254,13 @@ class MCPClient:
 
     def register_tools_to_registry(self, registry: Any) -> None:
         """Register MCP tools to ToolRegistry as runnable tools."""
-        from xhx_agent.tools.registry import ToolContext, ToolExecutionResult
+        from xhx_agent.tools.registry import ToolContext, ToolDefinition, ToolExecutionResult
 
         tools = self.list_tools()
         for t in tools:
             tool_name = t["name"]
+            input_schema = t.get("inputSchema", {})
+            description = t.get("description", "")
 
             # Define runner closure
             def make_runner(name: str):
@@ -223,5 +295,11 @@ class MCPClient:
 
                 return runner
 
-            # Register runner under tool_name (which starts with mcp_)
-            registry.register(tool_name, make_runner(tool_name))
+            # Register as ToolDefinition
+            d = ToolDefinition(
+                name=tool_name,
+                description=description or f"MCP tool {tool_name}",
+                parameters=input_schema or {"type": "object", "properties": {}},
+                runner=make_runner(tool_name),
+            )
+            registry.register_definition(d)

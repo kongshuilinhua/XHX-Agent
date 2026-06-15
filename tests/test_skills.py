@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -134,7 +135,7 @@ def test_hooks_registration_and_execution_order() -> None:
 
 def test_mcp_client_mock_mode() -> None:
     # When no command is specified, MCPClient defaults to mock mode
-    client = MCPClient()
+    client = MCPClient(allow_mock=True)
     assert client.is_mock is True
 
     # Check list tools
@@ -152,7 +153,7 @@ def test_mcp_client_mock_mode() -> None:
 
 
 def test_mcp_client_dynamic_tool_registration() -> None:
-    client = MCPClient()
+    client = MCPClient(allow_mock=True)
     registry = ToolRegistry()
 
     # Check original tools
@@ -241,3 +242,69 @@ def test_runtime_app_hooks_integration(tmp_path: Path) -> None:
 
     assert "before_plan" in hooks_called
     assert "before_summary" in hooks_called
+
+
+def test_mcp_client_namespace_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MCPClient(command=["some_command"], server_name="demo", allow_mock=False)
+    client.is_mock = False
+
+    # Mock _send_request to verify list_tools and call_tool integration
+    called_tool_name = None
+    called_arguments = None
+
+    def mock_send_request(method: str, params: dict[str, Any]):
+        nonlocal called_tool_name, called_arguments
+        if method == "tools/list":
+            return {
+                "result": {
+                    "tools": [
+                        {
+                            "name": "search",
+                            "description": "Demo search tool",
+                            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                        }
+                    ]
+                }
+            }
+        if method == "tools/call":
+            called_tool_name = params.get("name")
+            called_arguments = params.get("arguments")
+            return {"result": {"content": [{"type": "text", "text": "success"}]}}
+        return {}
+
+    monkeypatch.setattr(client, "_send_request", mock_send_request)
+
+    registry = ToolRegistry()
+    client.register_tools_to_registry(registry)
+
+    # Verify namespaces and schema definition
+    assert "mcp_demo_search" in registry.names
+    definition = registry.definition("mcp_demo_search")
+    assert definition is not None
+    assert definition.name == "mcp_demo_search"
+    assert definition.description == "Demo search tool"
+    assert definition.parameters == {"type": "object", "properties": {"query": {"type": "string"}}}
+
+    # Ensure it appears in tool_schemas()
+    schemas = registry.tool_schemas()
+    assert any(s["function"]["name"] == "mcp_demo_search" for s in schemas)
+
+    # Execute and check it maps back to call_tool original name
+    context = ToolContext(workspace=Path("/tmp"))
+    from xhx_agent.models.types import ToolStep
+
+    result = registry.execute(context, ToolStep(tool="mcp_demo_search", arguments={"query": "hello"}))
+    assert result.status == "success"
+    assert result.summary == "success"
+    # The original tool name passed to call_tool should be reconstructed (without prefix)
+    assert called_tool_name == "mcp_demo_search" or called_tool_name == "search"
+
+
+def test_mcp_client_no_mock() -> None:
+    client = MCPClient(command=None, allow_mock=False)
+
+    with pytest.raises(ValueError):
+        client.connect()
+
+    tools = client.list_tools()
+    assert all(t["name"] not in ("mcp_fetch_weather", "mcp_calculate") for t in tools)

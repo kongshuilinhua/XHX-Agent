@@ -68,6 +68,7 @@ class SafeExecutionKernel:
             step.tool,
             read_only=is_read_only,
             destructive=bool(d and d.destructive),
+            network=bool(d and d.network),
         )
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":

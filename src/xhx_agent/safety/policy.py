@@ -34,8 +34,15 @@ def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
     return PolicyDecision(decision="allow", risk=risk, reason="Command allowed by policy.")
 
 
-def decide_tool(tool_name: str, *, read_only: bool = False, destructive: bool = False) -> PolicyDecision:
+def decide_tool(
+    tool_name: str,
+    *,
+    read_only: bool = False,
+    destructive: bool = False,
+    network: bool = False,
+) -> PolicyDecision:
     """按工具标志判定：只读→SAFE 放行；破坏性→CONFIRM 放行（worktree 隔离）；
+    网络请求工具→CONFIRM 放行（有联网审计）；
     mcp_/custom_ 动态工具→CONFIRM 放行（以 Agent 权限运行、无沙箱）；其余拒绝。"""
     if read_only:
         return PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Tool {tool_name} is read-only.")
@@ -44,6 +51,12 @@ def decide_tool(tool_name: str, *, read_only: bool = False, destructive: bool = 
             decision="allow",
             risk=RiskLevel.CONFIRM,
             reason=f"Tool {tool_name} performs writes; allowed under worktree isolation.",
+        )
+    if network:
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason=f"Tool {tool_name} requests network access; allowed under audit policies.",
         )
     if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
         return PolicyDecision(

@@ -160,6 +160,83 @@ def _run_repo_query(context: ToolContext, arguments: dict[str, Any]) -> ToolExec
     )
 
 
+def _run_web_fetch(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
+    url = str(arguments["url"])
+    prompt = arguments.get("prompt")
+    try:
+        from xhx_agent.tools.web import web_fetch
+
+        result_str = web_fetch(url, prompt=prompt, max_bytes=context.max_file_bytes)
+        return ToolExecutionResult(
+            tool="web_fetch",
+            status="success",
+            summary=f"Successfully fetched {url}",
+            trace_payload={"tool": "web_fetch", "url": url, "result_length": len(result_str), "content": result_str},
+            evidence_kind="file",
+            evidence_source=url,
+            evidence_summary=f"Successfully fetched {url}",
+        )
+    except Exception as e:
+        return ToolExecutionResult(
+            tool="web_fetch",
+            status="failed",
+            summary=f"Failed to fetch {url}: {e}",
+            trace_payload={"tool": "web_fetch", "url": url, "error": str(e)},
+            error=str(e),
+        )
+
+
+def _run_web_search(context: ToolContext, arguments: dict[str, Any]) -> ToolExecutionResult:
+    query = str(arguments["query"])
+    from xhx_agent.runtime.config import load_config
+
+    cfg = load_config(context.workspace)
+    api_key = cfg.web_search.tavily_api_key
+    if not api_key:
+        import os
+
+        api_key_env = cfg.web_search.tavily_api_key_env or "TAVILY_API_KEY"
+        api_key = os.environ.get(api_key_env, "")
+
+    if not api_key:
+        return ToolExecutionResult(
+            tool="web_search",
+            status="failed",
+            summary="未配置 Tavily API key",
+            trace_payload={"tool": "web_search", "query": query, "error": "Missing Tavily API key"},
+        )
+
+    try:
+        from xhx_agent.tools.web import web_search
+
+        results = web_search(query, api_key, max_results=cfg.web_search.max_results)
+
+        summary_lines = []
+        for idx, item in enumerate(results, 1):
+            summary_lines.append(f"### {idx}. {item.get('title', 'Untitled')}")
+            summary_lines.append(f"URL: {item.get('url', 'N/A')}")
+            summary_lines.append(f"Snippet: {item.get('content', '')}\n")
+        summary_text = "\n".join(summary_lines) or "No results found."
+
+        return ToolExecutionResult(
+            tool="web_search",
+            status="success",
+            summary=summary_text,
+            trace_payload={"tool": "web_search", "query": query, "results": results},
+            evidence_kind="file",
+            evidence_source="web_search",
+            evidence_summary=summary_text,
+        )
+    except Exception as e:
+        return ToolExecutionResult(
+            tool="web_search",
+            status="failed",
+            summary=f"Web search failed: {e}",
+            trace_payload={"tool": "web_search", "query": query, "error": str(e)},
+            error=str(e),
+        )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     name: str
@@ -167,6 +244,7 @@ class ToolDefinition:
     parameters: dict[str, Any]  # JSON Schema
     read_only: bool = False
     destructive: bool = False
+    network: bool = False
     is_command: bool = False
     runner: ToolRunner | None = None
 
@@ -319,6 +397,35 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         },
         read_only=True,
         runner=_run_repo_query,
+    ),
+    "web_fetch": ToolDefinition(
+        name="web_fetch",
+        description="Fetch the content of a web page and convert it to Markdown. Read-only.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to fetch"},
+                "prompt": {"type": "string", "description": "Optional instructions on what to extract from the page"},
+            },
+            "required": ["url"],
+        },
+        read_only=False,
+        destructive=False,
+        network=True,
+        runner=_run_web_fetch,
+    ),
+    "web_search": ToolDefinition(
+        name="web_search",
+        description="Search the web for query and return search results. Read-only.",
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "The search query"}},
+            "required": ["query"],
+        },
+        read_only=False,
+        destructive=False,
+        network=True,
+        runner=_run_web_search,
     ),
 }
 
