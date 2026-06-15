@@ -958,7 +958,11 @@ def test_plan_mode_runs_autonomously_across_turns(tmp_path: Path, monkeypatch) -
     seq = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "build stuff", "files_to_change": ["a.py", "b.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p0", name="present_plan", arguments={"plan": "build stuff", "files_to_change": ["a.py", "b.py"]}
+                )
+            ],
         ),
         ChatResult(
             content=None,
@@ -1037,7 +1041,9 @@ def test_plan_concurrently_executes_readonly_steps(tmp_path: Path, monkeypatch) 
         ),
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "done exploring", "files_to_change": []})],
+            tool_calls=[
+                ToolCall(id="p0", name="present_plan", arguments={"plan": "done exploring", "files_to_change": []})
+            ],
         ),
         ChatResult(content="done", tool_calls=[]),
     ]

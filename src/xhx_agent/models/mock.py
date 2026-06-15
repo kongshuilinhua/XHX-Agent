@@ -22,7 +22,13 @@ class MockModelClient:
         if has_present_plan_tool and not has_present_plan:
             return ChatResult(
                 content=None,
-                tool_calls=[ToolCall(id="mock_plan_call", name="present_plan", arguments={"plan": "Mock plan summary", "files_to_change": []})],
+                tool_calls=[
+                    ToolCall(
+                        id="mock_plan_call",
+                        name="present_plan",
+                        arguments={"plan": "Mock plan summary", "files_to_change": []},
+                    )
+                ],
             )
 
         has_tool_result = any(m.get("role") == "tool" for m in messages)

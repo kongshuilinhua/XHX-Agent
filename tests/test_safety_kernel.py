@@ -97,6 +97,7 @@ def test_kernel_out_of_scope_read_default_allow(tmp_path: Path) -> None:
 
     # Mock confirm_callback that returns True
     confirm_called = []
+
     def confirm_cb(prompt: str, policy) -> bool:
         confirm_called.append((prompt, policy))
         return True
@@ -171,6 +172,7 @@ def test_kernel_out_of_scope_read_auto(tmp_path: Path) -> None:
     step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
 
     confirm_called = []
+
     def confirm_cb(prompt: str, policy) -> bool:
         confirm_called.append(prompt)
         return True
@@ -205,6 +207,7 @@ def test_kernel_out_of_scope_write_auto_confirm(tmp_path: Path) -> None:
     step = ToolStep(tool="apply_patch", arguments={"patch": patch_content})
 
     confirm_called = []
+
     def confirm_cb(prompt: str, policy) -> bool:
         confirm_called.append(prompt)
         return True
@@ -240,7 +243,7 @@ def test_kernel_out_of_scope_assume_yes_deny(tmp_path: Path) -> None:
         context,
         step,
         turn=1,
-        confirm_callback=None, # no callback
+        confirm_callback=None,  # no callback
     )
 
     # Should be denied automatically without blocking
@@ -282,4 +285,3 @@ def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None
     result_verify = kernel.run_verification("pytest", assume_yes=True)
     assert result_verify.status == "deny"
     assert result_verify.command == "pytest"
-

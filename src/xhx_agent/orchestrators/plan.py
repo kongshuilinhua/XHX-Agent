@@ -110,10 +110,12 @@ class PlanOrchestrator:
             if not result.tool_calls:
                 answer = result.content or ""
                 messages.append({"role": "assistant", "content": answer})
-                messages.append({
-                    "role": "user",
-                    "content": "Please propose your technical plan by calling the `present_plan` tool."
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Please propose your technical plan by calling the `present_plan` tool.",
+                    }
+                )
                 turn += 1
                 continue
 
@@ -187,7 +189,13 @@ class PlanOrchestrator:
                 decision = "execute"
                 feedback = None
                 if ctx.plan_review_callback is not None and not ctx.assume_yes:
-                    emit_event(ctx.event_callback, "plan_proposed", "Plan proposed by model.", plan=proposed_plan, files=proposed_files)
+                    emit_event(
+                        ctx.event_callback,
+                        "plan_proposed",
+                        "Plan proposed by model.",
+                        plan=proposed_plan,
+                        files=proposed_files,
+                    )
                     review = ctx.plan_review_callback(proposed_plan)
                     decision = review.decision
                     feedback = review.feedback
@@ -195,15 +203,19 @@ class PlanOrchestrator:
                 if decision == "execute":
                     planning_active = False
                     ctx.kernel.read_only_phase = False
-                    messages.append({
-                        "role": "user",
-                        "content": f"Your plan has been approved. Please start executing the plan now using the `apply_patch` tool. Approved plan:\n{proposed_plan}"
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Your plan has been approved. Please start executing the plan now using the `apply_patch` tool. Approved plan:\n{proposed_plan}",
+                        }
+                    )
                 elif decision == "revise":
-                    messages.append({
-                        "role": "user",
-                        "content": f"Your proposed plan was rejected with feedback: {feedback}\nPlease revise your plan and call `present_plan` again."
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Your proposed plan was rejected with feedback: {feedback}\nPlease revise your plan and call `present_plan` again.",
+                        }
+                    )
                 elif decision == "cancel":
                     status = "cancelled"
                     planning_active = False

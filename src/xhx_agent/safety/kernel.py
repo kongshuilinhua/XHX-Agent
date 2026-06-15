@@ -45,7 +45,13 @@ class SafeExecutionKernel:
         # 0. 只读规划阶段硬拦任何写/命令工具
         if self.read_only_phase and not is_read_only:
             reason = f"工具 {step.tool} 在计划规划(只读)阶段被拦截"
-            self.record_policy("tool", step.tool, PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason), {"turn": turn, "tool": step.tool}, event_callback)
+            self.record_policy(
+                "tool",
+                step.tool,
+                PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
+                {"turn": turn, "tool": step.tool},
+                event_callback,
+            )
             return (
                 ToolExecutionResult(
                     tool=step.tool,
@@ -89,6 +95,7 @@ class SafeExecutionKernel:
             patch_arg = step.arguments.get("patch")
             if patch_arg:
                 from xhx_agent.tools.patch import _parse_patch
+
                 try:
                     ops = _parse_patch(patch_arg)
                     for op in ops:
@@ -122,9 +129,13 @@ class SafeExecutionKernel:
                     self.record_policy(
                         "path_scope",
                         str(outside_root_resolved),
-                        PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Auto-allowed out-of-scope path under {mode} mode"),
+                        PolicyDecision(
+                            decision="allow",
+                            risk=RiskLevel.SAFE,
+                            reason=f"Auto-allowed out-of-scope path under {mode} mode",
+                        ),
                         {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                        event_callback
+                        event_callback,
                     )
                 else:
                     # 越界询问
@@ -146,9 +157,11 @@ class SafeExecutionKernel:
                         self.record_policy(
                             "path_scope",
                             str(outside_root_resolved),
-                            PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason="User allowed out-of-scope path access"),
+                            PolicyDecision(
+                                decision="allow", risk=RiskLevel.SAFE, reason="User allowed out-of-scope path access"
+                            ),
                             {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                            event_callback
+                            event_callback,
                         )
                     else:
                         # 拒绝访问，返回干净的 denied 结果
@@ -158,7 +171,7 @@ class SafeExecutionKernel:
                             str(outside_root_resolved),
                             PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
                             {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                            event_callback
+                            event_callback,
                         )
                         return (
                             ToolExecutionResult(
@@ -211,7 +224,15 @@ class SafeExecutionKernel:
     ) -> TerminalResult:
         if self.read_only_phase:
             policy = PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason="Blocked in read-only phase")
-            result = TerminalResult(command=command, status="deny", exit_code=None, stdout="", stderr="", policy=policy, summary="Blocked in read-only phase")
+            result = TerminalResult(
+                command=command,
+                status="deny",
+                exit_code=None,
+                stdout="",
+                stderr="",
+                policy=policy,
+                summary="Blocked in read-only phase",
+            )
             self.record_policy("terminal", command, policy, {"command": command}, event_callback)
             self.evidence.write_trace("verification", result.model_dump())
             return result
@@ -246,7 +267,13 @@ class SafeExecutionKernel:
         """命令工具（terminal/verify）的执行入口：过 decide_terminal 命令级闸门 + confirm，跑命令，转成 ToolExecutionResult。"""
         if self.read_only_phase:
             reason = f"命令执行在计划规划(只读)阶段被拦截: {command}"
-            self.record_policy("terminal", command, PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason), {"turn": turn, "command": command}, event_callback)
+            self.record_policy(
+                "terminal",
+                command,
+                PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
+                {"turn": turn, "command": command},
+                event_callback,
+            )
             return ToolExecutionResult(
                 tool="terminal",
                 status="denied",

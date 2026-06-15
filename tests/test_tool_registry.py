@@ -129,5 +129,7 @@ def test_present_plan_tool_schema() -> None:
     assert "plan" in definition.parameters["required"]
     assert "files_to_change" in definition.parameters["properties"]
 
-    plan = ModelPlan(summary="s", steps=[ToolStep(tool="present_plan", arguments={"plan": "my plan", "files_to_change": ["a.py"]})])
+    plan = ModelPlan(
+        summary="s", steps=[ToolStep(tool="present_plan", arguments={"plan": "my plan", "files_to_change": ["a.py"]})]
+    )
     reg.validate_plan(plan)

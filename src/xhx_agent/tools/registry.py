@@ -182,8 +182,8 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 "files_to_change": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "计划要修改的文件路径列表。"
-                }
+                    "description": "计划要修改的文件路径列表。",
+                },
             },
             "required": ["plan"],
         },

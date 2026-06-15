@@ -8,6 +8,7 @@ class ResolvedScope:
     in_scope: bool
     outside_root: Path | None
 
+
 def resolve_with_scope(workspace: Path, allowed_dirs: list[Path], path: str | Path) -> ResolvedScope:
     workspace_resolved = Path(workspace).resolve()
     target = Path(workspace_resolved / path).resolve()
@@ -26,6 +27,7 @@ def resolve_with_scope(workspace: Path, allowed_dirs: list[Path], path: str | Pa
     # Find parent of the target to use as the directory to allow
     outside_root = target.parent
     return ResolvedScope(target=target, in_scope=False, outside_root=outside_root)
+
 
 def extract_glob_root(workspace: Path, glob: str) -> Path:
     workspace_resolved = Path(workspace).resolve()
@@ -47,4 +49,3 @@ def extract_glob_root(workspace: Path, glob: str) -> Path:
     elif prefix.startswith("..") or Path(prefix).is_absolute():
         return Path(workspace_resolved / prefix).resolve()
     return workspace_resolved
-

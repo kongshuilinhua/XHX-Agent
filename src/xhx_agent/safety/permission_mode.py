@@ -1,5 +1,6 @@
 PERMISSION_MODES = ("default", "auto", "bypass")
 
+
 def next_permission_mode(mode: str) -> str:
     if mode == "default":
         return "auto"
@@ -8,11 +9,13 @@ def next_permission_mode(mode: str) -> str:
     else:
         return "default"
 
+
 def permission_mode_from_string(s: str) -> str:
     s = s.strip().lower()
     if s in PERMISSION_MODES:
         return s
     return "default"
+
 
 def permission_mode_title(mode: str) -> str:
     titles = {

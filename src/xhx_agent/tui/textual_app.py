@@ -142,6 +142,7 @@ class TextualSnapshot:
             tokens_str += f" · {state.last_model}"
 
         from xhx_agent.safety.permission_mode import permission_mode_title
+
         perm_title = permission_mode_title(state.permission_mode)
 
         status_line = (
@@ -797,7 +798,12 @@ class TextualCommandConsoleApp(App[None]):
             title="Plan Proposed",
         )
 
-    def resolve_pending_plan_review(self, decision: Literal["execute", "revise", "cancel"], feedback: str | None = None, review: PendingPlanReview | None = None) -> bool:
+    def resolve_pending_plan_review(
+        self,
+        decision: Literal["execute", "revise", "cancel"],
+        feedback: str | None = None,
+        review: PendingPlanReview | None = None,
+    ) -> bool:
         rev = review or self.pending_plan_review
         if rev is None or rev.event.is_set():
             return False
@@ -843,8 +849,10 @@ class TextualCommandConsoleApp(App[None]):
             except Exception:
                 pass
             self.refresh_snapshot()
+        elif decision == "execute":
+            self.resolve_pending_plan_review("execute", None)
         else:
-            self.resolve_pending_plan_review(decision, None)
+            self.resolve_pending_plan_review("cancel", None)
 
     def handle_slash_command(self, command_line: str, *, use_worker: bool = False) -> bool:
         command, _, argument = command_line.partition(" ")
@@ -937,14 +945,21 @@ class TextualCommandConsoleApp(App[None]):
         if command == "/perm":
             if argument:
                 from xhx_agent.safety.permission_mode import permission_mode_from_string, permission_mode_title
+
                 new_mode = permission_mode_from_string(argument)
                 self.state.permission_mode = new_mode
                 self.append_message(f"system> 权限模式: {permission_mode_title(new_mode)}")
                 self.set_detail("perm", f"权限模式: {permission_mode_title(new_mode)}")
             else:
                 from xhx_agent.safety.permission_mode import permission_mode_title
-                self.append_message(f"system> 当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})")
-                self.set_detail("perm", f"当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})")
+
+                self.append_message(
+                    f"system> 当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})"
+                )
+                self.set_detail(
+                    "perm",
+                    f"当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})",
+                )
             self.refresh_snapshot()
             return True
         if command == "/diff":
@@ -1752,6 +1767,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def action_cycle_permission_mode(self) -> None:
         from xhx_agent.safety.permission_mode import next_permission_mode, permission_mode_title
+
         new_mode = next_permission_mode(self.state.permission_mode)
         self.state.permission_mode = new_mode
         self.append_message(f"system> 权限模式: {permission_mode_title(new_mode)}")

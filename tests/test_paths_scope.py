@@ -54,8 +54,10 @@ def test_resolve_with_scope(tmp_path):
     assert res.in_scope is True
     assert res.target == workspace / "file.py"
 
+
 def test_extract_glob_root(tmp_path):
     from xhx_agent.tools.paths import extract_glob_root
+
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
@@ -63,4 +65,3 @@ def test_extract_glob_root(tmp_path):
     assert extract_glob_root(workspace, "src/*.py") == (workspace / "src").resolve()
     assert extract_glob_root(workspace, "../external/*.py") == (workspace / "../external").resolve()
     assert extract_glob_root(workspace, "D:\\all-in-rag\\*.py") == Path("D:\\all-in-rag").resolve()
-

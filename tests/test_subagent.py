@@ -28,14 +28,20 @@ def test_subagent_e2e_loop(tmp_path, monkeypatch):
         # Turn 0: dispatch
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="dispatch", arguments={
-                "description": "explore readme content",
-                "prompt": "Read the readme file and tell me what is in it",
-                "agent_type": "explore"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="p1",
+                    name="dispatch",
+                    arguments={
+                        "description": "explore readme content",
+                        "prompt": "Read the readme file and tell me what is in it",
+                        "agent_type": "explore",
+                    },
+                )
+            ],
         ),
         # Turn 1: final answer
-        ChatResult(content="Parent done", tool_calls=[])
+        ChatResult(content="Parent done", tool_calls=[]),
     ]
 
     seen_parent_messages = []
@@ -53,12 +59,9 @@ def test_subagent_e2e_loop(tmp_path, monkeypatch):
 
     child_results = [
         # Turn 0: read_file
-        ChatResult(
-            content=None,
-            tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "README.md"})]
-        ),
+        ChatResult(content=None, tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "README.md"})]),
         # Turn 1: conclusion
-        ChatResult(content="Child conclusion: README.md says Hello World", tool_calls=[])
+        ChatResult(content="Child conclusion: README.md says Hello World", tool_calls=[]),
     ]
 
     class FakeChildClient:
@@ -79,7 +82,9 @@ def test_subagent_e2e_loop(tmp_path, monkeypatch):
     assert res.answer == "Parent done"
 
     # Verify that the parent received the subagent conclusion
-    tool_msg = next((m for m in seen_parent_messages if m.get("role") == "tool" and m.get("tool_call_id") == "p1"), None)
+    tool_msg = next(
+        (m for m in seen_parent_messages if m.get("role") == "tool" and m.get("tool_call_id") == "p1"), None
+    )
     assert tool_msg is not None
     assert "[sub-agent explore]" in tool_msg["content"]
     assert "Child conclusion: README.md says Hello World" in tool_msg["content"]
@@ -97,13 +102,15 @@ def test_subagent_explore_denies_patch(tmp_path, monkeypatch):
     parent_results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="dispatch", arguments={
-                "description": "try update",
-                "prompt": "try update",
-                "agent_type": "explore"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="p1",
+                    name="dispatch",
+                    arguments={"description": "try update", "prompt": "try update", "agent_type": "explore"},
+                )
+            ],
         ),
-        ChatResult(content="Parent done", tool_calls=[])
+        ChatResult(content="Parent done", tool_calls=[]),
     ]
 
     class FakeParentClient:
@@ -119,11 +126,17 @@ def test_subagent_explore_denies_patch(tmp_path, monkeypatch):
         # Try to call apply_patch (not allowed)
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={
-                "patch": "*** Begin Patch\n*** Update File: target.py\n@@\n-original = 1\n+original = 2\n*** End Patch\n"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    name="apply_patch",
+                    arguments={
+                        "patch": "*** Begin Patch\n*** Update File: target.py\n@@\n-original = 1\n+original = 2\n*** End Patch\n"
+                    },
+                )
+            ],
         ),
-        ChatResult(content="Child concluded", tool_calls=[])
+        ChatResult(content="Child concluded", tool_calls=[]),
     ]
 
     seen_child_messages = []
@@ -169,22 +182,16 @@ def test_subagent_turn_limit(tmp_path, monkeypatch):
     class InfiniteToolClient:
         def chat(self, messages, tools):
             return ChatResult(
-                content=None,
-                tool_calls=[ToolCall(id="t1", name="search", arguments={"query": "infinite"})]
+                content=None, tool_calls=[ToolCall(id="t1", name="search", arguments={"query": "infinite"})]
             )
 
     monkeypatch.setattr(submod, "build_chat_client", lambda profile: InfiniteToolClient())
-    monkeypatch.setattr(
-        toolturnmod, "_execute_tool_call_rich",
-        lambda ctx, tc, turn: (tc, "infinite result", [], None)
-    )
+    monkeypatch.setattr(toolturnmod, "_execute_tool_call_rich", lambda ctx, tc, turn: (tc, "infinite result", [], None))
 
     ctx = MagicMock()
     ctx.original_workspace = tmp_path  # routing 解析需要真实 workspace（无 .xhx 即回退默认配置）
     ctx.profile.name = "mock"
-    ctx.kernel.tool_registry.tool_schemas.return_value = [
-        {"function": {"name": "search", "parameters": {}}}
-    ]
+    ctx.kernel.tool_registry.tool_schemas.return_value = [{"function": {"name": "search", "parameters": {}}}]
 
     res = run_subagent(ctx, description="infinite test", prompt="search forever", agent_type="explore")
 
@@ -202,20 +209,21 @@ def test_subagent_plan_supports_dispatch(tmp_path, monkeypatch):
     parent_results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="dispatch", arguments={
-                "description": "plan explore",
-                "prompt": "read README.md",
-                "agent_type": "explore"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="p1",
+                    name="dispatch",
+                    arguments={"description": "plan explore", "prompt": "read README.md", "agent_type": "explore"},
+                )
+            ],
         ),
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p2", name="present_plan", arguments={
-                "plan": "Mock plan text",
-                "files_to_change": []
-            })]
+            tool_calls=[
+                ToolCall(id="p2", name="present_plan", arguments={"plan": "Mock plan text", "files_to_change": []})
+            ],
         ),
-        ChatResult(content="Plan done", tool_calls=[])
+        ChatResult(content="Plan done", tool_calls=[]),
     ]
 
     class FakeParentClient:
@@ -227,9 +235,7 @@ def test_subagent_plan_supports_dispatch(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    child_results = [
-        ChatResult(content="Child plan conclusion", tool_calls=[])
-    ]
+    child_results = [ChatResult(content="Child plan conclusion", tool_calls=[])]
 
     class FakeChildClient:
         def chat(self, messages, tools):
@@ -342,16 +348,20 @@ def test_sub_run_id_uses_uuid(tmp_path, monkeypatch):
             self.sub_run_id = sub_run_id
             self.active_path = workspace
             self.is_active = True
+
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
     import xhx_agent.safety.worktree as wtmod
+
     monkeypatch.setattr(wtmod, "WorktreeContext", FakeWorktreeContext)
 
     # Let's run to verify run_write_subagent uses uuid-based run id and does not rely on len(subagent_claims)
     wt_instances = []
+
     def intercept_wt(workspace, sub_run_id):
         wt_instances.append(sub_run_id)
         return FakeWorktreeContext(workspace, sub_run_id)
@@ -405,6 +415,7 @@ def test_run_write_subagent_seeds_prior_changed_files(tmp_path, monkeypatch):
 
     # 4. Mock _drive_write_loop to assert seeding worked
     seeding_verified = False
+
     def fake_drive_write_loop(run_ctx, prompt, allowed, turn):
         nonlocal seeding_verified
         # The worktree workspace path:
@@ -427,6 +438,7 @@ def test_run_write_subagent_seeds_prior_changed_files(tmp_path, monkeypatch):
 
     # 5. Counter-example: seed_files=None, foo.py should NOT exist in worktree
     no_seeding_verified = False
+
     def fake_drive_write_loop_no_seed(run_ctx, prompt, allowed, turn):
         nonlocal no_seeding_verified
         wt_workspace = run_ctx.tool_context.workspace
@@ -436,9 +448,5 @@ def test_run_write_subagent_seeds_prior_changed_files(tmp_path, monkeypatch):
         return "ok", []
 
     monkeypatch.setattr(submod, "_drive_write_loop", fake_drive_write_loop_no_seed)
-    submod.run_write_subagent(
-        ctx, description="no_seeding_test", prompt="edit foo", turn=3, seed_files=None
-    )
+    submod.run_write_subagent(ctx, description="no_seeding_test", prompt="edit foo", turn=3, seed_files=None)
     assert no_seeding_verified
-
-

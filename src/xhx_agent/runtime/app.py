@@ -933,7 +933,9 @@ class RuntimeApp:
                     if preexecuted is not None:
                         result, trace, policy = preexecuted[index]
                     else:
-                        result, trace, policy = kernel.execute_tool(tool_context, step, turn, event_callback=event_callback)
+                        result, trace, policy = kernel.execute_tool(
+                            tool_context, step, turn, event_callback=event_callback
+                        )
                     if result is None or trace is None:
                         recent_error = policy.reason
                         risks.append(recent_error)

@@ -27,10 +27,12 @@ if TYPE_CHECKING:
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 CancelCheck = Callable[[], bool]
 
+
 @dataclass
 class PlanReview:
     decision: Literal["execute", "revise", "cancel"]
     feedback: str | None = None
+
 
 # 当 git worktree 隔离不可用（非 git 仓库，或建 worktree 失败）而直接在用户工作区执行时抛出。
 # 这种模式下失败的运行会把文件改动留在原地，没有自动的基线回滚。

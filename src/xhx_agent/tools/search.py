@@ -7,9 +7,10 @@ from pathlib import Path
 def search(workspace: Path, query: str, glob: str | None = None, max_results: int = 50) -> list[str]:
     if glob:
         from xhx_agent.tools.paths import extract_glob_root
+
         glob_root = extract_glob_root(workspace, glob)
         last_sep = max(glob.rfind("/"), glob.rfind("\\"))
-        rel_glob = glob[last_sep + 1:] if last_sep != -1 else glob
+        rel_glob = glob[last_sep + 1 :] if last_sep != -1 else glob
     else:
         glob_root = workspace
         rel_glob = None

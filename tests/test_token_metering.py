@@ -71,11 +71,14 @@ def test_plan_sets_token_metrics(tmp_path, monkeypatch):
 
         def chat(self, messages, tools):
             from xhx_agent.models.types import ToolCall
+
             if self.i == 0:
                 self.i += 1
                 return ChatResult(
                     content=None,
-                    tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "My plan", "files_to_change": []})]
+                    tool_calls=[
+                        ToolCall(id="p1", name="present_plan", arguments={"plan": "My plan", "files_to_change": []})
+                    ],
                 )
             return ChatResult(content="Done task in plan", tool_calls=[])
 

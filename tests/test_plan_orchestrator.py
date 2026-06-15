@@ -21,12 +21,7 @@ _STILL_WRONG_PATCH = (
     "*** End Patch\n"
 )
 _FIX_FROM_WRONG_PATCH = (
-    "*** Begin Patch\n"
-    "*** Update File: src/calc.py\n"
-    "@@\n"
-    "-    return a * b\n"
-    "+    return a + b\n"
-    "*** End Patch\n"
+    "*** Begin Patch\n*** Update File: src/calc.py\n@@\n-    return a * b\n+    return a + b\n*** End Patch\n"
 )
 
 
@@ -50,10 +45,18 @@ def test_plan_conversational_no_changes(tmp_path, monkeypatch) -> None:
     class _Fake:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             if self.i == 0:
                 self.i += 1
-                return ChatResult(content=None, tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "No changes needed", "files_to_change": []})])
+                return ChatResult(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="p1", name="present_plan", arguments={"plan": "No changes needed", "files_to_change": []}
+                        )
+                    ],
+                )
             return ChatResult(content="Nothing to change; here is my analysis.", tool_calls=[])
 
     monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
@@ -76,17 +79,25 @@ def _fake_chat_factory(monkeypatch, seq):
     results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p0", name="present_plan", arguments={"plan": "Fix implementation", "files_to_change": ["src/calc.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p0",
+                    name="present_plan",
+                    arguments={"plan": "Fix implementation", "files_to_change": ["src/calc.py"]},
+                )
+            ],
         )
     ]
     for item in seq:
         if item is None:
             results.append(ChatResult(content="Done; the fix is applied and tests pass.", tool_calls=[]))
         else:
-            results.append(ChatResult(
-                content=None,
-                tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": item})],
-            ))
+            results.append(
+                ChatResult(
+                    content=None,
+                    tool_calls=[ToolCall(id="c1", name="apply_patch", arguments={"patch": item})],
+                )
+            )
 
     class _Fake:
         def __init__(self):
@@ -148,6 +159,7 @@ def test_plan_no_repair_when_disabled_keeps_failure(tmp_path, monkeypatch) -> No
 
 def test_plan_writes_patch_evidence_and_binding(tmp_path, monkeypatch):
     import json
+
     workspace = _python_bug_workspace(tmp_path)  # 复用 3a helper
     _fake_chat_factory(monkeypatch, [_FIX_PATCH, None])  # 复用 3a：apply_patch 修好 -> done
     res = RuntimeApp(workspace).run_task("fix the failing test", profile_name="mock", mode="plan", assume_yes=True)
@@ -178,9 +190,7 @@ def test_plan_creates_checkpoint_and_restore_on_failure(tmp_path, monkeypatch):
 def test_plan_checkpoint_on_success(tmp_path, monkeypatch):
     workspace = _python_bug_workspace(tmp_path)
     _fake_chat_factory(monkeypatch, [_FIX_PATCH, None])
-    res = RuntimeApp(workspace).run_task(
-        "fix the failing test", profile_name="mock", mode="plan", assume_yes=True
-    )
+    res = RuntimeApp(workspace).run_task("fix the failing test", profile_name="mock", mode="plan", assume_yes=True)
     assert res.verification == "passed"
     assert res.checkpoint_path is not None and (workspace / res.checkpoint_path).exists()
     assert res.restore_plan_path is None  # 成功不生成 restore plan
@@ -200,13 +210,13 @@ def test_plan_with_fenced_unified_diff_patch(tmp_path, monkeypatch):
         "```"
     )
     _fake_chat_factory(monkeypatch, [unified_patch, None])
-    res = RuntimeApp(workspace).run_task(
-        "fix the failing test", profile_name="mock", mode="plan", assume_yes=True
-    )
+    res = RuntimeApp(workspace).run_task("fix the failing test", profile_name="mock", mode="plan", assume_yes=True)
     assert res.status == "success"
     assert "src/calc.py" in res.changed_files
     assert res.verification == "passed"
-    assert (workspace / "src" / "calc.py").read_text(encoding="utf-8") == "def add(a: int, b: int) -> int:\n    return a + b\n"
+    assert (workspace / "src" / "calc.py").read_text(
+        encoding="utf-8"
+    ) == "def add(a: int, b: int) -> int:\n    return a + b\n"
 
 
 def _flexible_chat_factory(monkeypatch, response_sequence):
@@ -236,7 +246,11 @@ def test_plan_orchestrator_two_phase_execute(tmp_path, monkeypatch) -> None:
     responses = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]}
+                )
+            ],
         ),
         ChatResult(
             content=None,
@@ -247,6 +261,7 @@ def test_plan_orchestrator_two_phase_execute(tmp_path, monkeypatch) -> None:
     _flexible_chat_factory(monkeypatch, responses)
 
     review_calls = []
+
     def plan_review_cb(plan_text: str) -> PlanReview:
         review_calls.append(plan_text)
         return PlanReview(decision="execute")
@@ -284,7 +299,11 @@ def test_plan_orchestrator_two_phase_revise(tmp_path, monkeypatch) -> None:
         ),
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p2", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p2", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]}
+                )
+            ],
         ),
         ChatResult(
             content=None,
@@ -331,13 +350,18 @@ def test_plan_orchestrator_two_phase_cancel(tmp_path, monkeypatch) -> None:
     responses = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]}
+                )
+            ],
         ),
         ChatResult(content="Done!", tool_calls=[]),
     ]
     _flexible_chat_factory(monkeypatch, responses)
 
     review_calls = []
+
     def plan_review_cb(plan_text: str) -> PlanReview:
         review_calls.append(plan_text)
         return PlanReview(decision="cancel")
@@ -373,7 +397,11 @@ def test_plan_orchestrator_phase1_read_only_enforced(tmp_path, monkeypatch) -> N
         ),
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]})],
+            tool_calls=[
+                ToolCall(
+                    id="p1", name="present_plan", arguments={"plan": "Fix calc.py", "files_to_change": ["src/calc.py"]}
+                )
+            ],
         ),
         ChatResult(
             content=None,
@@ -384,6 +412,7 @@ def test_plan_orchestrator_phase1_read_only_enforced(tmp_path, monkeypatch) -> N
     _flexible_chat_factory(monkeypatch, responses)
 
     review_calls = []
+
     def plan_review_cb(plan_text: str) -> PlanReview:
         review_calls.append(plan_text)
         return PlanReview(decision="execute")
@@ -400,5 +429,3 @@ def test_plan_orchestrator_phase1_read_only_enforced(tmp_path, monkeypatch) -> N
     assert res.status == "success"
     assert "src/calc.py" in res.changed_files
     assert len(review_calls) == 1
-
-
