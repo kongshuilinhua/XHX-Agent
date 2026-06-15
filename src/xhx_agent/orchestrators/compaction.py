@@ -17,7 +17,26 @@ DEFAULT_COMPACT_THRESHOLD_TOKENS = 12_000
 DEFAULT_KEEP_RECENT_MESSAGES = 6
 DEFAULT_KEEP_RECENT_TOKENS = 2_000
 DEFAULT_RESERVE_TOKENS = 1_000
+# 压缩时给模型输出 + 摘要本身预留的空间上限（对标 Claude 的 reserve；小窗口按 1/4 缩放）。
+DEFAULT_OUTPUT_RESERVE_TOKENS = 16_000
 _SUMMARY_PREFIX = "[Earlier turns compacted to save context]"
+
+
+def budget_for_window(context_window: int) -> tuple[int, int]:
+    """由模型上下文窗口推导 (压缩触发阈值, 保留近期 token)。对标 Claude / pi 的「阈值=f(窗口)」。
+
+    阈值 = 窗口 − 输出预留 − 安全 buffer；输出预留按 min(窗口//4, 16k)，避免小窗口预留过头。
+    keep_recent_tokens = min(窗口//3, 24k)：长窗口下保留更多近期原文，短窗口按比例缩。
+    窗口 ≤0（未知）时回退 128k 基准，绝不退回写死的 12k。
+    """
+    window = context_window if context_window > 0 else _DEFAULT_BUDGET_WINDOW
+    reserve = min(window // 4, DEFAULT_OUTPUT_RESERVE_TOKENS)
+    threshold = max(window - reserve - DEFAULT_RESERVE_TOKENS, 4_000)
+    keep_recent = min(window // 3, 24_000)
+    return threshold, keep_recent
+
+
+_DEFAULT_BUDGET_WINDOW = 128_000
 
 
 def _estimate_single_message_tokens(message: dict[str, Any]) -> int:

@@ -1362,3 +1362,43 @@ def test_graph_planner_emits_progress_before_llm_call(tmp_path, monkeypatch):
     assert planner_msgs.index("Planning the task…") < next(
         i for i, m in enumerate(planner_msgs) if "Answered directly" in m
     )
+
+
+def test_graph_planner_sees_prior_messages(tmp_path, monkeypatch):
+    """跨轮记忆：graph 的 planner 必须看到上一轮历史，否则追问时失忆。
+
+    回归 graph 模式下「明确需求后再追问『做好了吗?』，planner 却说不知道要做什么」的 bug——
+    根因是 _plan 只喂当前 task、不接 prior_messages（loop/plan 早已接，graph 漏了）。
+    """
+    import xhx_agent.orchestrators.graph as graphmod
+    from xhx_agent.models.types import ChatResult, ToolCall
+    from xhx_agent.runtime.app import RuntimeApp
+
+    RuntimeApp(tmp_path).init_project()
+    seen: dict = {}
+
+    class ChatFake:
+        def chat(self, messages, tools):
+            seen["roles"] = [m["role"] for m in messages]
+            seen["contents"] = [m.get("content") for m in messages]
+            return ChatResult(
+                content=None,
+                tool_calls=[ToolCall(id="p1", name="answer_user", arguments={"text": "ok"})],
+            )
+
+    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: ChatFake())
+    prior = [
+        {"role": "system", "content": "OLD SYSTEM — must be dropped"},
+        {"role": "user", "content": "做一个迷宫游戏 Flask+Canvas"},
+        {"role": "assistant", "content": "已创建 app.py 和 index.html"},
+    ]
+    result = RuntimeApp(tmp_path).run_task(
+        "做好了吗?", assume_yes=True, mode="graph", prior_messages=prior
+    )
+
+    assert result.status == "success"
+    # 恰好一个 system（新的），旧 system 被丢弃；历史 user/assistant 接上；新 task 在末尾
+    assert seen["roles"].count("system") == 1
+    assert "OLD SYSTEM — must be dropped" not in seen["contents"]
+    assert "做一个迷宫游戏 Flask+Canvas" in seen["contents"]
+    assert seen["roles"][-1] == "user" and seen["contents"][-1] == "做好了吗?"

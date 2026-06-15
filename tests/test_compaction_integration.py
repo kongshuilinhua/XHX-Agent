@@ -93,8 +93,11 @@ def test_loop_integration_compaction(tmp_path, monkeypatch):
 
     def mock_compact(messages, summarize_fn, **kwargs):
         calls.append(messages)
-        # Force a small threshold so it triggers compaction during the loop run
-        return original_compact(messages, summarize_fn, max_tokens=10, keep_recent=2, **kwargs)
+        # Force a small threshold so it triggers compaction during the loop run.
+        # Override caller kwargs (loop now passes window-derived max_tokens) to avoid duplicate-kw.
+        kwargs["max_tokens"] = 10
+        kwargs["keep_recent"] = 2
+        return original_compact(messages, summarize_fn, **kwargs)
 
     monkeypatch.setattr(loopmod, "compact_messages", mock_compact)
 

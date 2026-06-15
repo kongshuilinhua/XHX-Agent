@@ -11,7 +11,7 @@ from xhx_agent.models.routing import build_routed_client, resolve_profile_for_ro
 from xhx_agent.models.types import ModelClientError
 from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
 from xhx_agent.orchestrators.base import OrchestratorContext
-from xhx_agent.orchestrators.compaction import compact_messages
+from xhx_agent.orchestrators.compaction import budget_for_window, compact_messages
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import emit_event
@@ -61,6 +61,11 @@ class LoopOrchestrator:
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
         summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
         summarize_fn = getattr(summarizer, "summarize", None)
+        # 压缩阈值跟模型窗口走（对标 Claude），不再写死 12k——否则 64k 模型也 1/5 窗口就失忆。
+        from xhx_agent.runtime.profiles import resolve_context_window
+
+        window = resolve_context_window(ctx.profile, getattr(client, "model", ""))
+        compact_threshold, compact_keep_recent_tokens = budget_for_window(window)
         schemas = ctx.kernel.tool_registry.tool_schemas()
         messages: list[dict[str, Any]] = [
             {
@@ -89,7 +94,12 @@ class LoopOrchestrator:
                 break
             if summarize_fn:
                 len_before = len(messages)
-                messages = compact_messages(messages, summarize_fn)
+                messages = compact_messages(
+                    messages,
+                    summarize_fn,
+                    max_tokens=compact_threshold,
+                    keep_recent_tokens=compact_keep_recent_tokens,
+                )
                 len_after = len(messages)
                 if len_after < len_before:
                     emit_event(

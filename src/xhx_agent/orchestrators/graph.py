@@ -20,8 +20,8 @@ from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
-from xhx_agent.models.routing import build_routed_client
-from xhx_agent.orchestrators._toolturn import chat_and_count
+from xhx_agent.models.routing import build_routed_client, resolve_profile_for_role
+from xhx_agent.orchestrators._toolturn import chat_and_count, window_compact
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.orchestrators.subagent import run_subagent, run_write_subagent
 from xhx_agent.planner.modes import DAGNode
@@ -168,12 +168,15 @@ def _plan(
     client: Any,
     feedback: str | None = None,
     prior_nodes: list[DAGNode] | None = None,
+    summarize_fn=None,
 ) -> tuple[str | None, list[DAGNode]]:
     sys = PLANNER_PROMPT + "\n\n" + render_xhx_md(ctx.scan) + render_recalled_memories(ctx.original_workspace, ctx.task)
-    messages = [
-        {"role": "system", "content": sys},
-        {"role": "user", "content": ctx.task},
-    ]
+    messages = [{"role": "system", "content": sys}]
+    # 接上历史（去旧 system），否则 planner 每轮只见当前 task、跨轮失忆——
+    # 表现为后续追问"做好了吗?"时它完全不知道前轮需求。对齐 loop/plan 的做法。
+    if ctx.prior_messages:
+        messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")
+    messages.append({"role": "user", "content": ctx.task})
     if feedback:
         prior = "\n".join(f"- {n.node_id} ({n.agent_type}): {n.result}" for n in (prior_nodes or []))
         messages.append(
@@ -187,6 +190,8 @@ def _plan(
                 "can now be answered directly). Do NOT repeat work already done correctly.",
             }
         )
+    # 跨轮历史可能已超模型窗口——发送前压缩，否则 provider 静默截断老历史 → 失忆。
+    messages = window_compact(ctx, client, messages, summarize_fn, turn=0)
     result = chat_and_count(ctx, client, messages, _PLANNER_TOOLS, turn=0)
     return _interpret_plan(result, ctx.task)
 
@@ -305,6 +310,8 @@ class GraphOrchestrator:
             event_callback=ctx.event_callback,
             build_client_func=build_chat_client,
         )
+        summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
+        summarize_fn = getattr(summarizer, "summarize", None)
 
         def planner(state: _GraphState) -> dict[str, Any]:
             # 调用前先发进度，否则 planner 这次 LLM 调用期间界面零反馈、看起来卡死。
@@ -313,7 +320,13 @@ class GraphOrchestrator:
                 "graph_planner",
                 "Re-planning with feedback…" if state.get("joiner_feedback") else "Planning the task…",
             )
-            answer, nodes = _plan(ctx, client, feedback=state.get("joiner_feedback"), prior_nodes=state.get("nodes"))
+            answer, nodes = _plan(
+                ctx,
+                client,
+                feedback=state.get("joiner_feedback"),
+                prior_nodes=state.get("nodes"),
+                summarize_fn=summarize_fn,
+            )
             if answer is not None:
                 emit_event(ctx.event_callback, "graph_planner", "Answered directly (no code work needed).")
                 return {"answer": answer, "nodes": []}
