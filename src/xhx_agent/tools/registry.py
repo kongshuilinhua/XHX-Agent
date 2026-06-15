@@ -31,6 +31,10 @@ class ToolExecutionResult(BaseModel):
 
 class ToolContext(BaseModel):
     workspace: Path
+    # 运行时 workspace 会被切到隔离 git worktree，而 worktree 只含被 git 跟踪的文件——
+    # gitignored 的 .xhx/ 不在其中。需要读项目级配置/密钥（如 web_search 的 tavily key）的工具
+    # 必须用 original_workspace（原始项目根）去 load_config，否则读不到 .xhx/config.json。
+    original_workspace: Path | None = None
     max_file_bytes: int = 200_000
     allowed_dirs: list[Path] = Field(default_factory=list)
     permission_mode: str = "default"
@@ -190,7 +194,8 @@ def _run_web_search(context: ToolContext, arguments: dict[str, Any]) -> ToolExec
     query = str(arguments["query"])
     from xhx_agent.runtime.config import load_config
 
-    cfg = load_config(context.workspace)
+    # 用 original_workspace 读配置：run 期 workspace 是 worktree，读不到 gitignored 的 .xhx/。
+    cfg = load_config(context.original_workspace or context.workspace)
     api_key = cfg.web_search.tavily_api_key
     if not api_key:
         import os

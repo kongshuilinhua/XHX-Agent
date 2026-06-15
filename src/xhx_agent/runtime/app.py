@@ -202,6 +202,7 @@ class RuntimeApp:
                 ]
                 tool_context = ToolContext(
                     workspace=self.workspace,
+                    original_workspace=original_workspace,
                     max_file_bytes=config.max_file_bytes,
                     permission_mode=permission_mode or config.default_permission_mode,
                 )

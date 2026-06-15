@@ -136,3 +136,50 @@ def test_web_search_runner_missing_key(tmp_path: Path, monkeypatch: pytest.Monke
     assert called is False
     assert result.status == "failed"
     assert "未配置" in result.summary
+
+
+def test_web_search_runner_reads_key_from_original_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """run 在 worktree 里跑、worktree 无 gitignored 的 .xhx；key 在原始 workspace 的项目配置里。
+
+    runner 必须用 original_workspace 解析 key，而不是 worktree（否则真模型联调里 web_search 拿不到 key）。
+    """
+    import json
+
+    from xhx_agent.models.types import ToolStep
+    from xhx_agent.tools.registry import ToolContext, default_tool_registry
+
+    # 原始项目根：.xhx/config.json 里带 key
+    orig = tmp_path / "orig"
+    (orig / ".xhx").mkdir(parents=True)
+    (orig / ".xhx" / "config.json").write_text(
+        json.dumps(
+            {"version": 1, "web_search": {"provider": "tavily", "tavily_api_key": "orig-key", "max_results": 5}}
+        ),
+        encoding="utf-8",
+    )
+    # 隔离 worktree：没有 .xhx（模拟 gitignored 被排除）
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    seen: dict[str, str] = {}
+
+    def mock_send(self_client, request, **kwargs):
+        body = json.loads(request.read().decode("utf-8"))
+        seen["api_key"] = body["api_key"]
+        return httpx.Response(
+            status_code=200,
+            json={"results": [{"title": "T", "url": "https://x", "content": "c"}]},
+            request=request,
+        )
+
+    monkeypatch.setattr(httpx.Client, "send", mock_send)
+
+    reg = default_tool_registry()
+    context = ToolContext(workspace=worktree, original_workspace=orig)
+    step = ToolStep(tool="web_search", arguments={"query": "q"})
+    result = reg.execute(context, step)
+
+    assert result.status == "success"
+    assert seen.get("api_key") == "orig-key"  # 从 original_workspace 读到，而非 worktree
