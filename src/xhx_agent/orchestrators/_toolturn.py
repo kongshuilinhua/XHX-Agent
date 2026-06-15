@@ -128,7 +128,7 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
         step = ToolStep(tool=tc.name, arguments=tc.arguments)
         try:
             exec_result, trace, policy = ctx.kernel.execute_tool(
-                ctx.tool_context, step, turn, ctx.confirm_callback, ctx.event_callback
+                ctx.tool_context, step, turn, ctx.confirm_callback, ctx.event_callback, assume_yes=ctx.assume_yes
             )
             if exec_result is None:
                 status = "denied"

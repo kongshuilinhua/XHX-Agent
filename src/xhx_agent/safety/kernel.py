@@ -38,6 +38,7 @@ class SafeExecutionKernel:
         turn: int,
         confirm_callback: ConfirmationCallback | None = None,
         event_callback: EventCallback | None = None,
+        assume_yes: bool = False,
     ) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision]:
         d = self.tool_registry.definition(step.tool)
         is_read_only = bool(d and d.read_only)
@@ -74,6 +75,35 @@ class SafeExecutionKernel:
         if policy.decision == "deny":
             # 被拒工具到此为止：不产生 tool_call、不执行；但上面已记 policy_decision，审计链完整。
             return None, None, policy
+
+        # 1b. 动态外部工具（mcp_/custom_ 非只读）确认门：以 agent 权限运行、无沙箱，可对外部系统产生
+        #     副作用（如 GitHub 写）。bypass / assume_yes(-y) 放行；否则有回调就弹框确认，无回调且未预批
+        #     则安全默认拒绝（不静默执行外部副作用）。
+        if policy.requires_user:
+            mode = context.permission_mode or "default"
+            if mode != "bypass" and not assume_yes:
+                approved = False
+                if confirm_callback is not None:
+                    prompt = f"允许执行外部工具 {step.tool}?\n参数: {step.arguments}"
+                    approved = confirm_callback(prompt, policy)
+                if not approved:
+                    reason = (
+                        f"用户拒绝执行外部工具: {step.tool}"
+                        if confirm_callback is not None
+                        else f"外部工具 {step.tool} 需确认，但无人值守且未预批，已拒绝"
+                    )
+                    denied = PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason)
+                    self.record_policy("tool", step.tool, denied, {"turn": turn, "tool": step.tool}, event_callback)
+                    return (
+                        ToolExecutionResult(
+                            tool=step.tool,
+                            status="denied",
+                            summary=reason,
+                            trace_payload={"tool": step.tool, "status": "denied", "error": reason},
+                        ),
+                        None,
+                        denied,
+                    )
 
         # 2. 路径越界预检与授权裁决
         out_of_scope_paths = []
