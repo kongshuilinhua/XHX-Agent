@@ -787,27 +787,11 @@ class TextualCommandConsoleApp(App[None]):
         self.pending_plan_review = review
         self.active_detail = "plan_proposed"
         self.detail_text = review.plan
-        # 把完整计划落盘 + 直接打印到对话区：不再依赖侧栏 detail pane（窄屏/单栏布局下根本看不到），
-        # 否则用户会被告知"看右边 pane"却找不到计划，也没有文件可查。
-        plan_path = None
-        try:
-            import time as _time
-
-            from xhx_agent.runtime.paths import xhx_dir
-
-            logbook_dir = xhx_dir(self.workspace) / "logbook"
-            logbook_dir.mkdir(parents=True, exist_ok=True)
-            plan_file = logbook_dir / f"plan-{int(_time.time())}.md"
-            plan_file.write_text(review.plan, encoding="utf-8")
-            plan_path = str(plan_file)
-        except Exception:
-            plan_path = None
-        self._append_message("system> 模型已提交计划，完整内容如下：")
+        # 对标 Claude Code 的 ExitPlanMode：计划直接在对话流里完整呈现给用户审批，不写任何文件
+        # （计划本就保存在会话记录里）。原先只塞进侧栏 detail pane，窄屏/单栏布局下根本看不到。
+        self._append_message("system> 模型已提交计划，完整内容如下（审阅后选择 Execute / Revise / Cancel）：")
         for line in review.plan.splitlines() or [review.plan]:
             self._append_message(line)
-        if plan_path is not None:
-            self._append_message(f"system> 计划已保存到: {plan_path}")
-        self._append_message("system> 请选择 Execute / Revise / Cancel。")
         self.present_picker(
             [
                 ("Execute (Run the plan)", "execute"),
