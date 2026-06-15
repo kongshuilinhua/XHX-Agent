@@ -2111,3 +2111,88 @@ def test_textual_app_model_thinking_rendering(tmp_path) -> None:
     )
     expected_verbose = "b" * 500 + "…"
     assert expected_verbose in app.messages[-1]
+
+
+def test_textual_permission_mode_command(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    assert app.state.permission_mode == "default"
+
+    assert app.handle_text_input("/perm")
+    assert "当前权限模式: 默认" in app.messages[-1]
+
+    assert app.handle_text_input("/perm auto")
+    assert app.state.permission_mode == "auto"
+    assert "权限模式: 自动" in app.messages[-1]
+
+    from textual.events import Key
+
+    event = Key(key="shift+tab", character="\t")
+    app.on_key(event)
+    assert app.state.permission_mode == "bypass"
+    assert "权限模式: 越过" in app.messages[-1]
+
+
+def test_textual_plan_review_can_execute(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    result = {}
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            worker = threading.Thread(target=lambda: result.update(review=app.review_proposed_plan("My proposed plan")))
+            worker.start()
+            await pilot.pause()
+            assert app.pending_plan_review is not None
+            assert app.pending_plan_review.plan == "My proposed plan"
+            assert app.handle_text_input("/allow")
+            for _ in range(50):
+                if result:
+                    break
+                await asyncio.sleep(0.02)
+            assert result["review"].decision == "execute"
+            assert result["review"].feedback is None
+            worker.join(timeout=2)
+            assert app.pending_plan_review is None
+            assert "plan review submitted: execute" in app.messages[-1]
+
+    import asyncio
+
+    asyncio.run(run_app())
+
+
+def test_textual_plan_review_can_revise(tmp_path) -> None:
+    app = TextualCommandConsoleApp(workspace=tmp_path, profile="mock")
+
+    result = {}
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            worker = threading.Thread(target=lambda: result.update(review=app.review_proposed_plan("My proposed plan")))
+            worker.start()
+            await pilot.pause()
+            assert app.pending_plan_review is not None
+
+            # Select revise option
+            app._select_plan_review("revise")
+            assert app.pending_plan_review_feedback is not None
+
+            # Submit input feedback
+            input_widget = pilot.app.query_one("#input")
+            input_widget.value = "Please add more tests"
+            from textual.widgets import Input
+
+            pilot.app.on_input_submitted(Input.Submitted(input_widget, value="Please add more tests"))
+            for _ in range(50):
+                if result:
+                    break
+                await asyncio.sleep(0.02)
+            assert result["review"].decision == "revise"
+            assert result["review"].feedback == "Please add more tests"
+            worker.join(timeout=2)
+            assert app.pending_plan_review is None
+            assert "plan review submitted: revise (Please add more tests)" in app.messages[-1]
+
+    import asyncio
+
+    asyncio.run(run_app())

@@ -79,6 +79,7 @@ class ConsoleState:
     compaction_last_after: int = 0
     last_model: str = ""
     last_call_ms: int = 0
+    permission_mode: str = "default"
 
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
@@ -137,6 +138,10 @@ class ConsoleState:
             self.plan_summary = event.message
             self.plan_status = str(payload.get("status", ""))
             self.plan_step_count = int(payload.get("step_count", 0) or 0)
+        elif event.type == "plan_proposed":
+            self.status = "waiting_confirmation"
+            self.plan_summary = event.message
+            self.plan_status = "proposed"
         elif event.type == "tool_start":
             self.status = "running_tool"
             self.tools.append(
@@ -216,7 +221,8 @@ class ConsoleState:
 
     def _reset_for_run(self, event: RuntimeEvent) -> None:
         previous_mode = self.mode
-        self.__dict__.update(ConsoleState(mode=previous_mode).__dict__)
+        previous_permission_mode = getattr(self, "permission_mode", "default")
+        self.__dict__.update(ConsoleState(mode=previous_mode, permission_mode=previous_permission_mode).__dict__)
         self.events.append(event)
         self.status = "running"
         self.run_id = str(event.payload.get("run_id", "")) or None

@@ -268,19 +268,15 @@ def _plan_writes(workspace: Path, operations: list[_PatchOperation]) -> list[tup
 def _validate_relative_path(path: str) -> str:
     if not path:
         raise ValueError("Patch path is empty.")
-    candidate = Path(path)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        raise ValueError(f"Invalid patch path: {path}")
     return path.replace("\\", "/")
 
 
 def _resolve_inside(workspace: Path, path: str) -> Path:
-    target = (workspace / path).resolve()
-    root = workspace.resolve()
-    if root != target and root not in target.parents:
-        raise ValueError(f"Patch path is outside workspace: {path}")
-    return target
+    return Path(workspace / path).resolve()
 
 
 def _relative_path(workspace: Path, target: Path) -> str:
-    return target.resolve().relative_to(workspace.resolve()).as_posix()
+    try:
+        return target.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return target.resolve().as_posix()
