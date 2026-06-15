@@ -249,7 +249,16 @@ uv run xhx run "<task>" [options]
 - 多模型路由：按角色的 `role → profile` 映射 + 一条有序 **fallback 链**，主模型出错/限流时优雅降级；与流式正交。
 - tool-calling 输出**流式**到一条细状态行（分片的 `tool_calls` 在 SSE 上被重新拼装），外加保有效性的长历史 **microcompact**。
 - 只读 `repo_query` 工具，经同一套风险门控内核把符号 / 引用索引暴露给模型。
-- 基于 stdio 的 Model Context Protocol (MCP) 客户端，可动态连接 `.xhx/mcp.json` 或全局 `~/.xhx/mcp.json` 中配置的外部服务器，在安全执行内核下以适当的 schema 定义和命名空间注册其工具。
+- Model Context Protocol (MCP) 客户端（基于官方 `mcp` SDK，经 anyio `BlockingPortal` 桥接进同步运行时），通过 **stdio / Streamable HTTP / SSE** 连接 `.xhx/mcp.json` 或全局 `~/.xhx/mcp.json` 中配置的外部服务器。远程 server 支持静态 `Authorization: Bearer` token（`auth_token` / `auth_token_env`——密钥放 gitignored 的 `.xhx/` 或环境变量，切勿入库）。工具以适当的 schema 与 `mcp_<server>_<tool>` 命名空间在安全执行内核下注册；连接失败的 server 会被跳过、不影响其余工具。`.xhx/mcp.json` 示例：
+
+  ```json
+  {
+    "servers": [
+      {"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+      {"name": "remote", "transport": "http", "url": "https://api.example.com/mcp", "auth_token_env": "MY_MCP_TOKEN"}
+    ]
+  }
+  ```
 - 网络连接型 Web 工具：`web_fetch` 工具（带 SSRF 护栏、重定向校验、响应大小限制和 HTML 转 Markdown 功能）与 `web_search` 工具（连接 Tavily API，配置于 `.xhx/config.json` 或 `TAVILY_API_KEY` 环境变量中），用于实时互联网检索与抓取。
 - 上下文包编译器：`tiktoken` 预算、优先级裁剪、历史压缩（启发式；自主模式下用 LLM 摘要，出错回退启发式）。
 - 安全执行内核：风险分级、黑名单 + 元字符 + 内联解释器拦截、git worktree 隔离、就地 Restore Plan 回退。
