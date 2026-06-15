@@ -31,11 +31,16 @@ PLAN_SYSTEM_PROMPT = (
 
 
 PLAN_PHASE1_PROMPT = (
-    "You are xhx-agent in PLAN mode (Phase 1: Planning). First investigate the codebase using read-only tools "
-    "(search, read_file, repo_query, dispatch with agent_type='explore'). Once you have a clear plan, "
-    "you MUST call the `present_plan` tool with a detailed description of your proposed plan and the list of "
-    "files you intend to change. You CANNOT write files or run commands in this planning phase. After you call "
-    "`present_plan`, the user will review it. If approved, you will proceed to the execution phase."
+    "You are xhx-agent in PLAN mode (read-only). You CANNOT write files or run commands in this mode.\n"
+    "Have a normal conversation with the user: answer questions and discuss approaches in natural language, "
+    "and ask clarifying questions when the request is unclear. Use read-only tools "
+    "(search, read_file, repo_query, dispatch with agent_type='explore') to investigate THIS repository ONLY "
+    "when the request actually requires inspecting its code — do not explore for general discussion, "
+    "brainstorming, or designing something new.\n"
+    "Do NOT propose a plan prematurely. ONLY when you and the user have converged on a concrete approach and "
+    "you are ready to implement, call the `present_plan` tool with a detailed plan and the list of files to "
+    "change — that asks the user to approve execution. If the user is just discussing or asking a question, "
+    "reply in natural language WITHOUT calling present_plan."
 )
 
 
@@ -91,6 +96,7 @@ class PlanOrchestrator:
         proposed_plan = None
         proposed_files = []
         planning_active = True
+        plan_approved = False  # 仅当模型调 present_plan 且用户批准时才为真 → 才进入 Phase 2 执行
 
         while planning_active and turn <= max_turns:
             if ctx.cancel_check and ctx.cancel_check():
@@ -108,16 +114,13 @@ class PlanOrchestrator:
                 break
 
             if not result.tool_calls:
+                # 纯文本回复 = 对话/澄清（对标 Claude plan 模式：可自由讨论，不强求出计划）。
+                # 把回复交还用户、结束本轮；用户可继续追问，模型只在真调 present_plan 时才进入审批+执行。
                 answer = result.content or ""
+                state["answer"] = answer
                 messages.append({"role": "assistant", "content": answer})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": "Please propose your technical plan by calling the `present_plan` tool.",
-                    }
-                )
-                turn += 1
-                continue
+                planning_active = False
+                break
 
             messages.append(
                 {
@@ -201,6 +204,7 @@ class PlanOrchestrator:
                     feedback = review.feedback
 
                 if decision == "execute":
+                    plan_approved = True
                     planning_active = False
                     ctx.kernel.read_only_phase = False
                     messages.append(
@@ -227,8 +231,8 @@ class PlanOrchestrator:
             status = "failed"
             risks.append(f"plan did not finish planning within {max_turns} turn(s).")
 
-        # Phase 2: Execution & Verification
-        if status == "success":
+        # Phase 2: Execution & Verification —— 仅当计划获批才执行；纯讨论/澄清直接收尾返回回答。
+        if status == "success" and plan_approved:
             status, turns_used = self._drive(
                 ctx, client, schemas, messages, changed_files, risks, max_turns, start_turn=turn, state=state
             )
