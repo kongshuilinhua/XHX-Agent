@@ -72,6 +72,30 @@ def test_plan_conversational_no_changes(tmp_path, monkeypatch) -> None:
     assert res.verification in {"skipped_no_changes", "not_executed"}
 
 
+def test_plan_mode_discussion_does_not_railroad(tmp_path, monkeypatch) -> None:
+    """plan 模式下模型回纯文本（不调 present_plan）= 讨论：直接返回回答、不进入执行、不反复催计划。"""
+    import xhx_agent.orchestrators.plan as planmod
+    from xhx_agent.models.types import ChatResult
+
+    calls = {"n": 0}
+
+    class _Fake:
+        def chat(self, messages, tools):
+            calls["n"] += 1
+            return ChatResult(content="推箱子可以用 Python + curses 实现，我们先聊聊玩法和关卡设计。", tool_calls=[])
+
+    monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
+    (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
+    RuntimeApp(tmp_path).init_project()
+    res = RuntimeApp(tmp_path).run_task("我想做个推箱子游戏，和我讨论一下", profile_name="mock", mode="plan")
+
+    assert res.status == "success"
+    assert res.answer and "推箱子" in res.answer
+    assert res.changed_files == []
+    # 关键：一次纯文本回复就把讨论交还用户，旧版会反复注入"please call present_plan"催到 max_turns。
+    assert calls["n"] == 1
+
+
 def _fake_chat_factory(monkeypatch, seq):
     import xhx_agent.orchestrators.plan as planmod
     from xhx_agent.models.types import ChatResult, ToolCall
