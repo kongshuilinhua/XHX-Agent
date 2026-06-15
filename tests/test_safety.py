@@ -187,3 +187,9 @@ def test_risk_classifier_edge_cases() -> None:
     assert classify_command("npm install -g typescript") is RiskLevel.DENY
     assert classify_command("pip install --global requests") is RiskLevel.DENY
     assert classify_command("git clean -x") is RiskLevel.DENY
+
+
+def test_decide_tool_network_is_confirm():
+    d = decide_tool("web_fetch", network=True)
+    assert d.decision == "allow" and d.risk is RiskLevel.CONFIRM
+    assert "network" in d.reason

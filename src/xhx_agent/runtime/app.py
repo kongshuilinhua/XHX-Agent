@@ -146,9 +146,35 @@ class RuntimeApp:
         run_id = new_run_id("run")
 
         original_workspace = self.workspace.resolve()
+        mcp_clients = []
         with WorktreeContext(original_workspace, run_id) as wt_ctx:
             try:
                 self.workspace = wt_ctx.active_path
+
+                # Load and register MCP servers
+                from xhx_agent.runtime.mcp_config import load_mcp_servers
+                from xhx_agent.skills.mcp import MCPClient
+
+                servers = load_mcp_servers(self.workspace)
+                for s in servers:
+                    client = MCPClient(
+                        command=[s.command] + s.args,
+                        server_name=s.name,
+                        allow_mock=False,
+                        env=s.env,
+                    )
+                    try:
+                        client.connect()
+                        client.register_tools_to_registry(self.tool_registry)
+                        mcp_clients.append(client)
+                    except Exception as e:
+                        emit_event(
+                            event_callback,
+                            "mcp_server_failed",
+                            f"Failed to connect to MCP server {s.name}: {e}",
+                            server=s.name,
+                            error=str(e),
+                        )
 
                 evidence = EvidenceStore(original_workspace, run_id)
                 kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
@@ -176,6 +202,7 @@ class RuntimeApp:
                 ]
                 tool_context = ToolContext(
                     workspace=self.workspace,
+                    original_workspace=original_workspace,
                     max_file_bytes=config.max_file_bytes,
                     permission_mode=permission_mode or config.default_permission_mode,
                 )
@@ -227,6 +254,11 @@ class RuntimeApp:
                     wt_ctx.sync_to_workspace(result.changed_files)
                 return result
             finally:
+                for c in mcp_clients:
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
                 self.workspace = original_workspace
 
     def _cancelled_before_planning(

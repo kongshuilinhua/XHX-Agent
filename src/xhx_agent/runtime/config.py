@@ -20,6 +20,13 @@ class RoutingConfig(BaseModel):
     fallback: list[str] = Field(default_factory=list)
 
 
+class WebSearchConfig(BaseModel):
+    provider: str = "tavily"
+    tavily_api_key: str = ""
+    tavily_api_key_env: str = "TAVILY_API_KEY"
+    max_results: int = 5
+
+
 class ProjectConfig(BaseModel):
     """.xhx/config.json 的结构；每个字段都是一个运行时旋钮。"""
 
@@ -37,6 +44,7 @@ class ProjectConfig(BaseModel):
     )
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     default_permission_mode: str = "default"  # 默认权限模式 (default, auto, bypass)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
 def default_config() -> ProjectConfig:
