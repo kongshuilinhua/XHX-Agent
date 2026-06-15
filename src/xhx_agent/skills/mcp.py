@@ -132,6 +132,10 @@ class MCPManager:
                 full_name = f"mcp_{server_name}_{tool.name}"
                 description = tool.description or f"MCP tool {full_name}"
                 parameters = tool.inputSchema or {"type": "object", "properties": {}}
+                # 只读提示（MCP annotations.readOnlyHint）的工具标 read_only → 内核放行不弹框；
+                # 其余（破坏性或无提示=陌生）保持需确认。
+                annotations = getattr(tool, "annotations", None)
+                read_only = bool(getattr(annotations, "readOnlyHint", False)) if annotations else False
 
                 def make_runner(srv: str, original: str, fname: str) -> Any:
                     def runner(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
@@ -169,6 +173,7 @@ class MCPManager:
                         name=full_name,
                         description=description,
                         parameters=parameters,
+                        read_only=read_only,
                         runner=make_runner(server_name, tool.name, full_name),
                     )
                 )

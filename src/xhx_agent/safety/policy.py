@@ -42,8 +42,8 @@ def decide_tool(
     network: bool = False,
 ) -> PolicyDecision:
     """按工具标志判定：只读→SAFE 放行；破坏性→CONFIRM 放行（worktree 隔离）；
-    网络请求工具→CONFIRM 放行（有联网审计）；
-    mcp_/custom_ 动态工具→CONFIRM 放行（以 Agent 权限运行、无沙箱）；其余拒绝。"""
+    网络请求工具→CONFIRM 放行（SSRF 护栏兜底）；
+    mcp_/custom_ 动态工具→CONFIRM 且 requires_user（需内核按权限模式弹框确认）；其余拒绝。"""
     if read_only:
         return PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=f"Tool {tool_name} is read-only.")
     if destructive:
@@ -59,12 +59,15 @@ def decide_tool(
             reason=f"Tool {tool_name} requests network access; allowed under audit policies.",
         )
     if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
+        # 破坏性/陌生的动态外部工具（非只读 MCP/custom）：以 agent 权限运行、无沙箱，可对外部系统
+        # 产生副作用（如 GitHub 写操作），需人工确认（requires_user=True，由内核按权限模式弹框）。
         return PolicyDecision(
             decision="allow",
             risk=RiskLevel.CONFIRM,
             reason=(
-                f"Dynamic tool {tool_name} allowed; runs with the agent's own privileges "
-                "(no isolation sandbox), constrained only by the workspace boundary."
+                f"Dynamic tool {tool_name} runs with the agent's own privileges (no isolation sandbox); "
+                "requires user confirmation before execution."
             ),
+            requires_user=True,
         )
     return PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=f"Tool {tool_name} is not allowed by policy.")
