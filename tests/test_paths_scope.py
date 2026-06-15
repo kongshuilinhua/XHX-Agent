@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from xhx_agent.tools.paths import resolve_with_scope
 
 
@@ -64,4 +62,6 @@ def test_extract_glob_root(tmp_path):
     assert extract_glob_root(workspace, "*.py") == workspace.resolve()
     assert extract_glob_root(workspace, "src/*.py") == (workspace / "src").resolve()
     assert extract_glob_root(workspace, "../external/*.py") == (workspace / "../external").resolve()
-    assert extract_glob_root(workspace, "D:\\all-in-rag\\*.py") == Path("D:\\all-in-rag").resolve()
+    # 带分隔符的绝对路径根：用 tmp_path 构造，保证 Windows/Linux 都是合法绝对路径（不写死盘符）
+    ext_dir = tmp_path / "all-in-rag"
+    assert extract_glob_root(workspace, str(ext_dir / "*.py")) == ext_dir.resolve()
