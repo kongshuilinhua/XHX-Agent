@@ -146,35 +146,31 @@ class RuntimeApp:
         run_id = new_run_id("run")
 
         original_workspace = self.workspace.resolve()
-        mcp_clients = []
+        mcp_manager = None
         with WorktreeContext(original_workspace, run_id) as wt_ctx:
             try:
                 self.workspace = wt_ctx.active_path
 
-                # Load and register MCP servers
+                # 加载并注册 MCP server。配置从 original_workspace 读：run 期 self.workspace 是隔离
+                # worktree，gitignored 的 .xhx/ 不在其中，否则项目级 .xhx/mcp.json 运行时读不到。
                 from xhx_agent.runtime.mcp_config import load_mcp_servers
-                from xhx_agent.skills.mcp import MCPClient
+                from xhx_agent.skills.mcp import MCPManager
 
-                servers = load_mcp_servers(self.workspace)
-                for s in servers:
-                    client = MCPClient(
-                        command=[s.command] + s.args,
-                        server_name=s.name,
-                        allow_mock=False,
-                        env=s.env,
-                    )
-                    try:
-                        client.connect()
-                        client.register_tools_to_registry(self.tool_registry)
-                        mcp_clients.append(client)
-                    except Exception as e:
+                servers = load_mcp_servers(original_workspace)
+                if servers:
+                    mcp_manager = MCPManager()
+
+                    def _on_mcp_error(name: str, err: Exception) -> None:
                         emit_event(
                             event_callback,
                             "mcp_server_failed",
-                            f"Failed to connect to MCP server {s.name}: {e}",
-                            server=s.name,
-                            error=str(e),
+                            f"Failed to connect to MCP server {name}: {err}",
+                            server=name,
+                            error=str(err),
                         )
+
+                    mcp_manager.connect_all(servers, on_error=_on_mcp_error)
+                    mcp_manager.register_tools_to_registry(self.tool_registry)
 
                 evidence = EvidenceStore(original_workspace, run_id)
                 kernel = SafeExecutionKernel(self.workspace, run_id, evidence, self.tool_registry)
@@ -254,9 +250,9 @@ class RuntimeApp:
                     wt_ctx.sync_to_workspace(result.changed_files)
                 return result
             finally:
-                for c in mcp_clients:
+                if mcp_manager is not None:
                     try:
-                        c.close()
+                        mcp_manager.close()
                     except Exception:
                         pass
                 self.workspace = original_workspace

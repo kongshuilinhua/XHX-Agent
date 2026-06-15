@@ -250,7 +250,16 @@ Stated plainly so capability is never confused with roadmap.
 - Multi-model routing: per-role `role → profile` mapping plus an ordered **fallback chain** that degrades gracefully on a primary error/rate-limit; orthogonal to streaming.
 - Streaming tool-calling output to a thin live status line (with fragmented `tool_calls` reassembled over SSE), plus validity-preserving **microcompact** of long loop histories.
 - `repo_query` read-only tool exposing the symbol / reference index to the model through the same risk-gated kernel.
-- Stdio-based Model Context Protocol (MCP) clients that dynamically connect to external servers defined in `.xhx/mcp.json` or global `~/.xhx/mcp.json`, and register their tools with proper schema definitions and namespaces under the safe execution kernel.
+- Model Context Protocol (MCP) clients (built on the official `mcp` SDK, bridged into the synchronous runtime via an anyio `BlockingPortal`) connecting to external servers defined in `.xhx/mcp.json` / global `~/.xhx/mcp.json` over **stdio, Streamable HTTP, or SSE**. Remote servers support a static `Authorization: Bearer` token (`auth_token` / `auth_token_env` — keep secrets in the gitignored `.xhx/` or an env var, never committed). Tools register with proper schema and `mcp_<server>_<tool>` namespaces under the safe execution kernel; failed servers are skipped without affecting the rest. Example `.xhx/mcp.json`:
+
+  ```json
+  {
+    "servers": [
+      {"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+      {"name": "remote", "transport": "http", "url": "https://api.example.com/mcp", "auth_token_env": "MY_MCP_TOKEN"}
+    ]
+  }
+  ```
 - Network-enabled web tools: `web_fetch` tool (with SSRF guardrails, redirect inspection, response size limits, and HTML-to-Markdown conversion) and `web_search` tool (connecting to the Tavily API, configured via `.xhx/config.json` or `TAVILY_API_KEY` env) for real-time internet search and retrieval.
 - Context Pack compiler with `tiktoken` budgeting, priority pruning, and history compaction (heuristic, or LLM summary in autonomous mode with heuristic fallback).
 - Safe Execution Kernel: risk tiering, denylist + metacharacter + inline-interpreter blocking, git-worktree isolation, in-place Restore Plan fallback.

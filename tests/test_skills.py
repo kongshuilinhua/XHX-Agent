@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -8,11 +9,14 @@ import pytest
 
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.repo_intel.scanner import ProjectScan
+from xhx_agent.runtime.mcp_config import MCPServerConfig
 from xhx_agent.skills.hooks import hooks_manager
 from xhx_agent.skills.loader import SkillLoader
-from xhx_agent.skills.mcp import MCPClient
+from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.skills.metadata import Skill, SkillMetadata
 from xhx_agent.tools.registry import ToolContext, ToolRegistry
+
+FAKE_MCP_SERVER = str(Path(__file__).parent / "mcp_fake_server.py")
 
 
 def test_skill_models() -> None:
@@ -133,48 +137,61 @@ def test_hooks_registration_and_execution_order() -> None:
         hooks_manager.register("invalid_stage", cb1)
 
 
-def test_mcp_client_mock_mode() -> None:
-    # When no command is specified, MCPClient defaults to mock mode
-    client = MCPClient(allow_mock=True)
-    assert client.is_mock is True
+def test_mcp_manager_stdio_connect_list_call() -> None:
+    # 用真实 stdio MCP server（FastMCP 子进程）跑通 connect → list_tools → call_tool 全链路。
+    cfg = MCPServerConfig(name="fake", command=sys.executable, args=[FAKE_MCP_SERVER])
+    mgr = MCPManager()
+    try:
+        mgr.connect_all([cfg])
+        tool_names = {t.name for t in mgr.list_tools("fake")}
+        assert {"echo", "add"} <= tool_names
 
-    # Check list tools
-    tools = client.list_tools()
-    assert len(tools) == 2
-    assert tools[0]["name"] == "mcp_fetch_weather"
-    assert tools[1]["name"] == "mcp_calculate"
-
-    # Check tool execution
-    res1 = client.call_tool("mcp_fetch_weather", {"city": "Shanghai"})
-    assert "Shanghai" in res1["content"][0]["text"]
-
-    res2 = client.call_tool("mcp_calculate", {"expression": "12 * 12"})
-    assert res2["content"][0]["text"] == "144"
+        result = mgr.call_tool("fake", "echo", {"text": "hi"})
+        texts = [getattr(c, "text", None) for c in result.content]
+        assert "echo: hi" in texts
+    finally:
+        mgr.close()
 
 
-def test_mcp_client_dynamic_tool_registration() -> None:
-    client = MCPClient(allow_mock=True)
+def test_mcp_manager_register_and_close_unregisters() -> None:
+    cfg = MCPServerConfig(name="demo", command=sys.executable, args=[FAKE_MCP_SERVER])
+    mgr = MCPManager()
     registry = ToolRegistry()
+    try:
+        mgr.connect_all([cfg])
+        mgr.register_tools_to_registry(registry)
 
-    # Check original tools
-    assert len(registry.names) == 0
+        # 命名空间 + schema：模型能看见
+        assert "mcp_demo_echo" in registry.names
+        definition = registry.definition("mcp_demo_echo")
+        assert definition is not None and definition.name == "mcp_demo_echo"
+        assert any(s["function"]["name"] == "mcp_demo_echo" for s in registry.tool_schemas())
 
-    # Register MCP tools
-    client.register_tools_to_registry(registry)
-    assert "mcp_fetch_weather" in registry.names
-    assert "mcp_calculate" in registry.names
+        # 经 registry 执行 → 映射回原始工具名调用
+        from xhx_agent.models.types import ToolStep
 
-    # Check validation bypass (custom tools should pass validation checks)
-    from xhx_agent.models.types import ModelPlan, ToolStep
+        context = ToolContext(workspace=Path("."))
+        result = registry.execute(context, ToolStep(tool="mcp_demo_echo", arguments={"text": "yo"}))
+        assert result.status == "success"
+        assert "echo: yo" in result.summary
+    finally:
+        mgr.close()
 
-    plan = ModelPlan(summary="MCP step", steps=[ToolStep(tool="mcp_calculate", arguments={"expression": "10 - 2"})])
-    registry.validate_plan(plan)  # Should not raise any errors
+    # close 后注销：共享 registry 不残留陈旧定义
+    assert "mcp_demo_echo" not in registry.names
 
-    # Check execution
-    context = ToolContext(workspace=Path("/tmp"))
-    result = registry.execute(context, ToolStep(tool="mcp_calculate", arguments={"expression": "21 + 21"}))
-    assert result.status == "success"
-    assert result.summary == "42"
+
+def test_mcp_manager_connect_failure_isolated() -> None:
+    # 不存在的 command → 连接失败，只回调 on_error 并跳过，不抛。
+    bad = MCPServerConfig(name="bad", command="this_command_does_not_exist_xhx_test", args=[])
+    mgr = MCPManager()
+    errors: list[str] = []
+    try:
+        mgr.connect_all([bad], on_error=lambda name, _e: errors.append(name))
+        assert errors == ["bad"]
+        assert "bad" not in mgr._sessions
+    finally:
+        mgr.close()
 
 
 def test_skills_compiler_integration(tmp_path: Path) -> None:
@@ -244,67 +261,49 @@ def test_runtime_app_hooks_integration(tmp_path: Path) -> None:
     assert "before_summary" in hooks_called
 
 
-def test_mcp_client_namespace_registration(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = MCPClient(command=["some_command"], server_name="demo", allow_mock=False)
-    client.is_mock = False
-
-    # Mock _send_request to verify list_tools and call_tool integration
-    called_tool_name = None
-    called_arguments = None
-
-    def mock_send_request(method: str, params: dict[str, Any]):
-        nonlocal called_tool_name, called_arguments
-        if method == "tools/list":
-            return {
-                "result": {
-                    "tools": [
-                        {
-                            "name": "search",
-                            "description": "Demo search tool",
-                            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
-                        }
-                    ]
-                }
-            }
-        if method == "tools/call":
-            called_tool_name = params.get("name")
-            called_arguments = params.get("arguments")
-            return {"result": {"content": [{"type": "text", "text": "success"}]}}
-        return {}
-
-    monkeypatch.setattr(client, "_send_request", mock_send_request)
-
-    registry = ToolRegistry()
-    client.register_tools_to_registry(registry)
-
-    # Verify namespaces and schema definition
-    assert "mcp_demo_search" in registry.names
-    definition = registry.definition("mcp_demo_search")
-    assert definition is not None
-    assert definition.name == "mcp_demo_search"
-    assert definition.description == "Demo search tool"
-    assert definition.parameters == {"type": "object", "properties": {"query": {"type": "string"}}}
-
-    # Ensure it appears in tool_schemas()
-    schemas = registry.tool_schemas()
-    assert any(s["function"]["name"] == "mcp_demo_search" for s in schemas)
-
-    # Execute and check it maps back to call_tool original name
-    context = ToolContext(workspace=Path("/tmp"))
-    from xhx_agent.models.types import ToolStep
-
-    result = registry.execute(context, ToolStep(tool="mcp_demo_search", arguments={"query": "hello"}))
-    assert result.status == "success"
-    assert result.summary == "success"
-    # The original tool name passed to call_tool should be reconstructed (without prefix)
-    assert called_tool_name == "mcp_demo_search" or called_tool_name == "search"
+def test_mcp_resolve_headers_static_token() -> None:
+    mgr = MCPManager()
+    cfg = MCPServerConfig(name="r", transport="http", url="https://x/mcp", auth_token="tok")
+    headers = mgr._resolve_headers(cfg)
+    assert headers["Authorization"] == "Bearer tok"
 
 
-def test_mcp_client_no_mock() -> None:
-    client = MCPClient(command=None, allow_mock=False)
+def test_mcp_resolve_headers_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MY_MCP_TOKEN", "envtok")
+    mgr = MCPManager()
+    cfg = MCPServerConfig(name="r", transport="http", url="https://x/mcp", auth_token_env="MY_MCP_TOKEN")
+    headers = mgr._resolve_headers(cfg)
+    assert headers["Authorization"] == "Bearer envtok"
 
-    with pytest.raises(ValueError):
-        client.connect()
 
-    tools = client.list_tools()
-    assert all(t["name"] not in ("mcp_fetch_weather", "mcp_calculate") for t in tools)
+def test_mcp_resolve_headers_no_token() -> None:
+    mgr = MCPManager()
+    cfg = MCPServerConfig(name="r", transport="http", url="https://x/mcp")
+    assert "Authorization" not in mgr._resolve_headers(cfg)
+
+
+def test_mcp_build_transport_selects_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    import xhx_agent.skills.mcp as mcpmod
+
+    calls: dict[str, Any] = {}
+
+    def fake_http(url: str, headers: Any = None, **_kw: Any) -> str:
+        calls["http"] = (url, headers)
+        return "HTTP_CM"
+
+    def fake_sse(url: str, headers: Any = None, **_kw: Any) -> str:
+        calls["sse"] = (url, headers)
+        return "SSE_CM"
+
+    monkeypatch.setattr(mcpmod, "streamablehttp_client", fake_http)
+    monkeypatch.setattr(mcpmod, "sse_client", fake_sse)
+
+    mgr = MCPManager()
+    http_cm = mgr._build_transport(MCPServerConfig(name="r", transport="http", url="https://h/mcp", auth_token="t"))
+    assert http_cm == "HTTP_CM"
+    assert calls["http"][0] == "https://h/mcp"
+    assert calls["http"][1]["Authorization"] == "Bearer t"
+
+    sse_cm = mgr._build_transport(MCPServerConfig(name="r2", transport="sse", url="https://s/sse"))
+    assert sse_cm == "SSE_CM"
+    assert calls["sse"][0] == "https://s/sse"

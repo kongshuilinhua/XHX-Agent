@@ -1,305 +1,175 @@
+"""MCP 客户端：基于官方 `mcp` SDK，支持 stdio / Streamable HTTP / SSE 传输。
+
+SDK 是 anyio(async) 的，而本项目运行时是同步的。这里用 `anyio.from_thread.start_blocking_portal()`
+起一个后台事件循环线程，把每个 server 的 transport + ClientSession 的 `async with` 用
+`portal.wrap_async_context_manager` 挂活成同步可用，对外只暴露同步 API（connect_all / list_tools /
+call_tool / close）。所有对 session 的调用都经 `portal.call` 桥回那个 loop。
+"""
+
 from __future__ import annotations
 
-import json
 import os
-import queue
-import subprocess
-import threading
-from collections.abc import Callable
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from contextlib import ExitStack, asynccontextmanager
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any
+
+from anyio.from_thread import start_blocking_portal
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
+
+if TYPE_CHECKING:
+    from xhx_agent.runtime.mcp_config import MCPServerConfig
+    from xhx_agent.tools.registry import ToolRegistry
+
+OnError = Callable[[str, Exception], None]
 
 
-def read_line_with_timeout(stream: Any, timeout: float = 5.0) -> str:
-    """Read a single line from stream in a separate thread with timeout."""
-    q: queue.Queue[tuple[str | None, Exception | None]] = queue.Queue()
+class MCPManager:
+    """管理所有 MCP server 连接，并把它们的工具注册进 ToolRegistry。
 
-    def reader():
-        try:
-            line = stream.readline()
-            q.put((line, None))
-        except Exception as e:
-            q.put((None, e))
+    生命周期：connect_all() → register_tools_to_registry() →（运行期 call_tool）→ close()。
+    单个 server 连接失败只回调 on_error 并跳过，不影响其余 server 与内置工具。
+    """
 
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-    try:
-        line, err = q.get(timeout=timeout)
-        if err:
-            raise err
-        return line or ""
-    except queue.Empty:
-        raise TimeoutError("Reading from MCP server timed out")
+    def __init__(self, request_timeout: float = 30.0) -> None:
+        self.request_timeout = request_timeout
+        self._stack: ExitStack | None = None
+        self._portal: Any = None
+        self._sessions: dict[str, Any] = {}
+        self._registry: ToolRegistry | None = None
+        self._registered_names: list[str] = []
 
-
-class MCPClient:
-    def __init__(
-        self,
-        command: list[str] | None = None,
-        is_mock: bool = False,
-        server_name: str | None = None,
-        allow_mock: bool = False,
-        env: dict[str, str] | None = None,
-    ) -> None:
-        self.command = command
-        self.server_name = server_name
-        self.allow_mock = allow_mock
-        self.env = env
-        self.is_mock = is_mock or (allow_mock and not command)
-        self.process: subprocess.Popen | None = None
-        self._next_id = 1
-        self._mock_tools: list[dict[str, Any]] = [
-            {
-                "name": "mcp_fetch_weather",
-                "description": "Get current weather for a city",
-                "inputSchema": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
-            },
-            {
-                "name": "mcp_calculate",
-                "description": "Run mathematical calculation",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"expression": {"type": "string"}},
-                    "required": ["expression"],
-                },
-            },
-        ]
-
-    def connect(self) -> None:
-        if self.is_mock or not self.command:
-            if not self.allow_mock:
-                raise ValueError("No command specified and mock is disabled")
+    # ---------- 生命周期 ----------
+    def connect_all(self, servers: list[MCPServerConfig], on_error: OnError | None = None) -> None:
+        if not servers:
             return
-
-        try:
-            merged_env = dict(os.environ)
-            if self.env:
-                merged_env.update(self.env)
-            # Start MCP server subprocess
-            self.process = subprocess.Popen(
-                self.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                env=merged_env,
-            )
-            # Initialize handshake
-            self._send_request(
-                "initialize",
-                {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "xhx-agent", "version": "1.0.0"},
-                },
-            )
-            # Send initialized notification
-            self._send_notification("initialized", {})
-        except Exception as e:
-            if not self.allow_mock:
-                raise RuntimeError(f"Failed to connect to MCP server: {e}")
-            # Fallback to mock on connection error
-            self.is_mock = True
-            self.process = None
+        self._stack = ExitStack()
+        # 后台事件循环线程；ExitStack 在 close() 时按 LIFO 先退会话、再停 portal。
+        self._portal = self._stack.enter_context(start_blocking_portal())
+        for cfg in servers:
+            try:
+                session = self._stack.enter_context(self._portal.wrap_async_context_manager(self._open(cfg)))
+                self._sessions[cfg.name] = session
+            except Exception as e:
+                if on_error is not None:
+                    on_error(cfg.name, e)
 
     def close(self) -> None:
-        if self.process:
-            self.process.terminate()
-            self.process.wait()
-            self.process = None
+        # 先注销注册过的工具：registry 是跨 run 共享的，避免残留指向已关会话的定义。
+        if self._registry is not None:
+            for name in self._registered_names:
+                self._registry.unregister(name)
+        self._registered_names = []
+        self._registry = None
+        self._sessions = {}
+        if self._stack is not None:
+            try:
+                self._stack.close()
+            except Exception:
+                pass
+        self._stack = None
+        self._portal = None
 
-    def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if self.is_mock or not self.process or not self.process.stdin or not self.process.stdout:
-            return {}
+    # ---------- 在 portal loop 里运行的 async 部分 ----------
+    @asynccontextmanager
+    async def _open(self, cfg: MCPServerConfig) -> AsyncIterator[Any]:
+        transport_cm = self._build_transport(cfg)
+        async with transport_cm as streams:
+            read, write = streams[0], streams[1]  # http 是 3 元组，stdio/sse 是 2 元组
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
-        req_id = self._next_id
-        self._next_id += 1
+    def _build_transport(self, cfg: MCPServerConfig) -> Any:
+        if cfg.transport == "stdio":
+            if cfg.command is None:
+                raise ValueError(f"stdio server {cfg.name} 缺少 command")
+            merged_env = {**os.environ, **(cfg.env or {})}
+            return stdio_client(StdioServerParameters(command=cfg.command, args=list(cfg.args), env=merged_env))
+        # http / sse 远程
+        if cfg.url is None:
+            raise ValueError(f"{cfg.transport} server {cfg.name} 缺少 url")
+        headers = self._resolve_headers(cfg)
+        if cfg.transport == "http":
+            return streamablehttp_client(cfg.url, headers=headers or None)
+        return sse_client(cfg.url, headers=headers or None)
 
-        msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+    def _resolve_headers(self, cfg: MCPServerConfig) -> dict[str, str]:
+        """静态认证：auth_token（非空优先）→ auth_token_env 环境变量 → 无（不加 Authorization）。"""
+        headers = dict(cfg.headers or {})
+        token = cfg.auth_token
+        if not token and cfg.auth_token_env:
+            token = os.environ.get(cfg.auth_token_env, "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
 
-        try:
-            self.process.stdin.write(json.dumps(msg) + "\n")
-            self.process.stdin.flush()
+    # ---------- 同步操作（桥接到 portal） ----------
+    def list_tools(self, server: str) -> list[Any]:
+        session = self._sessions[server]
+        result = self._portal.call(session.list_tools)
+        return list(result.tools)
 
-            line = read_line_with_timeout(self.process.stdout, timeout=5.0)
-            if not line:
-                raise OSError("Empty response from MCP server stdout")
-            return json.loads(line)
-        except Exception as e:
-            if not self.allow_mock:
-                raise RuntimeError(f"MCP request failed: {e}")
-            # Fallback
-            self.is_mock = True
-            return {}
+    def call_tool(self, server: str, name: str, arguments: dict[str, Any]) -> Any:
+        session = self._sessions[server]
+        timeout = self.request_timeout
 
-    def _send_notification(self, method: str, params: dict[str, Any]) -> None:
-        if self.is_mock or not self.process or not self.process.stdin:
-            return
-        msg = {"jsonrpc": "2.0", "method": method, "params": params}
-        try:
-            self.process.stdin.write(json.dumps(msg) + "\n")
-            self.process.stdin.flush()
-        except Exception:
-            pass
+        async def _acall() -> Any:
+            return await session.call_tool(name, arguments, read_timeout_seconds=timedelta(seconds=timeout))
 
-    def list_tools(self) -> list[dict[str, Any]]:
-        if self.is_mock:
-            if self.server_name:
-                tools = []
-                for t in self._mock_tools:
-                    orig = t["name"][4:] if t["name"].startswith("mcp_") else t["name"]
-                    tools.append(
-                        {
-                            "name": f"mcp_{self.server_name}_{orig}",
-                            "original_name": orig,
-                            "description": t.get("description", ""),
-                            "inputSchema": t.get("inputSchema", {}),
-                        }
-                    )
-                return tools
-            return self._mock_tools
+        return self._portal.call(_acall)
 
-        res = self._send_request("tools/list", {})
-        if "result" in res and "tools" in res["result"]:
-            tools = []
-            for t in res["result"]["tools"]:
-                name = t["name"]
-                if self.server_name:
-                    tool_name = f"mcp_{self.server_name}_{name}"
-                else:
-                    tool_name = f"mcp_{name}" if not name.startswith("mcp_") else name
-                tools.append(
-                    {
-                        "name": tool_name,
-                        "original_name": t["name"],
-                        "description": t.get("description", ""),
-                        "inputSchema": t.get("inputSchema", {}),
-                    }
-                )
-            return tools
-        if not self.allow_mock:
-            return []
-        return self._mock_tools
-
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self.is_mock:
-            tool_key = name
-            if self.server_name and name.startswith(f"mcp_{self.server_name}_"):
-                tool_key = f"mcp_{name[len(f'mcp_{self.server_name}_') :]}"
-
-            if tool_key == "mcp_fetch_weather":
-                city = arguments.get("city", "Beijing")
-                return {"content": [{"type": "text", "text": f"The weather in {city} is sunny, 22°C."}]}
-            if tool_key == "mcp_calculate":
-                expr = arguments.get("expression", "2+2")
-                try:
-                    import ast
-                    import operator
-
-                    safe_binops: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
-                        ast.Add: operator.add,
-                        ast.Sub: operator.sub,
-                        ast.Mult: operator.mul,
-                        ast.Div: operator.truediv,
-                    }
-                    safe_unaryops: dict[type[ast.unaryop], Callable[[Any], Any]] = {
-                        ast.USub: operator.neg,
-                        ast.UAdd: lambda x: x,
-                    }
-
-                    def _eval_node(node: ast.AST) -> Any:
-                        if isinstance(node, ast.Expression):
-                            return _eval_node(node.body)
-                        elif isinstance(node, ast.Constant):
-                            if isinstance(node.value, (int, float)):
-                                return node.value
-                            raise TypeError("Only numeric constants allowed")
-                        elif isinstance(node, ast.BinOp):
-                            left = _eval_node(node.left)
-                            right = _eval_node(node.right)
-                            binop_type = type(node.op)
-                            if binop_type in safe_binops:
-                                return safe_binops[binop_type](left, right)
-                            raise NotImplementedError(f"Operator {binop_type} not supported")
-                        elif isinstance(node, ast.UnaryOp):
-                            operand = _eval_node(node.operand)
-                            unaryop_type = type(node.op)
-                            if unaryop_type in safe_unaryops:
-                                return safe_unaryops[unaryop_type](operand)
-                            raise NotImplementedError(f"Unary operator {unaryop_type} not supported")
-                        raise TypeError(f"Unsupported AST node type: {type(node)}")
-
-                    tree = ast.parse(expr, mode="eval")
-                    val = _eval_node(tree)
-                    return {"content": [{"type": "text", "text": str(val)}]}
-                except Exception as e:
-                    return {"content": [{"type": "text", "text": f"Error: {e}"}]}
-            return {"content": [{"type": "text", "text": f"Mock tool {name} executed."}]}
-
-        original_name = name
-        if self.server_name:
-            prefix = f"mcp_{self.server_name}_"
-            if name.startswith(prefix):
-                original_name = name[len(prefix) :]
-        else:
-            if name.startswith("mcp_"):
-                original_name = name[4:]
-
-        res = self._send_request("tools/call", {"name": original_name, "arguments": arguments})
-        if "result" in res:
-            return res["result"]
-        if "error" in res:
-            return {"isError": True, "content": [{"type": "text", "text": str(res["error"])}]}
-        return {"content": [{"type": "text", "text": f"Error calling tool {name}"}]}
-
-    def register_tools_to_registry(self, registry: Any) -> None:
-        """Register MCP tools to ToolRegistry as runnable tools."""
+    # ---------- 工具注册 ----------
+    def register_tools_to_registry(self, registry: ToolRegistry) -> None:
         from xhx_agent.tools.registry import ToolContext, ToolDefinition, ToolExecutionResult
 
-        tools = self.list_tools()
-        for t in tools:
-            tool_name = t["name"]
-            input_schema = t.get("inputSchema", {})
-            description = t.get("description", "")
+        self._registry = registry
+        for server_name in self._sessions:
+            for tool in self.list_tools(server_name):
+                full_name = f"mcp_{server_name}_{tool.name}"
+                description = tool.description or f"MCP tool {full_name}"
+                parameters = tool.inputSchema or {"type": "object", "properties": {}}
 
-            # Define runner closure
-            def make_runner(name: str):
-                def runner(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
-                    try:
-                        res = self.call_tool(name, arguments)
-                        is_error = res.get("isError", False)
-                        content_list = res.get("content", [])
-                        text_outputs = []
-                        for item in content_list:
-                            if item.get("type") == "text":
-                                text_outputs.append(item.get("text", ""))
-                        summary = "\n".join(text_outputs) or f"Tool {name} completed."
+                def make_runner(srv: str, original: str, fname: str) -> Any:
+                    def runner(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+                        try:
+                            result = self.call_tool(srv, original, dict(arguments))
+                            texts = [t for t in (getattr(item, "text", None) for item in result.content) if t]
+                            summary = "\n".join(texts) or f"Tool {fname} completed."
+                            is_error = bool(getattr(result, "isError", False))
+                            return ToolExecutionResult(
+                                tool=fname,
+                                status="failed" if is_error else "success",
+                                summary=summary,
+                                trace_payload={
+                                    "tool": fname,
+                                    "arguments": arguments,
+                                    "result": result.model_dump(mode="json"),
+                                },
+                                evidence_kind="decision",
+                                evidence_source=fname,
+                                evidence_summary=summary,
+                            )
+                        except Exception as e:
+                            return ToolExecutionResult(
+                                tool=fname,
+                                status="failed",
+                                summary=f"Error executing MCP tool {fname}: {e}",
+                                trace_payload={"tool": fname, "arguments": arguments, "error": str(e)},
+                                error=str(e),
+                            )
 
-                        return ToolExecutionResult(
-                            tool=name,
-                            status="failed" if is_error else "success",
-                            summary=summary,
-                            trace_payload={"tool": name, "arguments": arguments, "result": res},
-                            evidence_kind="decision",
-                            evidence_source=name,
-                            evidence_summary=summary,
-                        )
-                    except Exception as e:
-                        return ToolExecutionResult(
-                            tool=name,
-                            status="failed",
-                            summary=f"Error executing MCP tool {name}: {e}",
-                            trace_payload={"tool": name, "arguments": arguments, "error": str(e)},
-                            error=str(e),
-                        )
+                    return runner
 
-                return runner
-
-            # Register as ToolDefinition
-            d = ToolDefinition(
-                name=tool_name,
-                description=description or f"MCP tool {tool_name}",
-                parameters=input_schema or {"type": "object", "properties": {}},
-                runner=make_runner(tool_name),
-            )
-            registry.register_definition(d)
+                registry.register_definition(
+                    ToolDefinition(
+                        name=full_name,
+                        description=description,
+                        parameters=parameters,
+                        runner=make_runner(server_name, tool.name, full_name),
+                    )
+                )
+                self._registered_names.append(full_name)

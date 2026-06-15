@@ -20,7 +20,7 @@ def test_package_exports() -> None:
     assert xhx_agent.SkillLoader is not None
     assert xhx_agent.HooksManager is not None
     assert xhx_agent.hooks_manager is not None
-    assert xhx_agent.MCPClient is not None
+    assert xhx_agent.MCPManager is not None
     assert xhx_agent.TrailReplayer is not None
     assert xhx_agent.BenchmarkRunner is not None
     assert xhx_agent.start_rpc_loop is not None
@@ -41,7 +41,7 @@ def test_package_all_attribute() -> None:
         "SkillLoader",
         "HooksManager",
         "hooks_manager",
-        "MCPClient",
+        "MCPManager",
         "TrailReplayer",
         "BenchmarkRunner",
         "start_rpc_loop",

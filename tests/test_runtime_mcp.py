@@ -1,63 +1,67 @@
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.mcp_config import MCPServerConfig
-from xhx_agent.skills.mcp import MCPClient
 
 
 def test_mcp_integration_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Setup test workspace
     (tmp_path / ".xhx").mkdir()
     app = RuntimeApp(workspace=tmp_path)
     app.init_project()
 
-    # Fake server config
-    fake_config = [
-        MCPServerConfig(name="test-server", command="node", args=["index.js"], env={"FOO": "BAR"}, transport="stdio")
-    ]
+    fake_config = [MCPServerConfig(name="test-server", command="node", args=["index.js"], env={"FOO": "BAR"})]
 
-    # Mock load_mcp_servers to return our config
-    monkeypatch.setattr("xhx_agent.runtime.mcp_config.load_mcp_servers", lambda ws: fake_config)
+    captured: dict[str, object] = {}
 
-    # Track close calls
-    close_called = False
+    def fake_load(ws: Path) -> list[MCPServerConfig]:
+        captured["ws"] = ws
+        return fake_config
 
-    class FakeMCPClient(MCPClient):
-        def connect(self) -> None:
-            # Succeeds
-            pass
+    monkeypatch.setattr("xhx_agent.runtime.mcp_config.load_mcp_servers", fake_load)
+
+    created = []
+
+    class FakeManager:
+        def __init__(self, request_timeout: float = 30.0) -> None:
+            self.closed = False
+            created.append(self)
+
+        def connect_all(self, servers, on_error=None) -> None:
+            self.servers = servers
+
+        def register_tools_to_registry(self, registry) -> None:
+            from xhx_agent.tools.registry import ToolDefinition, ToolExecutionResult
+
+            registry.register_definition(
+                ToolDefinition(
+                    name="mcp_test-server_hello",
+                    description="Say hello",
+                    parameters={"type": "object", "properties": {}},
+                    runner=lambda c, a: ToolExecutionResult(
+                        tool="mcp_test-server_hello", status="success", summary="ok", trace_payload={}
+                    ),
+                )
+            )
 
         def close(self) -> None:
-            nonlocal close_called
-            close_called = True
+            self.closed = True
 
-        def list_tools(self) -> list[dict[str, Any]]:
-            return [
-                {
-                    "name": "mcp_test-server_hello",
-                    "original_name": "hello",
-                    "description": "Say hello",
-                    "inputSchema": {"type": "object", "properties": {}},
-                }
-            ]
+    monkeypatch.setattr("xhx_agent.skills.mcp.MCPManager", FakeManager)
 
-    # Monkeypatch MCPClient creation
-    monkeypatch.setattr("xhx_agent.skills.mcp.MCPClient", FakeMCPClient)
-
-    # Mock CoderAgent/Orchestrator to avoid hitting actual LLMs/completing loop immediately
     from xhx_agent.models.types import ModelPlan
 
     app._build_plan = lambda *args, **kwargs: ModelPlan(summary="Done", status="done", steps=[])
 
-    # Run the task
     result = app.run_task("do nothing", profile_name="mock", mode="linear")
 
-    # Check that tools are registered
+    # 工具注册成功（fake close 不注销，便于断言）
     assert "mcp_test-server_hello" in app.tool_registry.names
-    assert close_called is True
+    # 生命周期 close 被调
+    assert created[0].closed is True
+    # 配置从 original_workspace（项目根）加载，而非 worktree
+    assert captured["ws"] == tmp_path.resolve()
     assert result.status == "success"
 
 
@@ -66,17 +70,24 @@ def test_mcp_integration_connect_fail(tmp_path: Path, monkeypatch: pytest.Monkey
     app = RuntimeApp(workspace=tmp_path)
     app.init_project()
 
-    fake_config = [MCPServerConfig(name="failed-server", command="invalid_command", args=[], env={}, transport="stdio")]
+    fake_config = [MCPServerConfig(name="failed-server", command="invalid_command")]
     monkeypatch.setattr("xhx_agent.runtime.mcp_config.load_mcp_servers", lambda ws: fake_config)
 
-    class FailedMCPClient(MCPClient):
-        def connect(self) -> None:
-            raise RuntimeError("Spawn failed")
+    class FailManager:
+        def __init__(self, request_timeout: float = 30.0) -> None:
+            self.closed = False
 
-        def close(self) -> None:
+        def connect_all(self, servers, on_error=None) -> None:
+            if on_error is not None:
+                on_error("failed-server", RuntimeError("Spawn failed"))
+
+        def register_tools_to_registry(self, registry) -> None:
             pass
 
-    monkeypatch.setattr("xhx_agent.skills.mcp.MCPClient", FailedMCPClient)
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("xhx_agent.skills.mcp.MCPManager", FailManager)
 
     from xhx_agent.models.types import ModelPlan
 
@@ -85,10 +96,9 @@ def test_mcp_integration_connect_fail(tmp_path: Path, monkeypatch: pytest.Monkey
     events = []
     result = app.run_task("do nothing", profile_name="mock", event_callback=events.append, mode="linear")
 
-    # Check that failure did not block execution
+    # 失败不阻塞执行
     assert result.status == "success"
-    # Event mcp_server_failed should be emitted
-    event_types = [e.type for e in events]
-    assert "mcp_server_failed" in event_types
-    # Inner tools are still available
+    # 发了 mcp_server_failed 事件
+    assert "mcp_server_failed" in [e.type for e in events]
+    # 内置工具仍可用
     assert "search" in app.tool_registry.names

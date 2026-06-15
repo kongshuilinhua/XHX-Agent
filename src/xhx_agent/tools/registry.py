@@ -448,6 +448,11 @@ class ToolRegistry:
         if d.runner is not None:
             self._tools[d.name] = d.runner
 
+    def unregister(self, name: str) -> None:
+        """移除一个已注册工具（含 schema 定义）。MCP server 关闭时用，避免共享 registry 残留陈旧定义。"""
+        self._tools.pop(name, None)
+        self._definitions.pop(name, None)
+
     def definition(self, name: str) -> ToolDefinition | None:
         return self._definitions.get(name)
 
