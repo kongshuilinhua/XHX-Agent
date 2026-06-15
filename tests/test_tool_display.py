@@ -46,8 +46,7 @@ def test_tool_header_apply_patch():
 
 def test_tool_header_dispatch():
     assert (
-        tool_header("dispatch", {"agent_type": "write", "description": "fixing bugs"})
-        == "dispatch[write] fixing bugs"
+        tool_header("dispatch", {"agent_type": "write", "description": "fixing bugs"}) == "dispatch[write] fixing bugs"
     )
     assert tool_header("dispatch", {"description": "fixing bugs"}) == "dispatch[explore] fixing bugs"
     assert tool_header("dispatch", {}) == "dispatch[explore]"

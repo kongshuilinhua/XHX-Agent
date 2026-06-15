@@ -225,10 +225,17 @@ class PlanOrchestrator:
 
         answer = state["answer"]
 
-        verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, checkpoint_path, restore_plan_path = (
-            self._verify_and_repair(
-                ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state
-            )
+        (
+            verification,
+            verification_results,
+            commands_run,
+            repair_attempts,
+            repair_decision,
+            turns_used,
+            checkpoint_path,
+            restore_plan_path,
+        ) = self._verify_and_repair(
+            ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state
         )
         answer = state["answer"]
 
@@ -306,7 +313,16 @@ class PlanOrchestrator:
         repair_decision = None
         checkpoint = None
         if not changed_files or status in {"failed", "cancelled"}:
-            return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, None, None
+            return (
+                verification,
+                verification_results,
+                commands_run,
+                repair_attempts,
+                repair_decision,
+                turns_used,
+                None,
+                None,
+            )
 
         from xhx_agent.verification.router import infer_verification
 
@@ -375,8 +391,7 @@ class PlanOrchestrator:
                 {
                     "role": "user",
                     "content": (
-                        f"Verification failed:\n{err}\n"
-                        "Fix the code so the tests pass. Use apply_patch, then stop."
+                        f"Verification failed:\n{err}\nFix the code so the tests pass. Use apply_patch, then stop."
                     ),
                 }
             )
@@ -394,10 +409,23 @@ class PlanOrchestrator:
             restore_plan_created = True
             emit_event(ctx.event_callback, "restore_plan", "Restore plan created.", run_id=ctx.run_id)
 
-        checkpoint_path = str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint is not None else None
-        restore_plan_path = str(restore_plan_path_value(ctx.original_workspace, ctx.run_id)) if restore_plan_created else None
+        checkpoint_path = (
+            str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint is not None else None
+        )
+        restore_plan_path = (
+            str(restore_plan_path_value(ctx.original_workspace, ctx.run_id)) if restore_plan_created else None
+        )
 
-        return verification, verification_results, commands_run, repair_attempts, repair_decision, turns_used, checkpoint_path, restore_plan_path
+        return (
+            verification,
+            verification_results,
+            commands_run,
+            repair_attempts,
+            repair_decision,
+            turns_used,
+            checkpoint_path,
+            restore_plan_path,
+        )
 
     def _drive(
         self,

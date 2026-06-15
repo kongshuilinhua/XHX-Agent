@@ -220,6 +220,7 @@ def _relative_time(t_str: str | None, created_at: str | None, now: datetime) -> 
     # Align tzinfo to prevent TypeError: can't subtract offset-naive and offset-aware datetimes
     if t.tzinfo is not None and now.tzinfo is None:
         from datetime import UTC
+
         now = now.replace(tzinfo=UTC)
     elif t.tzinfo is None and now.tzinfo is not None:
         now = now.replace(tzinfo=None)
@@ -269,11 +270,6 @@ def prune_legacy_sessions(workspace: Path) -> int:
 
     if removed_count > 0:
         # Overwrite history.jsonl directly (no backup)
-        path.write_text(
-            "".join(e.model_dump_json() + "\n" for e in valid_entries),
-            encoding="utf-8"
-        )
+        path.write_text("".join(e.model_dump_json() + "\n" for e in valid_entries), encoding="utf-8")
 
     return removed_count
-
-

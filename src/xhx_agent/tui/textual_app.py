@@ -127,9 +127,7 @@ class TextualSnapshot:
         run_id = state.run_id or "none"
         header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
         streaming = getattr(state, "is_streaming", False)
-        ctx_label, _, ctx_level = context_meter(
-            state.context_used_tokens_estimate, state.context_budget_tokens
-        )
+        ctx_label, _, ctx_level = context_meter(state.context_used_tokens_estimate, state.context_budget_tokens)
         if ctx_level == "ok":
             ctx_str = f"[green]{ctx_label}[/green]"
         elif ctx_level == "warn":
@@ -173,12 +171,14 @@ class TextualSnapshot:
         else:
             if state.task:
                 task_text = state.task
-                if task_text.startswith("Follow-up task in the same console session."):
-                    if "\nUser request:\n" in task_text:
-                        parts = task_text.split("\nUser request:\n", 1)
-                        if len(parts) > 1:
-                            subparts = parts[1].split("\n\nPrevious run context:", 1)
-                            task_text = subparts[0].strip()
+                if (
+                    task_text.startswith("Follow-up task in the same console session.")
+                    and "\nUser request:\n" in task_text
+                ):
+                    parts = task_text.split("\nUser request:\n", 1)
+                    if len(parts) > 1:
+                        subparts = parts[1].split("\n\nPrevious run context:", 1)
+                        task_text = subparts[0].strip()
                 conversation_lines.append(f"user> {task_text}")
             if state.plan_summary:
                 conversation_lines.append(f"plan> {state.plan_summary}")
@@ -241,6 +241,7 @@ class TextualSnapshot:
 
 def get_clipboard_text() -> str | None:
     import sys
+
     if sys.platform != "win32":
         return None
     try:
@@ -261,7 +262,7 @@ def get_clipboard_text() -> str | None:
         kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
         kernel32.GlobalUnlock.restype = wintypes.BOOL
 
-        CF_UNICODETEXT = 13
+        CF_UNICODETEXT = 13  # noqa: N806  Win32 剪贴板格式常量，按惯例全大写
 
         if not user32.OpenClipboard(None):
             return None
@@ -297,12 +298,15 @@ class WrappingOptionList(OptionList):
     def action_cursor_up(self) -> None:
         count = self.option_count
         if count:
-            self.highlighted = count - 1 if self.highlighted in (None, 0) else self.highlighted - 1
+            h = self.highlighted
+            self.highlighted = count - 1 if h is None or h == 0 else h - 1
 
     def action_cursor_down(self) -> None:
         count = self.option_count
         if count:
-            self.highlighted = 0 if (self.highlighted is None or self.highlighted >= count - 1) else self.highlighted + 1
+            self.highlighted = (
+                0 if (self.highlighted is None or self.highlighted >= count - 1) else self.highlighted + 1
+            )
 
 
 class TextualCommandConsoleApp(App[None]):
@@ -526,10 +530,27 @@ class TextualCommandConsoleApp(App[None]):
             parts = stripped.split(" ", 1)
             cmd = parts[0]
             valid_commands = {
-                "/help", "/model", "/status", "/plan", "/context", "/evidence",
-                "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
-                "/cancel", "/live", "/allow", "/deny", "/clear", "/new", "/sessions",
-                "/resume", "/exit"
+                "/help",
+                "/model",
+                "/status",
+                "/plan",
+                "/context",
+                "/evidence",
+                "/diff",
+                "/verify",
+                "/repair",
+                "/skills",
+                "/mode",
+                "/dashboard",
+                "/cancel",
+                "/live",
+                "/allow",
+                "/deny",
+                "/clear",
+                "/new",
+                "/sessions",
+                "/resume",
+                "/exit",
             }
             if cmd in valid_commands:
                 self.hide_interactive_container()
@@ -561,10 +582,27 @@ class TextualCommandConsoleApp(App[None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.value.startswith("/"):
             valid_commands = {
-                "/help", "/model", "/status", "/plan", "/context", "/evidence",
-                "/diff", "/verify", "/repair", "/skills", "/mode", "/dashboard",
-                "/cancel", "/live", "/allow", "/deny", "/clear", "/new", "/sessions",
-                "/resume", "/exit"
+                "/help",
+                "/model",
+                "/status",
+                "/plan",
+                "/context",
+                "/evidence",
+                "/diff",
+                "/verify",
+                "/repair",
+                "/skills",
+                "/mode",
+                "/dashboard",
+                "/cancel",
+                "/live",
+                "/allow",
+                "/deny",
+                "/clear",
+                "/new",
+                "/sessions",
+                "/resume",
+                "/exit",
             }
             if event.value in valid_commands:
                 self.hide_interactive_container()
@@ -645,7 +683,14 @@ class TextualCommandConsoleApp(App[None]):
         self.append_message(f"system> run finished: {result.status}, verification: {result.verification}")
         view_path = save_view_log(self.workspace, result.run_id, self.messages)
         turn_count = sum(1 for e in list_sessions(self.workspace) if e.conversation_id == self.conversation_id) + 1
-        record_session(self.workspace, task, result, conversation_id=self.conversation_id, view_path=view_path, turn_count=turn_count)
+        record_session(
+            self.workspace,
+            task,
+            result,
+            conversation_id=self.conversation_id,
+            view_path=view_path,
+            turn_count=turn_count,
+        )
         # Carry the full conversation forward: this run's transcript already includes the prior
         # history we passed in, so the next turn restores complete context (real memory).
         self._refresh_prior_messages(result)
@@ -850,9 +895,7 @@ class TextualCommandConsoleApp(App[None]):
                 "/verbose   - Toggle verbose inline tool call details",
                 "/exit      - Exit the textual command console",
             ]
-            self.append_message(
-                "system> available commands:\n" + "\n".join(cmds_list)
-            )
+            self.append_message("system> available commands:\n" + "\n".join(cmds_list))
             self.set_detail(
                 "help",
                 "\n".join(
@@ -937,6 +980,7 @@ class TextualCommandConsoleApp(App[None]):
         if command == "/sessions":
             if argument.strip() == "clear":
                 from xhx_agent.runtime.session import prune_legacy_sessions
+
                 n = prune_legacy_sessions(self.workspace)
                 self.append_message(f"system> 已清理 {n} 条旧会话")
                 self.refresh_snapshot()
@@ -1162,6 +1206,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def print_skills(self) -> None:
         import re
+
         skill_root = self.workspace / ".xhx" / "skills"
         if not skill_root.exists():
             self.append_message("system> skills: none")
@@ -1192,7 +1237,9 @@ class TextualCommandConsoleApp(App[None]):
                         desc_match = re.search(r"^description:\s*(.*)$", yaml_text, re.MULTILINE)
                         if desc_match:
                             desc_val = desc_match.group(1).strip()
-                            if (desc_val.startswith('"') and desc_val.endswith('"')) or (desc_val.startswith("'") and desc_val.endswith("'")):
+                            if (desc_val.startswith('"') and desc_val.endswith('"')) or (
+                                desc_val.startswith("'") and desc_val.endswith("'")
+                            ):
                                 desc_val = desc_val[1:-1]
                             description = desc_val
                 except Exception:
@@ -1202,6 +1249,7 @@ class TextualCommandConsoleApp(App[None]):
                 if json_path.exists():
                     try:
                         import json
+
                         with open(json_path, encoding="utf-8") as f:
                             data = json.load(f)
                             description = data.get("description", "")
@@ -1280,10 +1328,12 @@ class TextualCommandConsoleApp(App[None]):
                 bar_line = bar_str
 
             pct_val = pct if pct is not None else 0.0
-            detail_lines.extend([
-                f"Context {human_tokens(used)} / {human_tokens(budget)} ({pct_val:.1f}%)",
-                bar_line,
-            ])
+            detail_lines.extend(
+                [
+                    f"Context {human_tokens(used)} / {human_tokens(budget)} ({pct_val:.1f}%)",
+                    bar_line,
+                ]
+            )
 
         detail_lines.append(f"── 本轮 (turn {self.state.context_turn or 0})")
         detail_lines.append(
@@ -1349,6 +1399,7 @@ class TextualCommandConsoleApp(App[None]):
             line = f"  ⟶ {header}"
             if getattr(self, "verbose", False):
                 import json
+
                 try:
                     args_str = json.dumps(p.get("arguments", {}), ensure_ascii=False, separators=(",", ":"))
                 except Exception:
@@ -1362,8 +1413,17 @@ class TextualCommandConsoleApp(App[None]):
             glyph = "✗" if str(p.get("status")) in {"failed", "error", "denied"} else "✓"
             tail = f" → {summary}" if summary else ""
             return f"  {glyph} {p.get('tool', '?')}{tail}"
-        if et in {"graph_coordinator", "graph_worker", "graph_execute", "graph_review", "graph_planner",
-                  "graph_node", "graph_joiner", "graph_verify", "graph_repair"}:
+        if et in {
+            "graph_coordinator",
+            "graph_worker",
+            "graph_execute",
+            "graph_review",
+            "graph_planner",
+            "graph_node",
+            "graph_joiner",
+            "graph_verify",
+            "graph_repair",
+        }:
             role = et.removeprefix("graph_")
             msg = (event.message or "").strip().replace("\n", " ")
             if len(msg) > 100:
@@ -1516,9 +1576,7 @@ class TextualCommandConsoleApp(App[None]):
                 done.set()
 
         def show() -> None:
-            self._append_message(
-                f"system> 记忆候选 [{candidate.mtype}] {candidate.name}: {candidate.description}"
-            )
+            self._append_message(f"system> 记忆候选 [{candidate.mtype}] {candidate.name}: {candidate.description}")
             self.present_picker(
                 [("记住（写入长期记忆）", "remember"), ("跳过", "skip")],
                 on_select=on_select,
@@ -1572,11 +1630,7 @@ class TextualCommandConsoleApp(App[None]):
             ("/verbose", "Toggle verbose inline tool call details"),
             ("/exit", "Exit the textual command console"),
         ]
-        filtered = [
-            (f"{cmd:<10} | {desc}", cmd)
-            for cmd, desc in all_commands
-            if cmd.startswith(filter_prefix)
-        ]
+        filtered = [(f"{cmd:<10} | {desc}", cmd) for cmd, desc in all_commands if cmd.startswith(filter_prefix)]
         if not filtered:
             self.hide_interactive_container()
             return
@@ -1766,6 +1820,7 @@ class TextualCommandConsoleApp(App[None]):
         from rich.text import Text
 
         from xhx_agent.runtime.session import format_session_line, format_session_meta, list_conversations
+
         # One entry per conversation (a multi-turn dialogue collapses to its latest, full transcript).
         conversations = list_conversations(self.workspace)
         if not conversations:
@@ -1825,12 +1880,16 @@ class TextualCommandConsoleApp(App[None]):
             else:
                 self.append_message(f"system> Session '{run_id}' not found.")
                 return
+        if not entry:
+            self.append_message(f"system> Session '{run_id}' not found.")
+            return
 
         self.active_detail = "overview"
         self.detail_text = (
             "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
         )
         from xhx_agent.runtime.app import RunResult
+
         result = RunResult(
             run_id=entry.run_id,
             status=entry.status,
@@ -1864,13 +1923,15 @@ class TextualCommandConsoleApp(App[None]):
                 if role == "system":
                     continue
                 if role == "user":
-                    task_text = content
-                    if task_text.startswith("Follow-up task in the same console session."):
-                        if "\nUser request:\n" in task_text:
-                            parts = task_text.split("\nUser request:\n", 1)
-                            if len(parts) > 1:
-                                subparts = parts[1].split("\n\nPrevious run context:", 1)
-                                task_text = subparts[0].strip()
+                    task_text = content or ""
+                    if (
+                        task_text.startswith("Follow-up task in the same console session.")
+                        and "\nUser request:\n" in task_text
+                    ):
+                        parts = task_text.split("\nUser request:\n", 1)
+                        if len(parts) > 1:
+                            subparts = parts[1].split("\n\nPrevious run context:", 1)
+                            task_text = subparts[0].strip()
                     self.messages.append(f"user> {task_text}")
                 elif role == "assistant":
                     if content:
@@ -1888,6 +1949,7 @@ class TextualCommandConsoleApp(App[None]):
         lines = []
         recent_tools = self.state.tools[-10:]
         import json
+
         for t in recent_tools:
             glyph = "✗" if t.status in {"failed", "error", "denied"} else "✓"
             header = tool_header(t.tool, t.arguments)
@@ -1908,6 +1970,7 @@ class TextualCommandConsoleApp(App[None]):
 
         self.append_message(f"system> 最近 {len(recent_tools)} 次工具调用已展示在面板")
         self.set_detail("tools", "\n".join(lines))
+
 
 def run_textual_console(
     *,

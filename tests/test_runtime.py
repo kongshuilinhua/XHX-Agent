@@ -1054,7 +1054,9 @@ def test_plan_concurrently_executes_readonly_steps(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(planmod, "build_chat_client", lambda profile: _Fake())
     events = []
 
-    result = RuntimeApp(tmp_path).run_task("explore files", profile_name="real", mode="plan", event_callback=events.append)
+    result = RuntimeApp(tmp_path).run_task(
+        "explore files", profile_name="real", mode="plan", event_callback=events.append
+    )
 
     assert result.status == "success"
     assert any(event.type == "subagent_concurrent" for event in events)

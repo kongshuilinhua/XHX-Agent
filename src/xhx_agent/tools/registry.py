@@ -241,7 +241,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "+++ b/src/new_file.py\n"
             "@@ -0,0 +1,2 @@\n"
             "+def hello():\n"
-            "+    print(\"hello\")"
+            '+    print("hello")'
         ),
         parameters={
             "type": "object",

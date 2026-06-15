@@ -149,6 +149,7 @@ def _interpret_plan(result: Any, task: str) -> tuple[str | None, list[DAGNode]]:
 def _validate_dag(nodes: list[DAGNode]) -> None:
     """校验失败抛异常（由调用方兜底）。"""
     from xhx_agent.planner.planner import topological_sort
+
     ids = {n.node_id for n in nodes}
     if len(ids) != len(nodes):
         raise ValueError("duplicate ids")
@@ -175,11 +176,17 @@ def _plan(
     ]
     if feedback:
         prior = "\n".join(f"- {n.node_id} ({n.agent_type}): {n.result}" for n in (prior_nodes or []))
-        messages.append({"role": "user", "content":
-            "A previous attempt produced these sub-agent results:\n" + (prior or "(none)") +
-            "\n\nA reviewer judged the result INSUFFICIENT:\n" + feedback +
-            "\n\nProduce a corrective task DAG that specifically addresses the gap (or call answer_user if it "
-            "can now be answered directly). Do NOT repeat work already done correctly."})
+        messages.append(
+            {
+                "role": "user",
+                "content": "A previous attempt produced these sub-agent results:\n"
+                + (prior or "(none)")
+                + "\n\nA reviewer judged the result INSUFFICIENT:\n"
+                + feedback
+                + "\n\nProduce a corrective task DAG that specifically addresses the gap (or call answer_user if it "
+                "can now be answered directly). Do NOT repeat work already done correctly.",
+            }
+        )
     result = chat_and_count(ctx, client, messages, _PLANNER_TOOLS, turn=0)
     return _interpret_plan(result, ctx.task)
 
@@ -301,10 +308,12 @@ class GraphOrchestrator:
 
         def planner(state: _GraphState) -> dict[str, Any]:
             # 调用前先发进度，否则 planner 这次 LLM 调用期间界面零反馈、看起来卡死。
-            emit_event(ctx.event_callback, "graph_planner",
-                       "Re-planning with feedback…" if state.get("joiner_feedback") else "Planning the task…")
-            answer, nodes = _plan(ctx, client, feedback=state.get("joiner_feedback"),
-                                  prior_nodes=state.get("nodes"))
+            emit_event(
+                ctx.event_callback,
+                "graph_planner",
+                "Re-planning with feedback…" if state.get("joiner_feedback") else "Planning the task…",
+            )
+            answer, nodes = _plan(ctx, client, feedback=state.get("joiner_feedback"), prior_nodes=state.get("nodes"))
             if answer is not None:
                 emit_event(ctx.event_callback, "graph_planner", "Answered directly (no code work needed).")
                 return {"answer": answer, "nodes": []}
@@ -328,9 +337,11 @@ class GraphOrchestrator:
                 # 变量替换：读已完成依赖的 result（DAGScheduler 在依赖波次已把 result 写回节点）。
                 done = {n.node_id: n.result for n in nodes if n.result is not None}
                 emit_event(
-                    ctx.event_callback, "graph_node",
+                    ctx.event_callback,
+                    "graph_node",
                     f"Running DAG node {node.node_id} ({node.agent_type}).",
-                    node_id=node.node_id, agent_type=node.agent_type,
+                    node_id=node.node_id,
+                    agent_type=node.agent_type,
                 )
                 ch, text = _run_dag_node(ctx, node, done, turn=1, seed_files=prior_changed)
                 with changed_lock:
@@ -338,6 +349,7 @@ class GraphOrchestrator:
                 return True, text  # 异常交给 DAGScheduler 捕获 → 该节点 failed、下游 blocked
 
             from xhx_agent.runtime.config import load_config
+
             max_workers = load_config(ctx.original_workspace).max_parallel_subagents
             dag_ok = DAGScheduler(ctx.original_workspace).execute(plan, _cb, max_workers=max_workers)
             return {
@@ -360,10 +372,16 @@ class GraphOrchestrator:
                 return {"verification": vplan.skip_reason or "not_executed"}
 
             checkpoint = ctx.kernel.create_checkpoint(changed)
-            emit_event(ctx.event_callback, "checkpoint", "Checkpoint created.",
-                       checkpoint_id=checkpoint.id, changed_files=changed)
-            emit_event(ctx.event_callback, "graph_verify",
-                       f"Verifying {len(vplan.commands)} command(s)…")  # 跑测试前进度，测试可能慢
+            emit_event(
+                ctx.event_callback,
+                "checkpoint",
+                "Checkpoint created.",
+                checkpoint_id=checkpoint.id,
+                changed_files=changed,
+            )
+            emit_event(
+                ctx.event_callback, "graph_verify", f"Verifying {len(vplan.commands)} command(s)…"
+            )  # 跑测试前进度，测试可能慢
 
             results: list[Any] = []
             cmds: list[str] = []
@@ -371,8 +389,11 @@ class GraphOrchestrator:
             requires_confirmation = False
             for cmd in vplan.commands:
                 er = ctx.kernel.run_verification(
-                    cmd.command, assume_yes=ctx.assume_yes,
-                    confirm_callback=ctx.confirm_callback, event_callback=ctx.event_callback)
+                    cmd.command,
+                    assume_yes=ctx.assume_yes,
+                    confirm_callback=ctx.confirm_callback,
+                    event_callback=ctx.event_callback,
+                )
                 cmds.append(cmd.command)
                 results.append(er)
                 if er.status == "confirm":
@@ -381,59 +402,89 @@ class GraphOrchestrator:
                     break
                 if er.status != "success":
                     ok = False
-            verification = ("passed" if ok else
-                            "requires_confirmation" if requires_confirmation else
-                            "failed" if any(r.status == "failed" for r in results) else "not_executed")
+            verification = (
+                "passed"
+                if ok
+                else "requires_confirmation"
+                if requires_confirmation
+                else "failed"
+                if any(r.status == "failed" for r in results)
+                else "not_executed"
+            )
             failure = None
             if verification == "failed":
-                failure = next((r.stderr or r.stdout or r.summary for r in results
-                                if r.status == "failed" and (r.stderr or r.stdout or r.summary)), "tests failed")
-            emit_event(ctx.event_callback, "graph_verify",
-                       f"Verification: {verification}.", verification=verification)
+                failure = next(
+                    (
+                        r.stderr or r.stdout or r.summary
+                        for r in results
+                        if r.status == "failed" and (r.stderr or r.stdout or r.summary)
+                    ),
+                    "tests failed",
+                )
+            emit_event(ctx.event_callback, "graph_verify", f"Verification: {verification}.", verification=verification)
 
-            result_update = {"verification": verification, "verification_results": results,
-                             "commands_run": cmds, "verification_failure": failure, "checkpoint": checkpoint}
+            result_update = {
+                "verification": verification,
+                "verification_results": results,
+                "commands_run": cmds,
+                "verification_failure": failure,
+                "checkpoint": checkpoint,
+            }
 
             from xhx_agent.runtime.config import load_config
-            will_repair = (verification == "failed"
-                           and state["replan_count"] < load_config(ctx.original_workspace).max_graph_replans
-                           and ctx.auto_repair)
+
+            will_repair = (
+                verification == "failed"
+                and state["replan_count"] < load_config(ctx.original_workspace).max_graph_replans
+                and ctx.auto_repair
+            )
             if will_repair:
-                result_update.update({
-                    "joiner_feedback": f"Verification FAILED. Fix the code so tests pass.\n{failure}",
-                    "replan_count": state["replan_count"] + 1,
-                    "repair_attempts": state["repair_attempts"] + 1,
-                })
-                emit_event(ctx.event_callback, "graph_repair",
-                           f"Verification failed; repairing (attempt {state['repair_attempts'] + 1}).")
+                result_update.update(
+                    {
+                        "joiner_feedback": f"Verification FAILED. Fix the code so tests pass.\n{failure}",
+                        "replan_count": state["replan_count"] + 1,
+                        "repair_attempts": state["repair_attempts"] + 1,
+                    }
+                )
+                emit_event(
+                    ctx.event_callback,
+                    "graph_repair",
+                    f"Verification failed; repairing (attempt {state['repair_attempts'] + 1}).",
+                )
             else:
-                result_update.update({
-                    "joiner_feedback": None
-                })
+                result_update.update({"joiner_feedback": None})
             return result_update
 
         def joiner(state: _GraphState) -> dict[str, Any]:
             from xhx_agent.runtime.config import load_config
+
             can_replan = state["replan_count"] < load_config(ctx.original_workspace).max_graph_replans
-            summary = (
-                f"Original task: {ctx.task}\n\nSub-agent execution results:\n"
-                + "\n".join(f"Node {n.node_id} ({n.agent_type}) [{n.status}]: {n.result}" for n in state["nodes"])
+            summary = f"Original task: {ctx.task}\n\nSub-agent execution results:\n" + "\n".join(
+                f"Node {n.node_id} ({n.agent_type}) [{n.status}]: {n.result}" for n in state["nodes"]
             )
             changed = sorted(set(state["changed_files"]))
             summary += f"\n\nFiles actually changed this run: {changed if changed else 'NONE'}"
             vstat = state.get("verification", "skipped_no_changes")
             summary += f"\n\nVerification result: {vstat}"
-            if state.get("verification_failure"):
-                summary += f"\nVerification failure output:\n{state['verification_failure'][:1500]}"
+            vfail = state.get("verification_failure")
+            if vfail:
+                summary += f"\nVerification failure output:\n{vfail[:1500]}"
             emit_event(ctx.event_callback, "graph_joiner", "Reviewing results…")  # 调用前进度，防界面定格
             messages = [{"role": "system", "content": JOINER_PROMPT}, {"role": "user", "content": summary}]
             result = chat_and_count(ctx, client, messages, _join_tools(can_replan), turn=0)
             decision, payload = _interpret_join(result)
             if decision == "replan" and can_replan:
-                emit_event(ctx.event_callback, "graph_joiner",
-                           f"Replan (round {state['replan_count'] + 1}): {payload[:80]}", decision="replan")
-                return {"joiner_decision": "replan", "joiner_feedback": payload,
-                        "replan_count": state["replan_count"] + 1}
+                emit_event(
+                    ctx.event_callback,
+                    "graph_joiner",
+                    f"Replan (round {state['replan_count'] + 1}): {payload[:80]}",
+                    decision="replan",
+                )
+                return {
+                    "joiner_decision": "replan",
+                    "joiner_feedback": payload,
+                    "replan_count": state["replan_count"] + 1,
+                }
             emit_event(ctx.event_callback, "graph_joiner", "Finished.", decision="finish")
             return {"joiner_decision": "finish", "answer": payload}
 
@@ -466,13 +517,23 @@ class GraphOrchestrator:
         status = "success"
         risks: list[str] = []
         try:
-            final: dict[str, Any] = compiled.invoke({
-                "nodes": [], "changed_files": [], "answer": None, "dag_ok": True,
-                "replan_count": 0, "joiner_feedback": None, "joiner_decision": None,
-                "verification": "skipped_no_changes", "verification_results": [],
-                "commands_run": [], "verification_failure": None, "checkpoint": None,
-                "repair_attempts": 0,
-            })
+            final: dict[str, Any] = compiled.invoke(
+                {
+                    "nodes": [],
+                    "changed_files": [],
+                    "answer": None,
+                    "dag_ok": True,
+                    "replan_count": 0,
+                    "joiner_feedback": None,
+                    "joiner_decision": None,
+                    "verification": "skipped_no_changes",
+                    "verification_results": [],
+                    "commands_run": [],
+                    "verification_failure": None,
+                    "checkpoint": None,
+                    "repair_attempts": 0,
+                }
+            )
         except Exception as e:
             status = "failed"
             risks.append(f"Execution error: {e}")
@@ -523,12 +584,20 @@ class GraphOrchestrator:
                 emit_event(ctx.event_callback, "restore_plan", "Restore plan created.", run_id=ctx.run_id)
 
         summary = write_report(
-            workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
+            workspace=ctx.original_workspace,
+            run_id=ctx.run_id,
+            task=ctx.task,
             plan=["Graph workflow: planner -> execute -> joiner (bounded replan)."],
-            changed_files=changed_files, commands=commands_run, verification=verification_status,
-            risks=risks, verification_results=verification_results,
-            checkpoint_path=checkpoint_path, restore_plan_path=restore_plan_path,
-            repair=repair_decision, repair_attempts=repair_attempts)
+            changed_files=changed_files,
+            commands=commands_run,
+            verification=verification_status,
+            risks=risks,
+            verification_results=verification_results,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
+        )
 
         # 保存 transcript 补齐
         messages: list[dict[str, Any]] = []
@@ -539,14 +608,16 @@ class GraphOrchestrator:
         else:
             nodes_repr = []
             for n in final.get("nodes", []):
-                nodes_repr.append({
-                    "id": n.node_id,
-                    "agent_type": n.agent_type,
-                    "prompt": n.prompt,
-                    "deps": n.dependencies,
-                    "result": n.result,
-                    "status": n.status
-                })
+                nodes_repr.append(
+                    {
+                        "id": n.node_id,
+                        "agent_type": n.agent_type,
+                        "prompt": n.prompt,
+                        "deps": n.dependencies,
+                        "result": n.result,
+                        "status": n.status,
+                    }
+                )
             messages.append({"role": "assistant", "content": json.dumps({"nodes": nodes_repr}, ensure_ascii=False)})
             for n in final.get("nodes", []):
                 messages.append({"role": "user", "content": f"Execute node {n.node_id} ({n.agent_type}): {n.prompt}"})
@@ -558,21 +629,43 @@ class GraphOrchestrator:
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
 
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-        emit_event(ctx.event_callback, "run_end", "Graph task completed.", run_id=ctx.run_id,
-                   status=status, verification=verification_status, changed_files=changed_files,
-                   summary_path=str(summary.relative_to(ctx.original_workspace)))
+        emit_event(
+            ctx.event_callback,
+            "run_end",
+            "Graph task completed.",
+            run_id=ctx.run_id,
+            status=status,
+            verification=verification_status,
+            changed_files=changed_files,
+            summary_path=str(summary.relative_to(ctx.original_workspace)),
+        )
 
         metrics = RunMetrics(
-            duration_seconds=round(time.time() - ctx.start_time, 2), turns=1,
-            tokens_estimate=ctx.metrics_tracker.get("tokens", 0), files_changed_count=len(changed_files),
-            commands_run_count=len(commands_run), repair_attempts=repair_attempts, success=(status == "success"))
+            duration_seconds=round(time.time() - ctx.start_time, 2),
+            turns=1,
+            tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
+            files_changed_count=len(changed_files),
+            commands_run_count=len(commands_run),
+            repair_attempts=repair_attempts,
+            success=(status == "success"),
+        )
 
         return RunResult(
-            run_id=ctx.run_id, status=status, turns=1, changed_files=changed_files,
-            commands=commands_run, verification=verification_status,
+            run_id=ctx.run_id,
+            status=status,
+            turns=1,
+            changed_files=changed_files,
+            commands=commands_run,
+            verification=verification_status,
             verification_results=verification_results,
-            checkpoint_path=checkpoint_path, restore_plan_path=restore_plan_path,
-            repair=repair_decision, repair_attempts=repair_attempts,
+            checkpoint_path=checkpoint_path,
+            restore_plan_path=restore_plan_path,
+            repair=repair_decision,
+            repair_attempts=repair_attempts,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks, metrics=metrics, mode=ctx.mode or "graph", answer=answer,
-            transcript_path=transcript_rel)
+            risk_summary=risks,
+            metrics=metrics,
+            mode=ctx.mode or "graph",
+            answer=answer,
+            transcript_path=transcript_rel,
+        )

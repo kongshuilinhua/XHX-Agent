@@ -81,7 +81,6 @@ class ConsoleState:
     last_call_ms: int = 0
     permission_mode: str = "default"
 
-
     def reduce(self, event: RuntimeEvent) -> None:
         if event.type == "run_start":
             self._reset_for_run(event)

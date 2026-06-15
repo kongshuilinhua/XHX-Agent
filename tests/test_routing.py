@@ -17,11 +17,9 @@ def test_checkpoint_1_config_backward_compatibility_and_parsing(tmp_path):
     # 1. Config without routing (backward compatibility)
     config_file = tmp_path / ".xhx" / "config.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "mock",
-        "workspace_root": "."
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "mock", "workspace_root": "."}), encoding="utf-8"
+    )
 
     cfg = load_config(tmp_path)
     assert cfg.routing is not None
@@ -29,15 +27,17 @@ def test_checkpoint_1_config_backward_compatibility_and_parsing(tmp_path):
     assert cfg.routing.fallback == []
 
     # 2. Config with explicit routing
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "mock",
-        "workspace_root": ".",
-        "routing": {
-            "roles": {"explore": "cheap"},
-            "fallback": ["mock"]
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "default_profile": "mock",
+                "workspace_root": ".",
+                "routing": {"roles": {"explore": "cheap"}, "fallback": ["mock"]},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     cfg2 = load_config(tmp_path)
     assert cfg2.routing is not None
@@ -52,34 +52,24 @@ def test_checkpoint_2_resolve_profile_for_role(tmp_path):
     RuntimeApp(tmp_path).init_project()
     # Write custom profiles.json with 'base' and 'cheap'
     profiles_file = tmp_path / ".xhx" / "profiles.json"
-    profiles_file.write_text(json.dumps({
-        "profiles": [
+    profiles_file.write_text(
+        json.dumps(
             {
-                "name": "base",
-                "provider": "mock",
-                "base_url": "",
-                "api_key_env": "",
-                "model": "base-mock"
-            },
-            {
-                "name": "cheap",
-                "provider": "mock",
-                "base_url": "",
-                "api_key_env": "",
-                "model": "cheap-mock"
+                "profiles": [
+                    {"name": "base", "provider": "mock", "base_url": "", "api_key_env": "", "model": "base-mock"},
+                    {"name": "cheap", "provider": "mock", "base_url": "", "api_key_env": "", "model": "cheap-mock"},
+                ]
             }
-        ]
-    }), encoding="utf-8")
+        ),
+        encoding="utf-8",
+    )
 
     # Write config.json mapping explore to cheap
     config_file = tmp_path / ".xhx" / "config.json"
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "base",
-        "routing": {
-            "roles": {"explore": "cheap"}
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "base", "routing": {"roles": {"explore": "cheap"}}}),
+        encoding="utf-8",
+    )
 
     # Test resolved profile matches 'cheap'
     profile = resolve_profile_for_role(tmp_path, "explore", "base")
@@ -92,13 +82,10 @@ def test_checkpoint_2_resolve_profile_for_role(tmp_path):
     assert profile_base.model == "base-mock"
 
     # Test missing mapped profile throws ValueError
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "base",
-        "routing": {
-            "roles": {"explore": "missing_profile"}
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "base", "routing": {"roles": {"explore": "missing_profile"}}}),
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError):
         resolve_profile_for_role(tmp_path, "explore", "base")
 
@@ -162,45 +149,43 @@ def test_checkpoint_4_build_routed_client(tmp_path):
     RuntimeApp(tmp_path).init_project()
     # Setup base and cheap profiles
     profiles_file = tmp_path / ".xhx" / "profiles.json"
-    profiles_file.write_text(json.dumps({
-        "profiles": [
+    profiles_file.write_text(
+        json.dumps(
             {
-                "name": "base",
-                "provider": "mock",
-                "model": "base-mock"
-            },
-            {
-                "name": "cheap",
-                "provider": "mock",
-                "model": "cheap-mock"
+                "profiles": [
+                    {"name": "base", "provider": "mock", "model": "base-mock"},
+                    {"name": "cheap", "provider": "mock", "model": "cheap-mock"},
+                ]
             }
-        ]
-    }), encoding="utf-8")
+        ),
+        encoding="utf-8",
+    )
 
     # Case A: no fallback configured
     config_file = tmp_path / ".xhx" / "config.json"
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "base",
-        "routing": {
-            "roles": {},
-            "fallback": []
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "base", "routing": {"roles": {}, "fallback": []}}),
+        encoding="utf-8",
+    )
 
     client_a = build_routed_client(tmp_path, role="loop", base_profile_name="base")
     assert isinstance(client_a, MockModelClient)
     assert not isinstance(client_a, FallbackChatClient)
 
     # Case B: fallback configured
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "base",
-        "routing": {
-            "roles": {"explore": "cheap"},
-            "fallback": ["base", "cheap"] # primary is base for loop, cheap for explore
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "default_profile": "base",
+                "routing": {
+                    "roles": {"explore": "cheap"},
+                    "fallback": ["base", "cheap"],  # primary is base for loop, cheap for explore
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     # For loop: primary is base, fallback is cheap (base is filtered out since it equals primary)
     client_loop = build_routed_client(tmp_path, role="loop", base_profile_name="base")
@@ -224,30 +209,24 @@ def test_checkpoint_6_role_wiring_takes_effect(tmp_path, monkeypatch):
 
     # Write profiles
     profiles_file = tmp_path / ".xhx" / "profiles.json"
-    profiles_file.write_text(json.dumps({
-        "profiles": [
+    profiles_file.write_text(
+        json.dumps(
             {
-                "name": "base",
-                "provider": "mock",
-                "model": "base-mock"
-            },
-            {
-                "name": "cheap",
-                "provider": "mock",
-                "model": "cheap-mock"
+                "profiles": [
+                    {"name": "base", "provider": "mock", "model": "base-mock"},
+                    {"name": "cheap", "provider": "mock", "model": "cheap-mock"},
+                ]
             }
-        ]
-    }), encoding="utf-8")
+        ),
+        encoding="utf-8",
+    )
 
     # Write config.json mapping explore to cheap
     config_file = tmp_path / ".xhx" / "config.json"
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "base",
-        "routing": {
-            "roles": {"explore": "cheap"}
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "base", "routing": {"roles": {"explore": "cheap"}}}),
+        encoding="utf-8",
+    )
 
     captured_profiles = []
     original_build = xhx_agent.models.build_chat_client
@@ -259,18 +238,25 @@ def test_checkpoint_6_role_wiring_takes_effect(tmp_path, monkeypatch):
     parent_results = [
         ChatResult(
             content=None,
-            tool_calls=[ToolCall(id="p1", name="dispatch", arguments={
-                "description": "explore readme content",
-                "prompt": "Read the readme file and tell me what is in it",
-                "agent_type": "explore"
-            })]
+            tool_calls=[
+                ToolCall(
+                    id="p1",
+                    name="dispatch",
+                    arguments={
+                        "description": "explore readme content",
+                        "prompt": "Read the readme file and tell me what is in it",
+                        "agent_type": "explore",
+                    },
+                )
+            ],
         ),
-        ChatResult(content="Parent done", tool_calls=[])
+        ChatResult(content="Parent done", tool_calls=[]),
     ]
 
     class StatefulParentClient:
         def __init__(self):
             self.i = 0
+
         def chat(self, messages, tools):
             r = parent_results[self.i]
             self.i += 1
@@ -297,32 +283,30 @@ def test_checkpoint_7_fallback_end_to_end(tmp_path, monkeypatch):
     RuntimeApp(tmp_path).init_project()
     # Write profiles specifying base-url and unset api_key_env
     profiles_file = tmp_path / ".xhx" / "profiles.json"
-    profiles_file.write_text(json.dumps({
-        "profiles": [
+    profiles_file.write_text(
+        json.dumps(
             {
-                "name": "broken-openai",
-                "provider": "openai-compatible",
-                "base_url": "https://api.example.com/v1",
-                "api_key_env": "UNSET_KEY_FOR_ROUTING_TEST",
-                "model": "gpt-4"
-            },
-            {
-                "name": "mock",
-                "provider": "mock",
-                "model": "mock"
+                "profiles": [
+                    {
+                        "name": "broken-openai",
+                        "provider": "openai-compatible",
+                        "base_url": "https://api.example.com/v1",
+                        "api_key_env": "UNSET_KEY_FOR_ROUTING_TEST",
+                        "model": "gpt-4",
+                    },
+                    {"name": "mock", "provider": "mock", "model": "mock"},
+                ]
             }
-        ]
-    }), encoding="utf-8")
+        ),
+        encoding="utf-8",
+    )
 
     # Write config.json specifying fallback
     config_file = tmp_path / ".xhx" / "config.json"
-    config_file.write_text(json.dumps({
-        "version": 1,
-        "default_profile": "broken-openai",
-        "routing": {
-            "fallback": ["mock"]
-        }
-    }), encoding="utf-8")
+    config_file.write_text(
+        json.dumps({"version": 1, "default_profile": "broken-openai", "routing": {"fallback": ["mock"]}}),
+        encoding="utf-8",
+    )
 
     # Build routed client
     client = build_routed_client(tmp_path, role="loop", base_profile_name="broken-openai")

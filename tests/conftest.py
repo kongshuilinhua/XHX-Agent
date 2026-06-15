@@ -11,8 +11,6 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_global_xhx(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_global_xhx(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path_factory.mktemp("xhx-home")
     monkeypatch.setenv("XHX_HOME", str(home))

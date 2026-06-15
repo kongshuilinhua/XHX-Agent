@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -57,6 +58,9 @@ def run_terminal(
             capture_output=True,
             shell=True,
             timeout=timeout_seconds,
+            # 永不写 .pyc：agent 边改代码边重测时，若两次改动同秒、文件大小又不变（如 a*b→a+b），
+            # Python 会误用过期字节码导致验证假失败（Linux CI 上尤甚）。禁写 pyc 从根上消除该竞态。
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout if isinstance(exc.stdout, str) else ""

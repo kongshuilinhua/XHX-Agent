@@ -116,12 +116,18 @@ class WorktreeContext:
                 time.sleep(0.2 * (attempt + 1))
             if not removed:
                 # 重试仍失败：强删目录 + prune 反注册死 worktree，避免 worktree 注册表/分支泄漏。
-                logger.warning("git worktree remove failed after retries (%s); forcing dir removal + prune.", completed.stderr)
+                logger.warning(
+                    "git worktree remove failed after retries (%s); forcing dir removal + prune.", completed.stderr
+                )
                 if self.worktree_dir.exists():
                     shutil.rmtree(self.worktree_dir, ignore_errors=True)
                 subprocess.run(
                     ["git", "worktree", "prune"],
-                    cwd=self.workspace, check=False, capture_output=True, text=True, timeout=30,
+                    cwd=self.workspace,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
 
             # 2. 删除临时分支（worktree 已移除/反注册后才能删）。

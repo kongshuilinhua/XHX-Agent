@@ -21,6 +21,7 @@ class FallbackChatClient:
     """按序包住多个 client；某个抛 ModelClientError 就试下一个，全失败抛最后一个 error。
     保持 chat(messages, tools) 接口。可选 on_fallback(idx, err) 回调用于发事件/trace。
     """
+
     def __init__(self, clients: list[Any], on_fallback: Any = None) -> None:
         self.clients = clients
         self.on_fallback = on_fallback

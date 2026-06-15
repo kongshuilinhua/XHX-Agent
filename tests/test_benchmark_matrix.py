@@ -38,20 +38,44 @@ def test_render_benchmark_report_aggregation():
     # Hand-constructed BenchmarkResult list
     results = [
         BenchmarkResult(
-            fixture_id="f1", name="fixture 1", profile="mock", status="success",
-            turns=3, duration_seconds=10.0, tokens_estimate=1000, success=True,
-            mode="loop", files_changed=2, repair_attempts=1
+            fixture_id="f1",
+            name="fixture 1",
+            profile="mock",
+            status="success",
+            turns=3,
+            duration_seconds=10.0,
+            tokens_estimate=1000,
+            success=True,
+            mode="loop",
+            files_changed=2,
+            repair_attempts=1,
         ),
         BenchmarkResult(
-            fixture_id="f2", name="fixture 2", profile="mock", status="failed",
-            turns=1, duration_seconds=5.0, tokens_estimate=500, success=False,
-            mode="loop", files_changed=0, repair_attempts=0
+            fixture_id="f2",
+            name="fixture 2",
+            profile="mock",
+            status="failed",
+            turns=1,
+            duration_seconds=5.0,
+            tokens_estimate=500,
+            success=False,
+            mode="loop",
+            files_changed=0,
+            repair_attempts=0,
         ),
         BenchmarkResult(
-            fixture_id="f3", name="fixture 3", profile="mock", status="success",
-            turns=4, duration_seconds=20.0, tokens_estimate=2000, success=True,
-            mode="plan", files_changed=3, repair_attempts=1
-        )
+            fixture_id="f3",
+            name="fixture 3",
+            profile="mock",
+            status="success",
+            turns=4,
+            duration_seconds=20.0,
+            tokens_estimate=2000,
+            success=True,
+            mode="plan",
+            files_changed=3,
+            repair_attempts=1,
+        ),
     ]
 
     report = render_benchmark_report("mock", results)
@@ -64,10 +88,10 @@ def test_render_benchmark_report_aggregation():
     loop_sum = report.summary["loop"]
     assert loop_sum["runs"] == 2.0
     assert loop_sum["success_rate"] == 0.5
-    assert loop_sum["mean_turns"] == 2.0 # (3 + 1)/2
-    assert loop_sum["mean_tokens"] == 750.0 # (1000 + 500)/2
-    assert loop_sum["mean_duration"] == 7.5 # (10.0 + 5.0)/2
-    assert loop_sum["total_files_changed"] == 2.0 # 2 + 0
+    assert loop_sum["mean_turns"] == 2.0  # (3 + 1)/2
+    assert loop_sum["mean_tokens"] == 750.0  # (1000 + 500)/2
+    assert loop_sum["mean_duration"] == 7.5  # (10.0 + 5.0)/2
+    assert loop_sum["total_files_changed"] == 2.0  # 2 + 0
 
     # Check plan summary
     plan_sum = report.summary["plan"]
