@@ -66,6 +66,33 @@ class TeamOrchestrator(BaseReActOrchestrator):
     def _mode_name(self) -> str:
         return "team"
 
+    def _before_run(self, ctx: OrchestratorContext, messages: list[dict]) -> None:
+        """Team 模式：创建 TeamManager + 注册团队，供 dispatch 子 agent 协调用。"""
+        from xhx_agent.teams.manager import TeamManager
+        from xhx_agent.teams.models import TeammateInfo, BackendType
+        from xhx_agent.teams.registry import AgentNameRegistry
+
+        mgr = TeamManager()
+        team = mgr.create_team(
+            name=f"team-{ctx.run_id[:8]}",
+            lead_agent_id="leader",
+            description=f"Team for run {ctx.run_id}",
+        )
+        # 将 TeamManager 挂到 context 上供工具层使用
+        ctx.team_manager = mgr  # type: ignore[attr-defined]
+        ctx.team_name = team.name  # type: ignore[attr-defined]
+
+        # 注册 leader
+        from xhx_agent.teams.progress import TeammateProgress
+        leader_progress = TeammateProgress(name="lead", team_name=team.name, status="running")
+        leader = TeammateInfo(
+            name="lead", agent_id="leader", agent_type="general-purpose",
+            model=getattr(ctx.profile, "model", ""), worktree_path=str(ctx.workspace),
+            backend_type=BackendType.IN_PROCESS.value, is_active=True,
+            progress=leader_progress,
+        )
+        mgr.register_member(team.name, leader)
+
     def _verify_changes(
         self, ctx: OrchestratorContext, changed_files: list[str],
     ) -> tuple[str | None, list[str]]:
