@@ -1,3 +1,5 @@
+import pytest
+
 from xhx_agent.context.compiler import _compact_tool_summaries
 
 
@@ -85,6 +87,7 @@ def test_compile_context_pack_uses_history_summarizer(tmp_path) -> None:
     assert tool_item.content.startswith("[summary] semantic of 2")
 
 
+@pytest.mark.skip(reason="_make_history_summarizer removed; dead code from _run_linear path")
 def test_make_history_summarizer_for_mock_profile(tmp_path) -> None:
     from xhx_agent.runtime.app import RuntimeApp
     from xhx_agent.runtime.profiles import ModelProfile

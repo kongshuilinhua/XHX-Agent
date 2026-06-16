@@ -122,6 +122,18 @@ class BaseReActOrchestrator:
         """子类可在循环开始前注入额外上下文。"""
         pass
 
+    def _verify_changes(
+        self, ctx: OrchestratorContext, changed_files: list[str],
+    ) -> tuple[str | None, list[str]]:
+        """子类可覆盖：变更后自动验证。默认不做验证。
+
+        Returns:
+            (verification_status, commands_run) — status 可为 "passed"/"failed"/"skipped_no_changes"/None
+        """
+        if not changed_files:
+            return ("skipped_no_changes", [])
+        return (None, [])  # None → 调用方会用 "not_executed"
+
     # ---- 共享 ReAct 循环 ----
 
     def run(self, ctx: OrchestratorContext) -> "RunResult":
@@ -180,6 +192,10 @@ class BaseReActOrchestrator:
         status = "success"
         turns_used = 0
         mode = self._mode_name()
+
+        # 每次 run 开始前清空跨子 agent 冲突检测表（旧 graph 在每轮 execute 前清）。
+        # 不清空会导致前几轮的 claims 永久阻止后续 dispatch 改同一文件。
+        ctx.subagent_claims.clear()
 
         for turn in range(1, max_turns + 1):
             turns_used = turn
@@ -259,11 +275,19 @@ class BaseReActOrchestrator:
             status = "failed"
             risks.append(f"{mode} did not finish within {max_turns} turn(s).")
 
+        # 子类可覆盖以在变更后自动验证（team 模式会用）
+        verification_status, verification_cmds = self._verify_changes(ctx, changed_files)
+        if verification_cmds:
+            commands_run = verification_cmds
+        else:
+            commands_run = []
+            verification_status = verification_status or "not_executed"
+
         summary = write_report(
             workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
             plan=[f"{mode} paradigm: {turns_used} turn(s)."],
-            changed_files=sorted(set(changed_files)), commands=[],
-            verification="not_executed", risks=risks,
+            changed_files=sorted(set(changed_files)), commands=commands_run,
+            verification=verification_status, risks=risks,
         )
         transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
         ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
@@ -272,13 +296,13 @@ class BaseReActOrchestrator:
             turns=turns_used,
             tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
             files_changed_count=len(set(changed_files)),
-            commands_run_count=0, repair_attempts=0,
+            commands_run_count=len(commands_run), repair_attempts=0,
             success=(status == "success"),
         )
         return RunResult(
             run_id=ctx.run_id, status=status, turns=turns_used,
-            changed_files=sorted(set(changed_files)), commands=[],
-            verification="not_executed",
+            changed_files=sorted(set(changed_files)), commands=commands_run,
+            verification=verification_status,
             summary_path=str(summary.relative_to(ctx.original_workspace)),
             risk_summary=risks, mode=mode, answer=answer,
             transcript_path=transcript_rel, metrics=metrics,
