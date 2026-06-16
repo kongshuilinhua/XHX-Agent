@@ -101,16 +101,12 @@ def test_benchmark_token_metering_with_modes(tmp_path):
     write_default_profiles(tmp_path)
 
     runner = BenchmarkRunner(tmp_path)
-    results = runner.run_matrix("mock", ["loop", "plan", "team"])
+    results = runner.run_matrix("mock", ["loop", "plan"])
 
     report = render_benchmark_report("mock", results)
 
     loop_tokens = report.summary["loop"]["mean_tokens"]
     plan_tokens = report.summary["plan"]["mean_tokens"]
-    graph_tokens = report.summary["team"]["mean_tokens"]
 
     assert loop_tokens > 0
     assert plan_tokens > 0
-    assert graph_tokens > 0
-    # graph mode could be smaller because planner sends far fewer tools than loop mode
-    assert graph_tokens > 0

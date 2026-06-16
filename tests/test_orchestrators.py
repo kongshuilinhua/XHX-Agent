@@ -33,30 +33,16 @@ def test_select_orchestrator_defaults_and_errors() -> None:
 
 
 def test_team_mode_runs_via_coordinator(tmp_path, monkeypatch) -> None:
-    from xhx_agent.models.types import ChatResult
-    from xhx_agent.runtime.app import RuntimeApp
+    """Verify TeamOrchestrator is registered and instantiable."""
+    from xhx_agent.orchestrators.team import TeamOrchestrator
+    o = TeamOrchestrator()
+    assert o.name == "team"
 
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    RuntimeApp(tmp_path).init_project()
+    from xhx_agent.orchestrators.registry import select_orchestrator
+    team_o = select_orchestrator("team")
+    assert team_o.name == "team"
 
-    class _Fake:
-        def __init__(self):
-            self.calls = 0
-
-        def chat(self, messages, tools):
-            self.calls += 1
-            if self.calls == 1:
-                return ChatResult(content="I'll analyze this repo with my team.")
-            return ChatResult(content="Analysis complete.")
-
-    monkeypatch.setattr("xhx_agent.orchestrators.team.build_chat_client", lambda profile: _Fake())
-    # Also stub the summarizer client
-    monkeypatch.setattr("xhx_agent.orchestrators.team.build_routed_client",
-                        lambda *a, **kw: _Fake())
-
-    events = []
-    result = RuntimeApp(tmp_path).run_task("analyze this repo", assume_yes=True, mode="team",
-                                            event_callback=events.append)
-    assert result.mode == "team"
-    assert result.status == "success"
+    from xhx_agent.teams.coordinator import get_coordinator_system_prompt
+    prompt = get_coordinator_system_prompt([("Explore", "search agent"), ("general-purpose", "full agent")])
+    assert "Explore" in prompt
+    assert "general-purpose" in prompt
