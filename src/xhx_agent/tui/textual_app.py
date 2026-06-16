@@ -650,7 +650,7 @@ class TextualCommandConsoleApp(App[None]):
     @property
     def orchestrator_mode(self) -> str | None:
         """Explicit orchestrator paradigm from /mode, or None to auto-classify."""
-        return self.state.mode if self.state.mode in {"plan", "loop", "graph", "linear"} else None
+        return self.state.mode if self.state.mode in {"plan", "loop", "team", "linear"} else None
 
     def run_task(self, task: str, *, announce_user: bool = True, reset_cancel: bool = True) -> None:
         if reset_cancel:
@@ -1197,7 +1197,7 @@ class TextualCommandConsoleApp(App[None]):
         options = [
             ("loop — ReAct tool-use loop (default)", "loop"),
             ("plan — plan-and-execute (batch)", "plan"),
-            ("graph — multi-agent workflow", "graph"),
+            ("graph — multi-agent workflow", "team"),
         ]
         self.set_detail("mode", "Select an orchestrator paradigm with Arrow keys + Enter.")
         self.present_picker(options, on_select=self._select_mode, title="Select Mode")

@@ -6,7 +6,7 @@ from xhx_agent.evals.replay import TrailReplayer
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.app import RunResult, RuntimeApp
 from xhx_agent.safety.kernel import SafeExecutionKernel
-from xhx_agent.skills.hooks import HooksManager, hooks_manager
+from xhx_agent.hooks import HooksManager, hooks_manager
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry

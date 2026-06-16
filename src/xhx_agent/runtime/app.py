@@ -50,7 +50,7 @@ from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
 from xhx_agent.safety.worktree import WorktreeContext
-from xhx_agent.skills.hooks import hooks_manager
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification

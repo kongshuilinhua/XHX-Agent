@@ -340,7 +340,7 @@ def benchmark(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
     modes: Annotated[
         str | None,
-        typer.Option("--modes", help="Comma-separated paradigms to compare, e.g. loop,plan,graph."),
+        typer.Option("--modes", help="Comma-separated list of modes to benchmark: loop,plan,team (default: loop,plan,team)."),
     ] = None,
 ) -> None:
     from xhx_agent.evals.benchmark import BenchmarkRunner

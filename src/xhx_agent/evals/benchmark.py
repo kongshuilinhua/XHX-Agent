@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 # 三范式对比的默认范式集（协议都用 tool-calling，只差控制流）。
-DEFAULT_BENCHMARK_MODES = ["loop", "plan", "graph"]
+DEFAULT_BENCHMARK_MODES = ["loop", "plan", "team"]
 
 
 class BenchmarkFixture(BaseModel):

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
-from xhx_agent.skills.hooks import hooks_manager
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.tools.patch import PatchResult, apply_patch
 from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
