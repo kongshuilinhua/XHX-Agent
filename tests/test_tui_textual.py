@@ -963,7 +963,7 @@ def test_textual_mode_command_shows_selectable_picker_and_applies(tmp_path) -> N
             assert app.state.mode == "team"
             assert len(app.query("#active_options")) == 0
             assert not app.query_one("#input", Input).disabled
-            assert "mode: graph" in app.messages[-1]
+            assert "mode: team" in app.messages[-1]
 
     import asyncio
 

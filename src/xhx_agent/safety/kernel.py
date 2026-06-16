@@ -10,20 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
-from xhx_agent.safety.policy import PolicyDecision, decide_tool, decide_with_checker
+from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector
+from xhx_agent.safety.permissions.checker import PermissionChecker
+from xhx_agent.safety.permissions.rules import RuleEngine
+from xhx_agent.safety.permissions.sandbox import PathSandbox
+from xhx_agent.safety.policy import PolicyDecision, decide_with_checker
 from xhx_agent.safety.risk import RiskLevel
-from xhx_agent.tools.paths import extract_glob_root, resolve_with_scope
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
-
-if TYPE_CHECKING:
-    from xhx_agent.safety.permissions.checker import PermissionChecker
-    from xhx_agent.safety.permissions.sandbox import PathSandbox
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 
@@ -46,8 +44,23 @@ class SafeExecutionKernel:
         self.evidence = evidence
         self.tool_registry = tool_registry
         self.read_only_phase: bool = False
-        self.permission_checker = permission_checker
+
+        # Auto-create PathSandbox + PermissionChecker if not provided
+        if path_sandbox is None:
+            path_sandbox = PathSandbox(str(workspace))
         self.path_sandbox = path_sandbox
+
+        if permission_checker is None:
+            permissions_file = workspace / ".xhx" / "permissions.yaml"
+            rule_engine = RuleEngine(
+                project_rules_path=permissions_file if permissions_file.is_file() else None,
+            )
+            permission_checker = PermissionChecker(
+                detector=DangerousCommandDetector(),
+                sandbox=path_sandbox,
+                rule_engine=rule_engine,
+            )
+        self.permission_checker = permission_checker
 
     def execute_tool(
         self,
@@ -82,12 +95,19 @@ class SafeExecutionKernel:
                 PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
             )
 
-        # 1. 策略判定
-        policy = decide_tool(
+        # 1. 策略判定（通过 PermissionChecker 五层检查）
+        is_destructive = bool(d and d.destructive)
+        is_network = bool(d and d.network)
+        tool_category = "read" if is_read_only else ("write" if is_destructive else "command")
+
+        policy = decide_with_checker(
             step.tool,
+            step.arguments,
+            self.permission_checker,
+            tool_category=tool_category,
             read_only=is_read_only,
-            destructive=bool(d and d.destructive),
-            network=bool(d and d.network),
+            destructive=is_destructive,
+            network=is_network,
         )
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
@@ -123,26 +143,7 @@ class SafeExecutionKernel:
                         denied,
                     )
 
-        # 2. 路径越界预检与授权裁决（优先使用 PathSandbox）
-        if self.path_sandbox is not None:
-            out_of_scope = self._check_paths_with_sandbox(step)
-            if out_of_scope:
-                result = self._handle_path_denial(
-                    step, out_of_scope, context, turn, is_read_only, confirm_callback, event_callback
-                )
-                if result is not None:
-                    return result
-        else:
-            # 回退：使用旧 resolve_with_scope 路径
-            out_of_scope_paths = _collect_out_of_scope_paths(step, context)
-            if out_of_scope_paths:
-                result = _handle_out_of_scope_paths(
-                    self, step, out_of_scope_paths, context, turn, is_read_only, confirm_callback, event_callback
-                )
-                if result is not None:
-                    return result
-
-        # 3. 正常执行
+        # 2. 正常执行（路径越界检查由 PermissionChecker Layer 2 处理）
         trace = self.evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
         result = self.tool_registry.execute(context, step)
         self.evidence.write_trace("tool_result", {"turn": turn, **result.trace_payload})
@@ -281,251 +282,6 @@ class SafeExecutionKernel:
             f"trace://{self.run_id}/policy/{scope}/{source}",
             confidence=0.9,
         )
-
-
-    # ------------------------------------------------------------------
-    # path sandbox helpers (mewcode integration)
-    # ------------------------------------------------------------------
-
-    def _check_paths_with_sandbox(self, step: object) -> list[str]:
-        """使用 PathSandbox 检查工具调用中的路径。返回越界路径列表。"""
-        assert self.path_sandbox is not None
-        out_of_scope: list[str] = []
-
-        paths = _extract_tool_paths(step)
-        for p in paths:
-            ok, _reason = self.path_sandbox.check(p)
-            if not ok:
-                out_of_scope.append(p)
-        return out_of_scope
-
-    def _handle_path_denial(
-        self,
-        step: object,
-        out_of_scope: list[str],
-        context: ToolContext,
-        turn: int,
-        is_read_only: bool,
-        confirm_callback: ConfirmationCallback | None,
-        event_callback: EventCallback | None,
-    ) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision] | None:
-        """处理 PathSandbox 检测到的越界路径。返回 None 表示已放行，否则返回拒绝结果。"""
-        mode = context.permission_mode or "default"
-
-        for path_str in out_of_scope:
-            resolved = Path(path_str).resolve()
-
-            # bypass → 自动添加允许根
-            if mode == "bypass":
-                assert self.path_sandbox is not None
-                self.path_sandbox.add_allowed_root(str(resolved))
-                self.record_policy(
-                    "path_scope", str(resolved),
-                    PolicyDecision(decision="allow", risk=RiskLevel.SAFE,
-                                   reason=f"Auto-allowed out-of-scope path under bypass mode"),
-                    {"turn": turn, "tool": step.tool, "path": str(resolved)},
-                    event_callback,
-                )
-                continue
-
-            # auto → 只读放行
-            if mode == "auto" and is_read_only:
-                assert self.path_sandbox is not None
-                self.path_sandbox.add_allowed_root(str(resolved))
-                self.record_policy(
-                    "path_scope", str(resolved),
-                    PolicyDecision(decision="allow", risk=RiskLevel.SAFE,
-                                   reason=f"Auto-allowed out-of-scope read path under auto mode"),
-                    {"turn": turn, "tool": step.tool, "path": str(resolved)},
-                    event_callback,
-                )
-                continue
-
-            # default / 其他 → 弹框确认
-            action = "修改" if not is_read_only else "读取"
-            prompt = f"允许{action}工作区外目录?\n{resolved}"
-            decision_p = PolicyDecision(
-                decision="confirm", risk=RiskLevel.CONFIRM,
-                reason=f"Path is outside workspace under {mode} mode",
-                requires_user=True,
-            )
-
-            confirmed = False
-            if confirm_callback is not None:
-                confirmed = confirm_callback(prompt, decision_p)
-
-            if confirmed:
-                assert self.path_sandbox is not None
-                self.path_sandbox.add_allowed_root(str(resolved))
-                self.record_policy(
-                    "path_scope", str(resolved),
-                    PolicyDecision(decision="allow", risk=RiskLevel.SAFE,
-                                   reason="User allowed out-of-scope path access"),
-                    {"turn": turn, "tool": step.tool, "path": str(resolved)},
-                    event_callback,
-                )
-            else:
-                reason = f"用户拒绝访问工作区外路径: {resolved}"
-                self.record_policy(
-                    "path_scope", str(resolved),
-                    PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                    {"turn": turn, "tool": step.tool, "path": str(resolved)},
-                    event_callback,
-                )
-                return (
-                    ToolExecutionResult(
-                        tool=step.tool,
-                        status="denied",
-                        summary=reason,
-                        trace_payload={"tool": step.tool, "status": "denied", "error": reason},
-                    ),
-                    None,
-                    PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                )
-
-        return None  # 全部放行
-
-
-# ---------------------------------------------------------------------------
-# 独立辅助函数
-# ---------------------------------------------------------------------------
-
-
-def _extract_tool_paths(step: object) -> list[str]:
-    """从工具参数中提取所有文件路径（供 PathSandbox 检查）。"""
-    paths: list[str] = []
-
-    if step.tool == "read_file":
-        p = step.arguments.get("path")
-        if p:
-            paths.append(str(p))
-    elif step.tool == "search":
-        g = step.arguments.get("glob")
-        if g:
-            paths.append(str(g))
-    elif step.tool == "apply_patch":
-        patch_arg = step.arguments.get("patch")
-        if patch_arg:
-            try:
-                from xhx_agent.tools.patch import _parse_patch
-                for op in _parse_patch(str(patch_arg)):
-                    paths.append(op.path)
-            except Exception:
-                pass
-
-    return paths
-
-
-def _collect_out_of_scope_paths(step: object, context: ToolContext) -> list[object]:
-    """旧路径越界检测（resolve_with_scope），在无 PathSandbox 时回退使用。"""
-    out_of_scope: list[object] = []
-
-    if step.tool == "read_file":
-        path_arg = step.arguments.get("path")
-        if path_arg:
-            res = resolve_with_scope(context.workspace, context.allowed_dirs, path_arg)
-            if not res.in_scope:
-                out_of_scope.append(res)
-    elif step.tool == "search":
-        glob_arg = step.arguments.get("glob")
-        if glob_arg:
-            glob_root = extract_glob_root(context.workspace, glob_arg)
-            res = resolve_with_scope(context.workspace, context.allowed_dirs, glob_root)
-            if not res.in_scope:
-                out_of_scope.append(res)
-    elif step.tool == "apply_patch":
-        patch_arg = step.arguments.get("patch")
-        if patch_arg:
-            try:
-                from xhx_agent.tools.patch import _parse_patch
-                for op in _parse_patch(str(patch_arg)):
-                    res = resolve_with_scope(context.workspace, context.allowed_dirs, op.path)
-                    if not res.in_scope:
-                        out_of_scope.append(res)
-            except Exception:
-                pass
-
-    return out_of_scope
-
-
-def _handle_out_of_scope_paths(
-    kernel: SafeExecutionKernel,
-    step: object,
-    out_of_scope_paths: list[object],
-    context: ToolContext,
-    turn: int,
-    is_read_only: bool,
-    confirm_callback: ConfirmationCallback | None,
-    event_callback: EventCallback | None,
-) -> tuple[ToolExecutionResult | None, RawTraceEntry | None, PolicyDecision] | None:
-    """旧越界裁决逻辑，在无 PathSandbox 时回退使用。返回 None = 全部放行。"""
-    mode = context.permission_mode or "default"
-    for path_scope in out_of_scope_paths:
-        outside_root = path_scope.outside_root
-        if not outside_root:
-            continue
-        outside_root_resolved = Path(outside_root).resolve()
-
-        allowed = False
-        if mode == "bypass":
-            allowed = True
-        elif mode == "auto":
-            allowed = is_read_only  # auto: 只读自动放行，写需要确认
-        else:
-            allowed = False
-
-        if allowed:
-            if outside_root_resolved not in context.allowed_dirs:
-                context.allowed_dirs.append(outside_root_resolved)
-            kernel.record_policy(
-                "path_scope", str(outside_root_resolved),
-                PolicyDecision(decision="allow", risk=RiskLevel.SAFE,
-                               reason=f"Auto-allowed out-of-scope path under {mode} mode"),
-                {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                event_callback,
-            )
-        else:
-            action = "修改" if not is_read_only else "读取"
-            prompt = f"允许{action}工作区外目录?\n{outside_root_resolved}"
-            decision_p = PolicyDecision(
-                decision="confirm", risk=RiskLevel.CONFIRM,
-                reason=f"Path is outside workspace under {mode} mode",
-                requires_user=True,
-            )
-            confirmed = False
-            if confirm_callback is not None:
-                confirmed = confirm_callback(prompt, decision_p)
-
-            if confirmed:
-                if outside_root_resolved not in context.allowed_dirs:
-                    context.allowed_dirs.append(outside_root_resolved)
-                kernel.record_policy(
-                    "path_scope", str(outside_root_resolved),
-                    PolicyDecision(decision="allow", risk=RiskLevel.SAFE,
-                                   reason="User allowed out-of-scope path access"),
-                    {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                    event_callback,
-                )
-            else:
-                reason = f"用户拒绝访问工作区外路径: {outside_root_resolved}"
-                kernel.record_policy(
-                    "path_scope", str(outside_root_resolved),
-                    PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                    {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                    event_callback,
-                )
-                return (
-                    ToolExecutionResult(
-                        tool=step.tool,
-                        status="denied",
-                        summary=reason,
-                        trace_payload={"tool": step.tool, "status": "denied", "error": reason},
-                    ),
-                    None,
-                    PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                )
-
-    return None
 
 
 def _verification_evidence_summary(result: TerminalResult) -> str:

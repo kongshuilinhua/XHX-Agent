@@ -102,23 +102,21 @@ class SkillLoader:
     # ------------------------------------------------------------------
 
     def load_all(self) -> dict[str, SkillDef]:
-        """加载全部 Skill 定义（三层去重），结果缓存在 self._cache。"""
+        """加载全部 Skill 定义（三层，last-wins：项目 > 用户 > 内置）。"""
         seen: dict[str, SkillDef] = {}
 
+        # 加载顺序：低优先级先，高优先级后——无条件覆盖实现 last-wins
         # 1. 内置（最低优先级）
         for skill_def in self._load_builtins():
-            if skill_def.name not in seen:
-                seen[skill_def.name] = skill_def
+            seen[skill_def.name] = skill_def
 
-        # 2. 用户级
+        # 2. 用户级（覆盖内置）
         for skill_def in self._scan_directory(self.user_skills_dir, "user"):
-            if skill_def.name not in seen:
-                seen[skill_def.name] = skill_def
+            seen[skill_def.name] = skill_def
 
-        # 3. 项目级（最高优先级）
+        # 3. 项目级（最高优先级，覆盖用户和内置）
         for skill_def in self._scan_directory(self.skills_dir, "project"):
-            if skill_def.name not in seen:
-                seen[skill_def.name] = skill_def
+            seen[skill_def.name] = skill_def
 
         # 更新缓存
         for name, sd in seen.items():

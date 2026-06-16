@@ -1191,13 +1191,11 @@ class TextualCommandConsoleApp(App[None]):
         # No argument: show current mode plus a selectable picker (Arrow keys to navigate,
         # Enter to apply directly). Mirrors the /model profile picker.
         self.append_message(f"system> mode: {self.state.mode} (select to switch)")
-        # The three real paradigms only. linear/dag are converged supporting mechanisms
-        # (linear → plan's stop policy, dag → graph's execution layer), reachable via
-        # `--mode linear/dag` for the preserved legacy paths but not shown as paradigms here.
+        # Three paradigms: loop (ReAct), plan (plan-execute), team (coordinator multi-agent).
         options = [
             ("loop — ReAct tool-use loop (default)", "loop"),
             ("plan — plan-and-execute (batch)", "plan"),
-            ("graph — multi-agent workflow", "team"),
+            ("team — multi-agent workflow", "team"),
         ]
         self.set_detail("mode", "Select an orchestrator paradigm with Arrow keys + Enter.")
         self.present_picker(options, on_select=self._select_mode, title="Select Mode")
