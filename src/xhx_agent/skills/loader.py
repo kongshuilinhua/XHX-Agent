@@ -193,14 +193,10 @@ class SkillLoader:
 
     @staticmethod
     def _parse_yaml_frontmatter(content: str) -> dict:
-        """解析 YAML frontmatter。"""
-        match = re.match(r"^---\s*(?:yaml)?\r?\n(.*?)\r?\n---\r?\n", content, re.DOTALL | re.IGNORECASE)
-        if not match:
-            return {}
-        import yaml
+        """解析 YAML frontmatter（回退兼容——失败返回 {} 而非抛异常）。"""
         try:
-            data = yaml.safe_load(match.group(1))
-            return data if isinstance(data, dict) else {}
+            from xhx_agent.utils.frontmatter import parse_frontmatter
+            return parse_frontmatter(content)[0]
         except Exception as e:
             logger.warning("Failed to parse YAML frontmatter: %s", e)
             return {}
