@@ -185,6 +185,7 @@ def test_compiler_injection(tmp_path):
 
 def test_orchestrator_injection(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.memory.store import write_memory
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
@@ -200,7 +201,7 @@ def test_orchestrator_injection(tmp_path, monkeypatch):
             captured_messages.extend(messages)
             return ChatResult(content="Done task in loop", tool_calls=[])
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeClient())
 
     # Case 1: Memory is empty
     res1 = app.run_task("verify python", profile_name="mock", mode="loop")

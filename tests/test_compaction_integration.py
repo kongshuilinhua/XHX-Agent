@@ -83,13 +83,13 @@ def test_compaction_keep_recent_ge_body():
 
 
 def test_loop_integration_compaction(tmp_path, monkeypatch):
-    import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.compaction as compactmod
 
     RuntimeApp(tmp_path).init_project()
 
     # Monkeypatch compact_messages to track it
     calls = []
-    original_compact = loopmod.compact_messages
+    original_compact = compactmod.compact_messages
 
     def mock_compact(messages, summarize_fn, **kwargs):
         calls.append(messages)
@@ -99,7 +99,7 @@ def test_loop_integration_compaction(tmp_path, monkeypatch):
         kwargs["keep_recent"] = 2
         return original_compact(messages, summarize_fn, **kwargs)
 
-    monkeypatch.setattr(loopmod, "compact_messages", mock_compact)
+    monkeypatch.setattr(compactmod, "compact_messages", mock_compact)
 
     # Let's monkeypatch MockModelClient.chat to return several tool calls so the conversation grows
     turn_responses = [
