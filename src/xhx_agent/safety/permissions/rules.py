@@ -91,7 +91,21 @@ def parse_rule(raw: str, effect: Effect) -> Rule:
 
 
 def extract_content(tool_name: str, arguments: dict[str, Any]) -> str:
-    """从工具参数中提取用于规则匹配的内容字段。"""
+    """从工具参数中提取用于规则匹配的内容字段。
+
+    对 apply_patch，解析 patch 内容提取文件路径供 PathSandbox 检查。
+    """
+    if tool_name == "apply_patch":
+        patch_arg = arguments.get("patch", "")
+        if patch_arg:
+            try:
+                from xhx_agent.tools.patch import _parse_patch
+                paths = [op.path for op in _parse_patch(str(patch_arg))]
+                return " ".join(paths) if paths else str(patch_arg)
+            except Exception:
+                return str(patch_arg)
+        return ""
+
     field = _CONTENT_FIELDS.get(tool_name)
     if field is None:
         return ""
