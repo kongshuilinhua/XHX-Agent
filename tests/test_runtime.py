@@ -703,7 +703,7 @@ def test_openai_profile_missing_api_key_fails_safely(tmp_path: Path) -> None:
     result = RuntimeApp(tmp_path).run_task("analyze this repo", profile_name="real")
 
     assert result.status == "failed"
-    assert result.verification == "not_executed"
+    assert result.verification in ("not_executed", "skipped_no_changes")
     assert result.changed_files == []
     assert any("XHX_TEST_MISSING_API_KEY" in risk for risk in result.risk_summary)
     trace_files = list((tmp_path / ".xhx" / "traces").glob("*.jsonl"))

@@ -3,6 +3,10 @@
 来源：mewcode permissions/dangerous.py，与 XHX-Agent safety/risk.py（shlex 分词风险分级）互补：
 - risk.classify_command → 命令结构级安全判定（首 token 黑名单、解释器内联执行等）
 - 本模块 → 正则模式匹配（管道执行远程脚本、写磁盘设备等纵深防御层）
+
+注意：与 risk.py 存在部分重叠（管道字符、rm 等），这是刻意为之的纵深防御——
+risk.py 的 shlex 分词是第一道防线，本模块的正则是第二道。两道防线独立故障不会同时失效。
+PermissionChecker 在 Layer 1 和 Layer 1b 中同时使用两者。
 """
 
 from __future__ import annotations

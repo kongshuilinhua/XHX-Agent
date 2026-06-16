@@ -65,3 +65,36 @@ class TeamOrchestrator(BaseReActOrchestrator):
 
     def _mode_name(self) -> str:
         return "team"
+
+    def _verify_changes(
+        self, ctx: OrchestratorContext, changed_files: list[str],
+    ) -> tuple[str | None, list[str]]:
+        """Team 模式：变更后自动推断并运行验证命令。"""
+        if not changed_files:
+            return ("skipped_no_changes", [])
+
+        try:
+            from xhx_agent.verification.router import infer_verification
+            vplan = infer_verification(ctx.original_workspace, changed_files)
+            if not vplan or not vplan.commands:
+                return ("skipped_no_changes", [])
+
+            commands = [item.command for item in vplan.commands]
+            results = []
+            for cmd in commands:
+                try:
+                    r = ctx.kernel.run_verification(
+                        cmd, assume_yes=ctx.assume_yes,
+                        event_callback=ctx.event_callback,
+                    )
+                    results.append(r)
+                except Exception:
+                    pass
+
+            if not results:
+                return ("not_executed", commands)
+
+            passed = all(r.status == "success" for r in results)
+            return ("passed" if passed else "failed", commands)
+        except Exception:
+            return ("not_executed", [])

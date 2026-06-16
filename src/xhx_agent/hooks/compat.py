@@ -5,11 +5,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from xhx_agent.hooks.engine import HookEngine
 from xhx_agent.hooks.models import HookContext
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 旧 stage → 新 LifecycleEvent 映射
@@ -54,7 +57,7 @@ class HookManagerCompat:
             try:
                 cb(**kwargs)
             except Exception:
-                pass
+                log.debug("Hook callback %s failed for stage %s", cb.__name__, stage, exc_info=True)
 
         # 新式事件驱动
         event = _STAGE_TO_EVENT.get(stage, stage)
@@ -70,7 +73,7 @@ class HookManagerCompat:
         try:
             self._engine.run_hooks_sync(event, ctx)
         except Exception:
-            pass  # hook 失败不应影响主流程
+            log.debug("HookEngine error for stage %s", stage, exc_info=True)
 
     def register(self, stage: str, callback: Callable[..., Any]) -> None:
         """注册旧式 callback hook（向后兼容）。
