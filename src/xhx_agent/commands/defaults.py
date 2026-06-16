@@ -104,12 +104,18 @@ def _diff(app: Any, _arg: str) -> bool:
     return True
 
 def _verify(app: Any, _arg: str) -> bool:
-    app.run_manual_verification()
+    if getattr(app, '_slash_use_worker', False) and getattr(app, 'widgets_ready', False):
+        app.start_manual_verification_worker()
+    else:
+        app.run_manual_verification()
     return True
 
 def _repair(app: Any, arg: str) -> bool:
     max_attempts = 2 if arg.lower() in {"loop", "auto"} else 1
-    app.run_manual_repair(max_attempts=max_attempts)
+    if getattr(app, '_slash_use_worker', False) and getattr(app, 'widgets_ready', False):
+        app.start_manual_repair_worker(max_attempts=max_attempts)
+    else:
+        app.run_manual_repair(max_attempts=max_attempts)
     return True
 
 def _skills(app: Any, _arg: str) -> bool:

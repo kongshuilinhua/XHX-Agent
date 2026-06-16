@@ -873,6 +873,7 @@ class TextualCommandConsoleApp(App[None]):
 
     def handle_slash_command(self, command_line: str, *, use_worker: bool = False) -> bool:
         """Delegate to CommandRegistry. Returns False only for /exit."""
+        self._slash_use_worker = use_worker
         result = self.command_registry.execute(self, command_line)
         if result is None:
             from xhx_agent.commands.parser import parse_command

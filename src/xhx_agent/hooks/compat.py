@@ -19,8 +19,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _STAGE_TO_EVENT: dict[str, str] = {
-    "before_plan": "pre_tool_use",
-    "before_patch": "pre_tool_use",
+    "before_plan": "pre_plan",
+    "before_patch": "pre_patch",
     "after_verify": "post_tool_use",
     "before_summary": "compact",
 }
