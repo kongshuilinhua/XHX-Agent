@@ -146,6 +146,30 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
             agent_type = str(tc.arguments.get("agent_type") or "explore")
             description = str(tc.arguments.get("description", ""))
             prompt = str(tc.arguments.get("prompt", ""))
+
+            # Team 模式：将子 agent 注册为团队成员
+            team_mgr = getattr(ctx, "team_manager", None)
+            team_name = getattr(ctx, "team_name", "")
+            if team_mgr is not None and team_name:
+                import uuid, time
+                from xhx_agent.teams.models import TeammateInfo, BackendType
+                from xhx_agent.teams.progress import TeammateProgress
+
+                agent_id = f"agent-{uuid.uuid4().hex[:8]}"
+                member_name = f"{agent_type}-{agent_id[:4]}"
+                progress = TeammateProgress(name=member_name, team_name=team_name, status="running")
+                member = TeammateInfo(
+                    name=member_name, agent_id=agent_id, agent_type=agent_type,
+                    model="", worktree_path=str(ctx.workspace),
+                    backend_type=BackendType.IN_PROCESS.value, is_active=True,
+                    progress=progress,
+                )
+                team_mgr.register_member(team_name, member)
+                team_mgr.register_inprocess_handle(agent_id, None)
+                # 存储 agent_id 以便完成后更新进度
+                tc.arguments["_team_agent_id"] = agent_id
+                tc.arguments["_team_name"] = team_name
+
             try:
                 if agent_type in WRITE_AGENT_TYPES:
                     content, changed = run_write_subagent(ctx, description=description, prompt=prompt, turn=turn)
@@ -154,6 +178,11 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
                         ctx, description=description, prompt=prompt, agent_type=agent_type, turn=turn
                     )
                     changed = []
+                # 标记 team 成员完成
+                if team_mgr is not None and team_name:
+                    agent_id = tc.arguments.get("_team_agent_id", "")
+                    if agent_id:
+                        team_mgr.set_member_idle(team_name, agent_id)
                 status = "success"
                 lines = (content or "").splitlines()
                 summary = lines[0] if lines else ""

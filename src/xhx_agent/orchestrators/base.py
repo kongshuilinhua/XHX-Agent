@@ -79,7 +79,9 @@ class OrchestratorContext:
     subagent_claims: dict[str, str] = field(default_factory=dict)
     # 并行写子 agent 用：串行化 git worktree 创建/清理 + _merge_into_parent（claims 与拷贝）的临界区。
     subagent_lock: threading.Lock = field(default_factory=threading.Lock)
-
+    # Team 模式：TeamManager 实例 + 当前团队名（仅 team orchestrator 设置）
+    team_manager: object | None = None
+    team_name: str = ""
 
 class Orchestrator(Protocol):
     """基于共享基座的顶层控制流策略。
