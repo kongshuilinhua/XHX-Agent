@@ -122,6 +122,11 @@ def decide_with_checker(
     if checker_decision.effect in ("allow", "deny"):
         return PolicyDecision.from_checker_decision(tool_name, checker_decision)
 
-    # ask → 结合工具标志位回退到旧逻辑（保持向后兼容）
-    return decide_tool(tool_name, read_only=read_only, destructive=destructive, network=network)
+    # ask → 需要用户确认（权限模式要求弹框）
+    return PolicyDecision(
+        decision="confirm",
+        risk=RiskLevel.CONFIRM,
+        reason=checker_decision.reason,
+        requires_user=True,
+    )
 

@@ -79,6 +79,10 @@ class PermissionChecker:
         """
         content = extract_content(tool_name, arguments)
 
+        # ── Short-circuit: bypass/dontAsk 模式全放行 ───────────────
+        if self.mode in (PermissionMode.BYPASS, PermissionMode.DONT_ASK):
+            return Decision(effect="allow", reason=f"权限模式 {self.mode.value} 全放行")
+
         # ── Layer 0: Plan 模式例外放行 ──────────────────────────
         if self.mode == PermissionMode.PLAN:
             if tool_name in _PLAN_MODE_ALLOWED_TOOLS:

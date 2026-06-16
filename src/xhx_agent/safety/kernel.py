@@ -96,6 +96,13 @@ class SafeExecutionKernel:
             )
 
         # 1. 策略判定（通过 PermissionChecker 五层检查）
+        # 旧值映射：auto→default（仅读自动放行由 decide_with_checker 的 ask 回退处理）
+        #           bypass→bypassPermissions
+        _MODE_ALIAS: dict[str, str] = {"auto": "default", "bypass": "bypassPermissions"}
+        from xhx_agent.safety.permissions.modes import resolve_permission_mode
+        mode_raw = context.permission_mode or "default"
+        self.permission_checker.mode = resolve_permission_mode(_MODE_ALIAS.get(mode_raw, mode_raw))
+
         is_destructive = bool(d and d.destructive)
         is_network = bool(d and d.network)
         tool_category = "read" if is_read_only else ("write" if is_destructive else "command")
