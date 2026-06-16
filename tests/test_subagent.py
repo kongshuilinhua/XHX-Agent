@@ -18,6 +18,7 @@ def test_dispatch_schema_exposure():
 
 def test_subagent_e2e_loop(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     import xhx_agent.orchestrators.subagent as submod
 
     # Setup dummy project files
@@ -73,7 +74,7 @@ def test_subagent_e2e_loop(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeParentClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeParentClient())
     monkeypatch.setattr(submod, "build_chat_client", lambda profile: FakeChildClient())
 
     res = RuntimeApp(tmp_path).run_task("do subagent task", profile_name="mock", mode="loop")
@@ -92,6 +93,7 @@ def test_subagent_e2e_loop(tmp_path, monkeypatch):
 
 def test_subagent_explore_denies_patch(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     import xhx_agent.orchestrators.subagent as submod
 
     # Setup dummy project files
@@ -152,7 +154,7 @@ def test_subagent_explore_denies_patch(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeParentClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeParentClient())
     monkeypatch.setattr(submod, "build_chat_client", lambda profile: FakeChildClient())
 
     res = RuntimeApp(tmp_path).run_task("do subagent task", profile_name="mock", mode="loop")

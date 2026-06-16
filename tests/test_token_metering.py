@@ -38,6 +38,7 @@ def test_chat_and_count_accumulates():
 
 def test_loop_sets_token_metrics(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
 
@@ -48,7 +49,7 @@ def test_loop_sets_token_metrics(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             return ChatResult(content="Done task in loop", tool_calls=[])
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeClient())
 
     res = RuntimeApp(tmp_path).run_task("do task", profile_name="mock", mode="loop")
 

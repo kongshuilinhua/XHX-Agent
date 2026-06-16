@@ -145,9 +145,9 @@ def test_checkpoint_3_worktree_isolation_and_merge(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
 
-    original_build_routed_client = loopmod.build_routed_client
+    original_build_routed_client = basemod.build_routed_client
 
     def fake_build_routed_client(workspace, *, role, base_profile_name, event_callback=None, build_client_func=None):
         if role == "loop":
@@ -162,7 +162,7 @@ def test_checkpoint_3_worktree_isolation_and_merge(tmp_path, monkeypatch):
             build_client_func=build_client_func,
         )
 
-    monkeypatch.setattr(loopmod, "build_routed_client", fake_build_routed_client)
+    monkeypatch.setattr(basemod, "build_routed_client", fake_build_routed_client)
     monkeypatch.setattr(submod, "build_routed_client", fake_build_routed_client)
 
     res = RuntimeApp(tmp_path).run_task("change readme", profile_name="mock", mode="loop")
