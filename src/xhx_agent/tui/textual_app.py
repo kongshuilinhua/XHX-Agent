@@ -410,6 +410,11 @@ class TextualCommandConsoleApp(App[None]):
         self._picker_on_select: Callable[[str | None], None] | None = None
         self.permission_timeout_seconds = permission_timeout_seconds
         self.active_detail = "overview"
+        # Command registry — replaces the old if/elif chain in handle_slash_command
+        from xhx_agent.commands.registry import CommandRegistry
+        from xhx_agent.commands.defaults import register_default_commands
+        self.command_registry = CommandRegistry()
+        register_default_commands(self.command_registry)
         self.detail_text = (
             "Use /plan, /context, /evidence, /diff, /verify, /repair, or /dashboard to inspect runtime state."
         )
@@ -858,175 +863,23 @@ class TextualCommandConsoleApp(App[None]):
         else:
             self.resolve_pending_plan_review("cancel", None)
 
+    def _build_help_text(self) -> str:
+        """Build help text dynamically from the command registry."""
+        lines = []
+        for name, desc, hint in self.command_registry.list_all():
+            hint_str = f" {hint}" if hint else ""
+            lines.append(f"{name}{hint_str}  - {desc}")
+        return "\n".join(sorted(lines))
+
     def handle_slash_command(self, command_line: str, *, use_worker: bool = False) -> bool:
-        command, _, argument = command_line.partition(" ")
-        argument = argument.strip()
-        if command == "/exit":
-            self.exit_requested = True
-            return False
-        if command == "/clear":
-            self.action_clear()
+        """Delegate to CommandRegistry. Returns False only for /exit."""
+        result = self.command_registry.execute(self, command_line)
+        if result is None:
+            from xhx_agent.commands.parser import parse_command
+            command, _ = parse_command(command_line)
+            self.append_message(f"system> Unknown command: {command}")
             return True
-        if command == "/new":
-            self.action_clear()
-            return True
-        if command == "/allow":
-            if not self.resolve_pending_confirmation(True) and not self.resolve_pending_plan_review("execute"):
-                self.next_confirm_response = True
-                self.append_message("system> next permission prompt will be allowed once")
-            return True
-        if command == "/deny":
-            if not self.resolve_pending_confirmation(False) and not self.resolve_pending_plan_review("cancel"):
-                self.next_confirm_response = False
-                self.append_message("system> next permission prompt will be declined once")
-            return True
-        if command == "/help":
-            cmds_list = [
-                "/help      - Show help message and command details",
-                "/model     - List or switch active profile",
-                "/status    - Show current agent status",
-                "/plan      - Show active plan or preview a task plan",
-                "/context   - Show current context pack budget & files",
-                "/evidence  - Show recent safety policy evidence",
-                "/diff      - Show git diff summary for changes",
-                "/verify    - Run verification for changed files",
-                "/repair    - Repair codebase after failed verification",
-                "/skills    - List available skill directories",
-                "/mode      - Show or set orchestrator execution mode",
-                "/dashboard - Print detailed dashboard runtime state",
-                "/cancel    - Request task cancellation at safe boundary",
-                "/live      - Toggle live streaming dashboard render",
-                "/allow     - Answer allow to pending permission confirmation",
-                "/deny      - Answer deny to pending permission confirmation",
-                "/clear     - Clear conversation messages and details",
-                "/new       - Clear conversation and start a new session",
-                "/sessions  - List recent recorded agent sessions (supports filtering by keyword)",
-                "/sessions clear - 清理无法恢复的旧会话",
-                "/resume    - Switch follow-up context to a past session (supports prefix/suffix)",
-                "/tools     - Show details of recent tool calls",
-                "/verbose   - Toggle verbose inline tool call details",
-                "/exit      - Exit the textual command console",
-            ]
-            self.append_message("system> available commands:\n" + "\n".join(cmds_list))
-            self.set_detail(
-                "help",
-                "\n".join(
-                    [
-                        "/model [name] - list or switch profiles",
-                        "/plan [task] - show current plan or dry-run a plan",
-                        "/context - show current context pack summary",
-                        "/evidence - show recent policy evidence",
-                        "/diff - show changed files and git diff excerpt",
-                        "/verify - run verification for changed files",
-                        "/repair [loop] - repair after failed verification",
-                        "/allow or /deny - answer pending confirmation",
-                        "/cancel - request safe-boundary cancellation",
-                        "/sessions [keyword] - list past sessions and filter by keyword",
-                        "/sessions clear - 清理无法恢复的旧会话",
-                        "/new - start a new session",
-                        "/resume <run_id_prefix> - switch follow-up context to a past session",
-                        "/tools - show details of recent tool calls",
-                        "/verbose - toggle verbose inline tool call details",
-                    ]
-                ),
-            )
-            return True
-        if command == "/model":
-            self.print_model(argument or None)
-            return True
-        if command == "/plan":
-            self.print_plan_preview(argument or None)
-            return True
-        if command == "/mode":
-            self.set_mode(argument)
-            return True
-        if command == "/context":
-            self.print_context_summary()
-            return True
-        if command == "/evidence":
-            self.print_evidence_summary()
-            return True
-        if command == "/perm":
-            if argument:
-                from xhx_agent.safety.permission_mode import permission_mode_from_string, permission_mode_title
-
-                new_mode = permission_mode_from_string(argument)
-                self.state.permission_mode = new_mode
-                self.append_message(f"system> 权限模式: {permission_mode_title(new_mode)}")
-                self.set_detail("perm", f"权限模式: {permission_mode_title(new_mode)}")
-            else:
-                from xhx_agent.safety.permission_mode import permission_mode_title
-
-                self.append_message(
-                    f"system> 当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})"
-                )
-                self.set_detail(
-                    "perm",
-                    f"当前权限模式: {permission_mode_title(self.state.permission_mode)} ({self.state.permission_mode})",
-                )
-            self.refresh_snapshot()
-            return True
-        if command == "/diff":
-            self.print_diff_summary()
-            return True
-        if command == "/verify":
-            if use_worker and self.widgets_ready:
-                self.start_manual_verification_worker()
-            else:
-                self.run_manual_verification()
-            return True
-        if command == "/repair":
-            max_attempts = 2 if argument.lower() in {"loop", "auto"} else 1
-            if use_worker and self.widgets_ready:
-                self.start_manual_repair_worker(max_attempts=max_attempts)
-            else:
-                self.run_manual_repair(max_attempts=max_attempts)
-            return True
-        if command == "/skills":
-            self.print_skills()
-            return True
-        if command == "/dashboard":
-            self.print_dashboard_summary()
-            return True
-        if command == "/live":
-            self.append_message(
-                "system> live: rich-only in v0.5 fullscreen; Textual already refreshes its fixed panels"
-            )
-            return True
-        if command == "/cancel":
-            self.request_cancel()
-            return True
-        if command == "/sessions":
-            if argument.strip() == "clear":
-                from xhx_agent.runtime.session import prune_legacy_sessions
-
-                n = prune_legacy_sessions(self.workspace)
-                self.append_message(f"system> 已清理 {n} 条旧会话")
-                self.refresh_snapshot()
-            else:
-                self.handle_sessions(argument)
-            return True
-        if command == "/resume":
-            self.handle_resume(argument)
-            return True
-        if command == "/verbose":
-            self.verbose = not getattr(self, "verbose", False)
-            self.append_message(f"system> verbose: {'on' if self.verbose else 'off'}")
-            return True
-        if command == "/tools":
-            self.handle_tools()
-            return True
-        if command == "/status":
-            self.append_message(
-                "system> "
-                f"status: {self.state.status}; "
-                f"verification: {self.state.verification}; "
-                f"profile: {self.profile}; "
-                f"changed_files: {len(self.state.changed_files)}"
-            )
-            return True
-        self.append_message(f"system> Unknown command: {command}")
-        return True
+        return bool(result)
 
     def run_manual_verification(self) -> None:
         changed_files = list(self.state.changed_files)
@@ -1623,31 +1476,12 @@ class TextualCommandConsoleApp(App[None]):
         self.refresh_snapshot()
 
     def show_slash_commands(self, filter_prefix: str = "/") -> None:
+        """Show slash command picker — sourced from CommandRegistry."""
         all_commands = [
-            ("/help", "Show help message and command details"),
-            ("/model", "List or switch active profile"),
-            ("/status", "Show current agent status"),
-            ("/plan", "Show active plan or preview a task plan"),
-            ("/context", "Show current context pack budget & files"),
-            ("/evidence", "Show recent safety policy evidence"),
-            ("/diff", "Show git diff summary for changes"),
-            ("/verify", "Run verification for changed files"),
-            ("/repair", "Repair codebase after failed verification"),
-            ("/skills", "List available skill directories"),
-            ("/mode", "Show or set orchestrator execution mode"),
-            ("/dashboard", "Print detailed dashboard runtime state"),
-            ("/cancel", "Request task cancellation at safe boundary"),
-            ("/live", "Toggle live streaming dashboard render"),
-            ("/allow", "Allow the pending terminal command policy"),
-            ("/deny", "Decline the pending terminal command policy"),
-            ("/clear", "Clear conversation messages and details"),
-            ("/sessions", "List recent recorded agent sessions"),
-            ("/resume", "Switch follow-up context to a past session"),
-            ("/tools", "Show details of recent tool calls"),
-            ("/verbose", "Toggle verbose inline tool call details"),
-            ("/exit", "Exit the textual command console"),
+            (f"{name:<10} | {desc}", name)
+            for name, desc, _hint in self.command_registry.list_all()
         ]
-        filtered = [(f"{cmd:<10} | {desc}", cmd) for cmd, desc in all_commands if cmd.startswith(filter_prefix)]
+        filtered = [(label, cmd) for label, cmd in all_commands if cmd.startswith(filter_prefix)]
         if not filtered:
             self.hide_interactive_container()
             return

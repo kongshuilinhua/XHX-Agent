@@ -37,16 +37,27 @@ class TeamOrchestrator(BaseReActOrchestrator):
     """Coordinator 模式编排器。"""
 
     name = "team"
+    _agent_cache: dict[str, tuple[float, list[tuple[str, str]]]] = {}
 
     def _system_prompt_content(self, ctx: OrchestratorContext) -> str:
         from xhx_agent.agents.loader import AgentLoader
         from xhx_agent.teams.coordinator import get_coordinator_system_prompt
 
-        loader = AgentLoader(str(ctx.original_workspace))
-        loader.load_all()
-        catalog = loader.list_agents()
-        coordinator_prompt = get_coordinator_system_prompt(catalog)
+        workspace_key = str(ctx.original_workspace)
+        now = __import__("time").time()
+        cached = self._agent_cache.get(workspace_key)
+        mtime = float((ctx.original_workspace / ".xhx" / "agents").stat().st_mtime) \
+            if (ctx.original_workspace / ".xhx" / "agents").is_dir() else 0.0
 
+        if cached and cached[0] >= mtime:
+            catalog = cached[1]
+        else:
+            loader = AgentLoader(workspace_key)
+            loader.load_all()
+            catalog = loader.list_agents()
+            self._agent_cache[workspace_key] = (now, catalog)
+
+        coordinator_prompt = get_coordinator_system_prompt(catalog)
         return TEAM_SYSTEM_PROMPT + "\n\n" + coordinator_prompt
 
     def _role_name(self) -> str:

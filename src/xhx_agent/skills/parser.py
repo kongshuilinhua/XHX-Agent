@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import yaml
-
 log = logging.getLogger(__name__)
 
 VALID_NAME_RE = re.compile(r"^[a-z][a-z0-9\-]*$")
@@ -60,27 +58,13 @@ class SkillDef:
 
 
 def parse_frontmatter(raw: str) -> tuple[dict, str]:
-    """解析 YAML frontmatter + Markdown body。"""
-    stripped = raw.lstrip()
-    if not stripped.startswith("---"):
-        raise SkillParseError("Missing YAML frontmatter (must start with ---)")
-
-    end = stripped.find("---", 3)
-    if end == -1:
-        raise SkillParseError("Unclosed YAML frontmatter (missing closing ---)")
-
-    yaml_block = stripped[3:end]
-    body = stripped[end + 3:].lstrip("\n")
+    """解析 YAML frontmatter + Markdown body。委托给共享工具。"""
+    from xhx_agent.utils.frontmatter import FrontmatterParseError, parse_frontmatter as _parse
 
     try:
-        meta = yaml.safe_load(yaml_block)
-    except yaml.YAMLError as e:
-        raise SkillParseError(f"Invalid YAML in frontmatter: {e}") from e
-
-    if not isinstance(meta, dict):
-        raise SkillParseError("Frontmatter must be a YAML mapping")
-
-    return meta, body
+        return _parse(raw)
+    except FrontmatterParseError as e:
+        raise SkillParseError(str(e)) from e
 
 
 def _validate_meta(meta: dict, source: str = "") -> None:
