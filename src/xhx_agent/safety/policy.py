@@ -3,12 +3,17 @@
 terminal 命令的风险分级委托给 safety.risk；工具按白名单判定。两个关键约定：apply_patch 这类结构化写
 虽标 CONFIRM，但在 worktree 隔离下自动放行（不逐条弹确认）；mcp_/custom_ 动态工具放行但标 CONFIRM——
 它们以 Agent 自身权限运行，没有沙箱隔离。
+
+自 mewcode 集成后，新增 ``decide_with_checker`` 路径：通过 PermissionChecker 五层检查
+（Plan 白名单 → 安全命令 → 危险命令 → 路径沙箱 → 规则引擎 → 模式兜底）替代简单标志位判定。
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
+from xhx_agent.safety.permissions.checker import Decision, PermissionChecker
+from xhx_agent.safety.permissions.modes import PermissionMode
 from xhx_agent.safety.risk import RiskLevel, classify_command
 
 
@@ -17,6 +22,20 @@ class PolicyDecision(BaseModel):
     risk: RiskLevel
     reason: str
     requires_user: bool = False
+
+    @staticmethod
+    def from_checker_decision(name: str, d: Decision) -> PolicyDecision:
+        """将 PermissionChecker 的 Decision 转为 PolicyDecision。"""
+        if d.effect == "deny":
+            return PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=d.reason)
+        if d.effect == "ask":
+            return PolicyDecision(
+                decision="confirm",
+                risk=RiskLevel.CONFIRM,
+                reason=d.reason,
+                requires_user=True,
+            )
+        return PolicyDecision(decision="allow", risk=RiskLevel.SAFE, reason=d.reason)
 
 
 def decide_terminal(command: str, assume_yes: bool = False) -> PolicyDecision:
@@ -59,8 +78,6 @@ def decide_tool(
             reason=f"Tool {tool_name} requests network access; allowed under audit policies.",
         )
     if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
-        # 破坏性/陌生的动态外部工具（非只读 MCP/custom）：以 agent 权限运行、无沙箱，可对外部系统
-        # 产生副作用（如 GitHub 写操作），需人工确认（requires_user=True，由内核按权限模式弹框）。
         return PolicyDecision(
             decision="allow",
             risk=RiskLevel.CONFIRM,
@@ -71,3 +88,40 @@ def decide_tool(
             requires_user=True,
         )
     return PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=f"Tool {tool_name} is not allowed by policy.")
+
+
+def decide_with_checker(
+    tool_name: str,
+    arguments: dict[str, object],
+    checker: PermissionChecker,
+    *,
+    tool_category: str = "read",
+    read_only: bool = False,
+    destructive: bool = False,
+    network: bool = False,
+) -> PolicyDecision:
+    """通过 PermissionChecker 五层检查 + 工具标志位回退。
+
+    先走 checker.check()（五层递进），若返回 allow/deny 直接采纳；
+    若返回 ask，再结合工具标志位和 permission_mode 决定最终效果。
+    """
+    # 推断工具类别
+    if tool_category not in ("read", "write", "command"):
+        if destructive:
+            tool_category = "write"
+        elif network:
+            tool_category = "write"  # 保守：网络工具视为写类别
+        elif read_only:
+            tool_category = "read"
+        else:
+            tool_category = "command"
+
+    checker_decision = checker.check(tool_name, dict(arguments), tool_category=tool_category)
+
+    # allow/deny 直接采纳
+    if checker_decision.effect in ("allow", "deny"):
+        return PolicyDecision.from_checker_decision(tool_name, checker_decision)
+
+    # ask → 结合工具标志位回退到旧逻辑（保持向后兼容）
+    return decide_tool(tool_name, read_only=read_only, destructive=destructive, network=network)
+

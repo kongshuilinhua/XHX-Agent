@@ -54,7 +54,7 @@ def test_mcp_integration_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     app._build_plan = lambda *args, **kwargs: ModelPlan(summary="Done", status="done", steps=[])
 
-    result = app.run_task("do nothing", profile_name="mock", mode="linear")
+    result = app.run_task("do nothing", profile_name="mock", mode="loop")
 
     # 工具注册成功（fake close 不注销，便于断言）
     assert "mcp_test-server_hello" in app.tool_registry.names
@@ -94,7 +94,7 @@ def test_mcp_integration_connect_fail(tmp_path: Path, monkeypatch: pytest.Monkey
     app._build_plan = lambda *args, **kwargs: ModelPlan(summary="Done", status="done", steps=[])
 
     events = []
-    result = app.run_task("do nothing", profile_name="mock", event_callback=events.append, mode="linear")
+    result = app.run_task("do nothing", profile_name="mock", event_callback=events.append, mode="loop")
 
     # 失败不阻塞执行
     assert result.status == "success"

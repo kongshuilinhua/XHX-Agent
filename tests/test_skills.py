@@ -10,7 +10,7 @@ import pytest
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.runtime.mcp_config import MCPServerConfig
-from xhx_agent.skills.hooks import hooks_manager
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.skills.metadata import Skill, SkillMetadata
@@ -255,7 +255,7 @@ def test_runtime_app_hooks_integration(tmp_path: Path) -> None:
 
     # We will trigger the linear loop by using a simple task that won't run verification unless we make modifications,
     # but we can verify before_plan and before_summary.
-    app.run_task(task="Research how the app works", profile_name="mock", mode="linear")
+    app.run_task(task="Research how the app works", profile_name="mock", mode="loop")
 
     assert "before_plan" in hooks_called
     assert "before_summary" in hooks_called

@@ -30,7 +30,7 @@ def test_run_matrix_scale(tmp_path: Path):
     # 3 fixtures * 3 modes = 9 results
     assert len(results2) == 9
     for r in results2:
-        assert r.mode in ["loop", "plan", "graph"]
+        assert r.mode in ["loop", "plan", "team"]
 
 
 def test_render_benchmark_report_aggregation():
