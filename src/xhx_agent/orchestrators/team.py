@@ -1,6 +1,6 @@
 """Team Orchestrator：Coordinator 模式——Leader 调度 Team 成员完成任务。
 
-替代 graph 编排器。基于 LoopOrchestrator 的 ReAct 循环，注入 Coordinator 系统提示词，
+基于 LoopOrchestrator 的 ReAct 循环，注入 Coordinator 系统提示词。
 Leader 通过 dispatch 工具按需调度 worker Agent。
 """
 
@@ -35,19 +35,19 @@ You are xhx-agent in TEAM (Coordinator) mode. You are the LEAD agent coordinatin
 - Answer questions directly when possible — don't delegate work you can handle without tools
 
 ## Your Tools
-- **dispatch** — Spawn a worker agent (agent_type: "explore" for read-only search, "general-purpose" for full tasks)
-- All standard tools (search, read_file, apply_patch, terminal, verify) — use them directly for simple tasks
+- **dispatch** — Spawn a worker agent (agent_type: "explore" for read-only search, "general-purpose" for full capability)
+- All standard tools (search, read_file, apply_patch, terminal) — use them directly for simple single-file tasks
+- If a task requires investigating multiple files or making coordinated changes across files, use dispatch
 
 ## Worker Guidelines
-- Use dispatch for complex multi-step investigations or changes that would clutter your context
 - Give workers clear, self-contained prompts with specific deliverables
 - Don't use one worker to check another — workers notify you when done
-- After launching workers, briefly tell the user and end your response — don't predict results
+- After launching workers, briefly tell the user what you launched and end your response — don't predict results
 - Workers return concise conclusions — relay key findings to the user
 
-## Verification
-- Any code change should be verified independently — use a separate dispatch call for verification
-- Or run verify tool directly for test suites
+## Conversation Style
+Default to replying directly in natural language. ONLY use tools when the request genuinely requires it.
+Use relative paths only. All writes go through apply_patch.
 """
 
 
@@ -83,7 +83,9 @@ class TeamOrchestrator:
         if hasattr(client, "set_delta_callback"):
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
 
-        summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
+        summarizer = build_chat_client(
+            resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name)
+        )
         summarize_fn = getattr(summarizer, "summarize", None)
 
         from xhx_agent.runtime.profiles import resolve_context_window
@@ -100,61 +102,135 @@ class TeamOrchestrator:
             },
         ]
         if ctx.prior_messages:
-            messages.extend(ctx.prior_messages)
+            messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")
         messages.append({"role": "user", "content": ctx.task})
 
-        config = load_config(ctx.original_workspace)
-        max_turns = config.max_loop_turns
-        tool_summaries: list[str] = []
-        total_tokens = 0
-        t0 = time.monotonic()
+        changed_files: list[str] = []
+        risks: list[str] = []
+        max_turns = load_config(ctx.original_workspace).max_loop_turns
+        answer: str | None = None
+        status = "success"
+        turns_used = 0
 
         for turn in range(1, max_turns + 1):
+            turns_used = turn
             if ctx.cancel_check and ctx.cancel_check():
-                return RunResult(status="cancelled", task=ctx.task, run_id=ctx.run_id,
-                                 changed_files=[], tool_calls=[], tokens=total_tokens,
-                                 metrics=RunMetrics(), elapsed_seconds=time.monotonic() - t0,
-                                 mode="team")
-
-            emit_event(ctx.event_callback, "orchestrator_turn", f"Turn {turn}/{max_turns}", turn=turn)
-            messages = compact_messages(
-                messages, summarize_fn, compact_threshold,
-                keep_recent_tokens=compact_keep_recent_tokens,
-            )
-
+                status = "cancelled"
+                risks.append("Run cancelled before model call.")
+                break
+            if summarize_fn:
+                len_before = len(messages)
+                messages = compact_messages(
+                    messages,
+                    summarize_fn,
+                    max_tokens=compact_threshold,
+                    keep_recent_tokens=compact_keep_recent_tokens,
+                )
+                len_after = len(messages)
+                if len_after < len_before:
+                    emit_event(
+                        ctx.event_callback,
+                        "compaction",
+                        f"Compacted messages from {len_before} to {len_after}.",
+                        turn=turn, before=len_before, after=len_after,
+                    )
             try:
-                chat_result = chat_and_count(ctx, client, messages, schemas, turn)
-            except ModelClientError as e:
-                return RunResult(status="failed", task=ctx.task, run_id=ctx.run_id,
-                                 changed_files=[], tool_calls=[],
-                                 tokens=total_tokens, error_message=str(e),
-                                 metrics=RunMetrics(), elapsed_seconds=time.monotonic() - t0,
-                                 mode="team")
-
-            if chat_result is None:
+                result = chat_and_count(ctx, client, messages, schemas, turn=turn)
+            except ModelClientError as exc:
+                ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
+                emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)
+                status = "failed"
+                risks.append(exc.message)
                 break
 
-            total_tokens += chat_result.token_usage.get("total_tokens", 0)
-            content = chat_result.content or ""
+            if not result.tool_calls:
+                answer = result.content or ""
+                messages.append({"role": "assistant", "content": answer})
+                emit_event(
+                    ctx.event_callback, "model_plan",
+                    f"team answer [turn {turn}]",
+                    turn=turn, step_count=0, status="done",
+                )
+                break
 
-            if chat_result.tool_calls:
-                messages.append({"role": "assistant", "content": content, "tool_calls": chat_result.raw_tool_calls})
-                for tc in chat_result.tool_calls:
-                    _, result_content, changed_files = execute_tool_call(ctx, tc, turn)
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_content[:10000]})
+            messages.append({
+                "role": "assistant",
+                "content": result.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                    }
+                    for tc in result.tool_calls
+                ],
+            })
+
+            def _run(tc, turn=turn):
+                return execute_tool_call(ctx, tc, turn)
+
+            reg = ctx.kernel.tool_registry
+
+            def _is_parallel_safe(tc, reg=reg) -> bool:
+                if tc.name == "dispatch":
+                    return str(tc.arguments.get("agent_type", "explore")) != "edit"
+                d = reg.definition(tc.name)
+                return d is not None and d.read_only
+
+            all_parallel_safe = (
+                len(result.tool_calls) >= 2
+                and all(_is_parallel_safe(tc) for tc in result.tool_calls)
+            )
+            if all_parallel_safe:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
+                    outcomes = list(pool.map(_run, result.tool_calls))
             else:
-                messages.append({"role": "assistant", "content": content})
-                break
+                outcomes = [_run(tc) for tc in result.tool_calls]
 
-        try:
-            save_transcript(ctx.run_id, messages, ctx.original_workspace)
-        except Exception:
-            pass
+            for tc, content, changed in outcomes:
+                changed_files.extend(changed)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": content[:_MAX_TOOL_RESULT_CHARS],
+                })
+        else:
+            status = "failed"
+            risks.append(f"team did not finish within {max_turns} turn(s).")
 
-        metrics = RunMetrics()
+        summary = write_report(
+            workspace=ctx.original_workspace,
+            run_id=ctx.run_id,
+            task=ctx.task,
+            plan=[f"team paradigm: {turns_used} turn(s)."],
+            changed_files=sorted(set(changed_files)),
+            commands=[],
+            verification="not_executed",
+            risks=risks,
+        )
+        transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
+        ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - ctx.start_time, 2),
+            turns=turns_used,
+            tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
+            files_changed_count=len(set(changed_files)),
+            commands_run_count=0,
+            repair_attempts=0,
+            success=(status == "success"),
+        )
         return RunResult(
-            status="success", task=ctx.task, run_id=ctx.run_id,
-            changed_files=[], tool_calls=[], tokens=total_tokens,
-            metrics=metrics, elapsed_seconds=time.monotonic() - t0,
+            run_id=ctx.run_id,
+            status=status,
+            turns=turns_used,
+            changed_files=sorted(set(changed_files)),
+            commands=[],
+            verification="not_executed",
+            summary_path=str(summary.relative_to(ctx.original_workspace)),
+            risk_summary=risks,
             mode="team",
+            answer=answer,
+            transcript_path=transcript_rel,
+            metrics=metrics,
         )
