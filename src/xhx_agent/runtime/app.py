@@ -50,7 +50,7 @@ from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
 from xhx_agent.safety.worktree import WorktreeContext
-from xhx_agent.skills.hooks import hooks_manager
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
@@ -317,178 +317,6 @@ class RuntimeApp:
             mode="direct",
         )
 
-    def _run_linear(self, ctx: OrchestratorContext) -> RunResult:
-        """loop / linear 范式的实际循环体：模型工具循环 → 刷新索引 → 验证 + 有界修复 → 出报告。
-
-        autonomous（loop）与否（linear）只体现在喂给 _run_model_tool_loop 的几个开关上：
-        max_turns、stop_on_first_change、history_summarizer、concurrent_readonly。
-        """
-        changed_files: list[str] = []
-        commands_run: list[str] = []
-        verification_results: list[TerminalResult] = []
-        checkpoint: Checkpoint | None = None
-        restore_plan_created = False
-        repair_decision: RepairDecision | None = None
-        repair_attempts = 0
-        risks: list[str] = []
-        status = "success"
-        turns_completed = 0
-        plan_summaries: list[str] = [
-            "Load project configuration.",
-            f"Scan project languages: {', '.join(ctx.scan.detected_languages) or 'unknown'}.",
-        ]
-        tool_summaries: list[str] = []
-        evidence_entries: list[EvidenceEntry] = []
-        recent_error: str | None = None
-
-        status, turns_completed, recent_error = self._run_model_tool_loop(
-            task=ctx.task,
-            profile=ctx.profile,
-            scan=ctx.scan,
-            evidence=ctx.evidence,
-            kernel=ctx.kernel,
-            tool_context=ctx.tool_context,
-            changed_files=changed_files,
-            tool_summaries=tool_summaries,
-            evidence_entries=evidence_entries,
-            plan_summaries=plan_summaries,
-            risks=risks,
-            recent_error=recent_error,
-            starting_turn=1,
-            event_callback=ctx.event_callback,
-            cancel_check=ctx.cancel_check,
-            metrics_tracker=ctx.metrics_tracker,
-            # autonomous（loop）才放开多轮 + 历史压缩 + 只读并发；非 autonomous（linear）首改即停。
-            max_turns=load_config(self.workspace).max_loop_turns if ctx.autonomous else None,
-            stop_on_first_change=not ctx.autonomous,
-            history_summarizer=self._make_history_summarizer(ctx.profile) if ctx.autonomous else None,
-            concurrent_readonly=ctx.autonomous,
-        )
-        if changed_files and status not in {"failed", "cancelled"}:
-            _refresh_repo_intel_index(self.workspace, ctx.evidence, ctx.event_callback, risks)
-
-        verification_plan = infer_verification(self.workspace, changed_files) if changed_files else None
-        commands = [item.command for item in verification_plan.commands] if verification_plan else []
-        if status == "cancelled":
-            verification_status = "cancelled"
-        elif status == "failed":
-            verification_status = "not_executed"
-        elif verification_plan:
-            verification_status = verification_plan.skip_reason or "not_executed"
-        else:
-            verification_status = "skipped_no_changes"
-        if status not in {"failed", "cancelled"} and not changed_files:
-            verification_status = "skipped_no_changes"
-            ctx.evidence.write_trace("verification_skipped", {"reason": "No changed files."})
-
-        loop_ctx = VerificationLoopContext(
-            task=ctx.task,
-            run_id=ctx.run_id,
-            profile=ctx.profile,
-            scan=ctx.scan,
-            evidence=ctx.evidence,
-            kernel=ctx.kernel,
-            tool_context=ctx.tool_context,
-            metrics_tracker=ctx.metrics_tracker,
-            assume_yes=ctx.assume_yes,
-            confirm_callback=ctx.confirm_callback,
-            auto_repair=ctx.auto_repair,
-            cancel_check=ctx.cancel_check,
-            event_callback=ctx.event_callback,
-            status=status,
-            verification_status=verification_status,
-            changed_files=changed_files,
-            commands_run=commands_run,
-            verification_results=verification_results,
-            repair_attempts=repair_attempts,
-            turns_completed=turns_completed,
-            recent_error=recent_error,
-            tool_summaries=tool_summaries,
-            evidence_entries=evidence_entries,
-            plan_summaries=plan_summaries,
-            risks=risks,
-        )
-        (
-            status,
-            verification_status,
-            repair_attempts,
-            turns_completed,
-            recent_error,
-            checkpoint,
-            repair_decision,
-            restore_plan_created,
-        ) = self._execute_verification_and_repair_loop(loop_ctx)
-
-        if status != "success" and not ctx.isolated and changed_files:
-            risks.append(IN_PLACE_WARNING)
-
-        checkpoint_path = str(checkpoint_path_value(ctx.original_workspace, ctx.run_id)) if checkpoint else None
-        restore_plan_path = (
-            str(restore_plan_path_value(ctx.original_workspace, ctx.run_id)) if restore_plan_created else None
-        )
-
-        with contextlib.suppress(Exception):
-            hooks_manager.trigger(
-                "before_summary",
-                workspace=self.workspace,
-                run_id=ctx.run_id,
-                task=ctx.task,
-                status=status,
-                changed_files=changed_files,
-            )
-
-        summary = write_report(
-            workspace=ctx.original_workspace,
-            run_id=ctx.run_id,
-            task=ctx.task,
-            plan=plan_summaries + ["Write run summary."],
-            changed_files=sorted(set(changed_files)),
-            commands=commands_run or commands,
-            verification=verification_status,
-            risks=risks,
-            verification_results=verification_results,
-            checkpoint_path=checkpoint_path,
-            restore_plan_path=restore_plan_path,
-            repair=repair_decision,
-            repair_attempts=repair_attempts,
-        )
-        ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-        emit_event(
-            ctx.event_callback,
-            "run_end",
-            "Run finished.",
-            run_id=ctx.run_id,
-            status=status,
-            verification=verification_status,
-            changed_files=sorted(set(changed_files)),
-            summary_path=str(summary.relative_to(ctx.original_workspace)),
-        )
-        metrics = RunMetrics(
-            duration_seconds=round(time.time() - ctx.start_time, 2),
-            turns=turns_completed,
-            tokens_estimate=ctx.metrics_tracker["tokens"],
-            files_changed_count=len(changed_files),
-            commands_run_count=len(commands_run or commands),
-            repair_attempts=repair_attempts,
-            success=(status == "success"),
-        )
-        return RunResult(
-            run_id=ctx.run_id,
-            status=status,
-            turns=turns_completed,
-            changed_files=sorted(set(changed_files)),
-            commands=commands_run or commands,
-            verification=verification_status,
-            verification_results=verification_results,
-            checkpoint_path=checkpoint_path,
-            restore_plan_path=restore_plan_path,
-            repair=repair_decision,
-            repair_attempts=repair_attempts,
-            summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks,
-            metrics=metrics,
-            mode=ctx.mode,
-        )
 
     def _execute_verification_and_repair_loop(
         self,
@@ -805,8 +633,6 @@ class RuntimeApp:
             details={"provider": profile.provider},
         )
 
-    def _make_history_summarizer(self, profile: ModelProfile) -> Callable[[list[str]], str]:
-        provider = profile.provider
 
         def summarize(older: list[str]) -> str:
             text = "\n".join(older)
@@ -867,6 +693,7 @@ class RuntimeApp:
         stop_on_first_change: bool = True,
         history_summarizer: Callable[[list[str]], str] | None = None,
         concurrent_readonly: bool = False,
+        assume_yes: bool = False,
     ) -> tuple[str, int, str | None]:
         """模型↔工具的多轮循环：每轮 编译上下文包 → 取模型计划 → 顺序执行工具 → 判定是否继续。
 
@@ -962,7 +789,8 @@ class RuntimeApp:
                         result, trace, policy = preexecuted[index]
                     else:
                         result, trace, policy = kernel.execute_tool(
-                            tool_context, step, turn, event_callback=event_callback
+                            tool_context, step, turn, event_callback=event_callback,
+                            assume_yes=assume_yes,
                         )
                     if result is None or trace is None:
                         recent_error = policy.reason

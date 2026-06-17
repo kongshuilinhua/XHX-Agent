@@ -1,24 +1,11 @@
+"""Loop Orchestrator：ReAct tool-use 统一循环（Claude Code 式）。
+
+模型回纯文本=对话回答即结束；回 tool_calls=经 kernel 执行、结果作为 role:tool 消息追加、再循环。
+"""
+
 from __future__ import annotations
 
-import json
-import time
-from typing import TYPE_CHECKING, Any
-
-from xhx_agent.evals.metrics import RunMetrics
-from xhx_agent.memory.recall import render_recalled_memories
-from xhx_agent.models import build_chat_client
-from xhx_agent.models.routing import build_routed_client, resolve_profile_for_role
-from xhx_agent.models.types import ModelClientError
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
-from xhx_agent.orchestrators.base import OrchestratorContext
-from xhx_agent.orchestrators.compaction import compact_messages
-from xhx_agent.repo_intel.xhx_md import render_xhx_md
-from xhx_agent.runtime.config import load_config
-from xhx_agent.runtime.events import emit_event
-from xhx_agent.runtime.session import save_transcript
-
-if TYPE_CHECKING:
-    from xhx_agent.runtime.app import RunResult
+from xhx_agent.orchestrators.base import BaseReActOrchestrator, OrchestratorContext
 
 LOOP_SYSTEM_PROMPT = (
     "You are xhx-agent, a coding agent operating inside a local repository.\n"
@@ -37,167 +24,16 @@ LOOP_SYSTEM_PROMPT = (
 )
 
 
-class LoopOrchestrator:
-    """loop 范式：ReAct tool-use 统一循环（Claude Code 式）。
-
-    模型回纯文本=对话回答即结束；回 tool_calls=经 kernel 执行、结果作为 role:tool 消息追加、再循环。
-    """
+class LoopOrchestrator(BaseReActOrchestrator):
+    """loop 范式：ReAct tool-use 统一循环。"""
 
     name = "loop"
 
-    def run(self, ctx: OrchestratorContext) -> RunResult:
-        from xhx_agent.evidence.report import write_report
-        from xhx_agent.runtime.app import RunResult
+    def _system_prompt_content(self, ctx: OrchestratorContext) -> str:
+        return LOOP_SYSTEM_PROMPT
 
-        client = build_routed_client(
-            ctx.original_workspace,
-            role="loop",
-            base_profile_name=ctx.profile.name,
-            event_callback=ctx.event_callback,
-            build_client_func=build_chat_client,
-        )
-        # 流式：把模型 content 增量实时 emit 成 model_delta 事件，喂给 Live 状态行。
-        if hasattr(client, "set_delta_callback"):
-            client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
-        summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
-        summarize_fn = getattr(summarizer, "summarize", None)
-        schemas = ctx.kernel.tool_registry.tool_schemas()
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": LOOP_SYSTEM_PROMPT
-                + "\n\n"
-                + render_xhx_md(ctx.scan)
-                + render_recalled_memories(ctx.original_workspace, ctx.task),
-            },
-        ]
-        if ctx.prior_messages:
-            messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")
-        messages.append({"role": "user", "content": ctx.task})
-        changed_files: list[str] = []
-        risks: list[str] = []
-        max_turns = load_config(ctx.original_workspace).max_loop_turns
-        answer: str | None = None
-        status = "success"
-        turns_used = 0
+    def _role_name(self) -> str:
+        return "loop"
 
-        for turn in range(1, max_turns + 1):
-            turns_used = turn
-            if ctx.cancel_check and ctx.cancel_check():
-                status = "cancelled"
-                risks.append("Run cancelled before model call.")
-                break
-            if summarize_fn:
-                len_before = len(messages)
-                messages = compact_messages(messages, summarize_fn)
-                len_after = len(messages)
-                if len_after < len_before:
-                    emit_event(
-                        ctx.event_callback,
-                        "compaction",
-                        f"Compacted messages from {len_before} to {len_after}.",
-                        turn=turn,
-                        before=len_before,
-                        after=len_after,
-                    )
-            try:
-                result = chat_and_count(ctx, client, messages, schemas, turn=turn)
-            except ModelClientError as exc:
-                ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
-                emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)
-                status = "failed"
-                risks.append(exc.message)
-                break
-
-            if not result.tool_calls:
-                answer = result.content or ""
-                messages.append({"role": "assistant", "content": answer})
-                emit_event(
-                    ctx.event_callback,
-                    "model_plan",
-                    f"loop answer [turn {turn}]",
-                    turn=turn,
-                    step_count=0,
-                    status="done",
-                )
-                break
-
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": result.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
-                        }
-                        for tc in result.tool_calls
-                    ],
-                }
-            )
-
-            def _run(tc, turn=turn):
-                return execute_tool_call(ctx, tc, turn)
-
-            reg = ctx.kernel.tool_registry
-
-            def _is_parallel_safe(tc, reg=reg) -> bool:
-                # explore 子 agent 只读且隔离，可与只读工具一起并发；
-                # edit(写) 子 agent 有 worktree/合并并发隐患，仍走串行（Slice B 单独处理）。
-                if tc.name == "dispatch":
-                    return str(tc.arguments.get("agent_type", "explore")) != "edit"
-                d = reg.definition(tc.name)
-                return d is not None and d.read_only
-
-            all_parallel_safe = len(result.tool_calls) >= 2 and all(_is_parallel_safe(tc) for tc in result.tool_calls)
-            if all_parallel_safe:
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
-                    outcomes = list(pool.map(_run, result.tool_calls))
-            else:
-                outcomes = [_run(tc) for tc in result.tool_calls]
-
-            for tc, content, changed in outcomes:
-                changed_files.extend(changed)
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": content[:_MAX_TOOL_RESULT_CHARS]})
-        else:
-            status = "failed"
-            risks.append(f"loop did not finish within {max_turns} turn(s).")
-
-        summary = write_report(
-            workspace=ctx.original_workspace,
-            run_id=ctx.run_id,
-            task=ctx.task,
-            plan=[f"loop paradigm: {turns_used} turn(s)."],
-            changed_files=sorted(set(changed_files)),
-            commands=[],
-            verification="not_executed",
-            risks=risks,
-        )
-        transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
-        ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
-        metrics = RunMetrics(
-            duration_seconds=round(time.time() - ctx.start_time, 2),
-            turns=turns_used,
-            tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
-            files_changed_count=len(set(changed_files)),
-            commands_run_count=0,
-            repair_attempts=0,
-            success=(status == "success"),
-        )
-        return RunResult(
-            run_id=ctx.run_id,
-            status=status,
-            turns=turns_used,
-            changed_files=sorted(set(changed_files)),
-            commands=[],
-            verification="not_executed",
-            summary_path=str(summary.relative_to(ctx.original_workspace)),
-            risk_summary=risks,
-            mode=ctx.mode or "loop",
-            answer=answer,
-            transcript_path=transcript_rel,
-            metrics=metrics,
-        )
+    def _mode_name(self) -> str:
+        return "loop"

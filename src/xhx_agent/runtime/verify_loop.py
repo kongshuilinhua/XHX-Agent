@@ -476,6 +476,7 @@ class VerificationLoop:
                 event_callback=event_callback,
                 cancel_check=cancel_check,
                 metrics_tracker={"tokens": 0},
+                assume_yes=assume_yes,
             )
             normalized_changed_files = sorted(set(mutable_changed_files))
             if status not in {"failed", "cancelled"}:

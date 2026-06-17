@@ -19,6 +19,56 @@ class ModelProfile(BaseModel):
     model: str = "REPLACE_ME"
     temperature: float = 0.2
     stream: bool = True
+    # 模型上下文窗口（token）。0=未显式配置，由 context_window_for_model 按模型名推断。
+    # 压缩阈值与状态栏 Context 用量都以它为基准——对标 Claude 的「窗口跟模型走」。
+    context_window: int = 0
+
+
+# 常见模型上下文窗口（token），按 model 名子串匹配（小写）；命中第一个即返回。
+# 不在表内的模型回退 _DEFAULT_CONTEXT_WINDOW。表是保守下限，可被 profile.context_window 覆盖。
+_MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
+    ("deepseek-v4", 1_000_000),  # deepseek-v4-pro / v4-flash 官方文档：上下文 1M、输出最大 384K
+    # 旧别名 deepseek-chat / deepseek-reasoner（2026/07/24 弃用）窗口未在此断言——
+    # 如仍用，请在 profile 里用 context_window 显式指定（优先级最高）。
+    ("gpt-4o", 128_000),
+    ("gpt-4.1", 1_000_000),
+    ("gpt-4-turbo", 128_000),
+    ("o1", 200_000),
+    ("o3", 200_000),
+    ("o4", 200_000),
+    ("claude", 200_000),
+    ("gemini", 1_000_000),
+    ("qwen", 128_000),
+    ("glm", 128_000),
+    ("moonshot", 128_000),
+    ("kimi", 128_000),
+    ("llama", 128_000),
+    ("mistral", 128_000),
+    ("yi-", 200_000),
+]
+_DEFAULT_CONTEXT_WINDOW = 128_000
+
+
+def context_window_for_model(model: str) -> int:
+    """按模型名子串推断上下文窗口；未知模型回退 _DEFAULT_CONTEXT_WINDOW（保守 128k）。"""
+    lowered = (model or "").lower()
+    for needle, window in _MODEL_CONTEXT_WINDOWS:
+        if needle in lowered:
+            return window
+    return _DEFAULT_CONTEXT_WINDOW
+
+
+def resolve_context_window(profile: ModelProfile | None, model: str = "") -> int:
+    """解析有效上下文窗口。优先级：profile.context_window 显式值 > 按模型名映射 > 缺省 128k。
+
+    model 显式传入时优先按它匹配（路由场景下实际调用的模型可能与 base profile 不同），
+    缺省回退 profile.model。
+    """
+    explicit = getattr(profile, "context_window", None) if profile is not None else None
+    if explicit:
+        return int(explicit)
+    name = model or (getattr(profile, "model", "") if profile is not None else "")
+    return context_window_for_model(name)
 
 
 def default_profiles() -> list[ModelProfile]:

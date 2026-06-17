@@ -7,16 +7,9 @@ from xhx_agent.orchestrators.base import Orchestrator, OrchestratorContext
 
 def test_orchestrator_context_is_constructible_with_minimal_fields() -> None:
     ctx = OrchestratorContext(
-        app=None,
-        task="t",
-        run_id="r",
-        workspace=Path("."),
-        original_workspace=Path("."),
-        profile=None,
-        scan=None,
-        evidence=None,
-        kernel=None,
-        tool_context=None,
+        app=None, task="t", run_id="r",
+        workspace=Path("."), original_workspace=Path("."),
+        profile=None, scan=None, evidence=None, kernel=None, tool_context=None,
     )
     assert ctx.assume_yes is False
     assert ctx.auto_repair is False
@@ -29,76 +22,27 @@ def test_orchestrator_protocol_has_run_member() -> None:
 
 
 def test_select_orchestrator_defaults_and_errors() -> None:
-    from xhx_agent.orchestrators.registry import execution_mode_to_key, select_orchestrator
-    from xhx_agent.planner.modes import ExecutionMode
+    from xhx_agent.orchestrators.registry import select_orchestrator
 
-    # DEFAULT_MODE="loop" -> LoopOrchestrator (named "loop"); "plan" -> PlanOrchestrator
     assert select_orchestrator(None).name == "loop"
     assert select_orchestrator("loop").name == "loop"
     assert select_orchestrator("plan").name == "plan"
-    assert select_orchestrator("linear").name == "linear"
-    assert select_orchestrator("graph").name == "graph"
-    assert execution_mode_to_key(ExecutionMode.LINEAR_EDIT) == "linear"
+    assert select_orchestrator("team").name == "team"
     with pytest.raises(ValueError):
         select_orchestrator("nope")
 
 
-def test_graph_mode_runs_via_langgraph(tmp_path, monkeypatch) -> None:
-    import xhx_agent.orchestrators.graph as graphmod
-    import xhx_agent.orchestrators.subagent as subagentmod
-    from xhx_agent.models.types import ChatResult, ToolCall
-    from xhx_agent.runtime.app import RuntimeApp
+def test_team_mode_runs_via_coordinator(tmp_path, monkeypatch) -> None:
+    """Verify TeamOrchestrator is registered and instantiable."""
+    from xhx_agent.orchestrators.team import TeamOrchestrator
+    o = TeamOrchestrator()
+    assert o.name == "team"
 
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    RuntimeApp(tmp_path).init_project()
+    from xhx_agent.orchestrators.registry import select_orchestrator
+    team_o = select_orchestrator("team")
+    assert team_o.name == "team"
 
-    class _Fake:
-        def __init__(self) -> None:
-            self.w = 0
-
-        def chat(self, messages, tools):
-            system = messages[0]["content"]
-            if "PLANNER" in system:
-                return ChatResult(
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="p1",
-                            name="submit_dag",
-                            arguments={
-                                "nodes": [{"id": "n1", "agent_type": "edit", "prompt": "tweak calc.py", "deps": []}]
-                            },
-                        )
-                    ],
-                )
-            if "SOLVER" in system:
-                return ChatResult(content="done all")
-            self.w += 1
-            if self.w == 1:
-                return ChatResult(
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="w1",
-                            name="apply_patch",
-                            arguments={
-                                "patch": "*** Begin Patch\n*** Update File: src/calc.py\n@@\n"
-                                "-    return a + b\n+    return a + b  # tweaked\n*** End Patch\n"
-                            },
-                        )
-                    ],
-                )
-            return ChatResult(content="done")
-
-    monkeypatch.setattr(graphmod, "build_chat_client", lambda profile: _Fake())
-    monkeypatch.setattr(subagentmod, "build_chat_client", lambda profile: _Fake())
-    events = []
-
-    result = RuntimeApp(tmp_path).run_task("refactor math", assume_yes=True, mode="graph", event_callback=events.append)
-
-    assert result.mode == "graph"
-    assert any(e.type == "graph_planner" for e in events)
-    assert any(e.type == "graph_node" for e in events)
-    assert result.changed_files == ["src/calc.py"]
-    assert result.status == "success"
+    from xhx_agent.teams.coordinator import get_coordinator_system_prompt
+    prompt = get_coordinator_system_prompt([("Explore", "search agent"), ("general-purpose", "full agent")])
+    assert "Explore" in prompt
+    assert "general-purpose" in prompt

@@ -2,6 +2,8 @@
 
 把「策略判定 → 执行 → 证据落盘」收口在一处：每次工具调用先经 policy 判定，deny 的直接短路
 （但仍记一条 policy_decision，保证审计链不断），其余才真正执行并写 trace/evidence。
+
+自 mewcode 集成后，路径越界检测委托给 PathSandbox，权限判定可通过 PermissionChecker 五层检查。
 """
 
 from __future__ import annotations
@@ -12,9 +14,12 @@ from pathlib import Path
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
-from xhx_agent.safety.policy import PolicyDecision, decide_tool
+from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector
+from xhx_agent.safety.permissions.checker import PermissionChecker
+from xhx_agent.safety.permissions.rules import RuleEngine
+from xhx_agent.safety.permissions.sandbox import PathSandbox
+from xhx_agent.safety.policy import PolicyDecision, decide_with_checker
 from xhx_agent.safety.risk import RiskLevel
-from xhx_agent.tools.paths import extract_glob_root, resolve_with_scope
 from xhx_agent.tools.registry import ToolContext, ToolExecutionResult, ToolRegistry
 from xhx_agent.tools.terminal import TerminalResult, run_terminal
 
@@ -24,12 +29,38 @@ ConfirmationCallback = Callable[[str, PolicyDecision], bool]
 class SafeExecutionKernel:
     """运行时面向的边界：把策略判定、工具执行、审计写入收口在一起。"""
 
-    def __init__(self, workspace: Path, run_id: str, evidence: EvidenceStore, tool_registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        run_id: str,
+        evidence: EvidenceStore,
+        tool_registry: ToolRegistry,
+        *,
+        permission_checker: PermissionChecker | None = None,
+        path_sandbox: PathSandbox | None = None,
+    ) -> None:
         self.workspace = workspace
         self.run_id = run_id
         self.evidence = evidence
         self.tool_registry = tool_registry
         self.read_only_phase: bool = False
+
+        # Auto-create PathSandbox + PermissionChecker if not provided
+        if path_sandbox is None:
+            path_sandbox = PathSandbox(str(workspace))
+        self.path_sandbox = path_sandbox
+
+        if permission_checker is None:
+            permissions_file = workspace / ".xhx" / "permissions.yaml"
+            rule_engine = RuleEngine(
+                project_rules_path=permissions_file if permissions_file.is_file() else None,
+            )
+            permission_checker = PermissionChecker(
+                detector=DangerousCommandDetector(),
+                sandbox=path_sandbox,
+                rule_engine=rule_engine,
+            )
+        self.permission_checker = permission_checker
 
     def execute_tool(
         self,
@@ -64,12 +95,26 @@ class SafeExecutionKernel:
                 PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
             )
 
-        # 1. 策略判定
-        policy = decide_tool(
+        # 1. 策略判定（通过 PermissionChecker 五层检查）
+        # 旧值映射：auto→default（仅读自动放行由 decide_with_checker 的 ask 回退处理）
+        #           bypass→bypassPermissions
+        _MODE_ALIAS: dict[str, str] = {"auto": "default", "bypass": "bypassPermissions"}
+        from xhx_agent.safety.permissions.modes import resolve_permission_mode
+        mode_raw = context.permission_mode or "default"
+        self.permission_checker.mode = resolve_permission_mode(_MODE_ALIAS.get(mode_raw, mode_raw))
+
+        is_destructive = bool(d and d.destructive)
+        is_network = bool(d and d.network)
+        tool_category = "read" if is_read_only else ("write" if is_destructive else "command")
+
+        policy = decide_with_checker(
             step.tool,
+            step.arguments,
+            self.permission_checker,
+            tool_category=tool_category,
             read_only=is_read_only,
-            destructive=bool(d and d.destructive),
-            network=bool(d and d.network),
+            destructive=is_destructive,
+            network=is_network,
         )
         self.record_policy("tool", step.tool, policy, {"turn": turn, "tool": step.tool}, event_callback)
         if policy.decision == "deny":
@@ -105,117 +150,7 @@ class SafeExecutionKernel:
                         denied,
                     )
 
-        # 2. 路径越界预检与授权裁决
-        out_of_scope_paths = []
-        is_write = not is_read_only
-
-        if step.tool == "read_file":
-            path_arg = step.arguments.get("path")
-            if path_arg:
-                res = resolve_with_scope(context.workspace, context.allowed_dirs, path_arg)
-                if not res.in_scope:
-                    out_of_scope_paths.append(res)
-        elif step.tool == "search":
-            glob_arg = step.arguments.get("glob")
-            if glob_arg:
-                glob_root = extract_glob_root(context.workspace, glob_arg)
-                res = resolve_with_scope(context.workspace, context.allowed_dirs, glob_root)
-                if not res.in_scope:
-                    out_of_scope_paths.append(res)
-        elif step.tool == "apply_patch":
-            patch_arg = step.arguments.get("patch")
-            if patch_arg:
-                from xhx_agent.tools.patch import _parse_patch
-
-                try:
-                    ops = _parse_patch(patch_arg)
-                    for op in ops:
-                        res = resolve_with_scope(context.workspace, context.allowed_dirs, op.path)
-                        if not res.in_scope:
-                            out_of_scope_paths.append(res)
-                except Exception:
-                    pass
-
-        # 越界裁决
-        if out_of_scope_paths:
-            mode = context.permission_mode or "default"
-            for path_scope in out_of_scope_paths:
-                outside_root = path_scope.outside_root
-                if not outside_root:
-                    continue
-                outside_root_resolved = Path(outside_root).resolve()
-
-                # 裁决动作
-                allowed = False
-                if mode == "bypass":
-                    allowed = True
-                elif mode == "auto":
-                    allowed = not is_write
-                else:
-                    allowed = False  # default 模式下必须弹框
-
-                if allowed:
-                    if outside_root_resolved not in context.allowed_dirs:
-                        context.allowed_dirs.append(outside_root_resolved)
-                    self.record_policy(
-                        "path_scope",
-                        str(outside_root_resolved),
-                        PolicyDecision(
-                            decision="allow",
-                            risk=RiskLevel.SAFE,
-                            reason=f"Auto-allowed out-of-scope path under {mode} mode",
-                        ),
-                        {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                        event_callback,
-                    )
-                else:
-                    # 越界询问
-                    prompt = f"允许{'修改' if is_write else '读取'}工作区外目录?\n{outside_root_resolved}"
-                    decision_p = PolicyDecision(
-                        decision="confirm",
-                        risk=RiskLevel.CONFIRM,
-                        reason=f"Path is outside workspace under {mode} mode",
-                        requires_user=True,
-                    )
-
-                    confirmed = False
-                    if confirm_callback is not None:
-                        confirmed = confirm_callback(prompt, decision_p)
-
-                    if confirmed:
-                        if outside_root_resolved not in context.allowed_dirs:
-                            context.allowed_dirs.append(outside_root_resolved)
-                        self.record_policy(
-                            "path_scope",
-                            str(outside_root_resolved),
-                            PolicyDecision(
-                                decision="allow", risk=RiskLevel.SAFE, reason="User allowed out-of-scope path access"
-                            ),
-                            {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                            event_callback,
-                        )
-                    else:
-                        # 拒绝访问，返回干净的 denied 结果
-                        reason = f"用户拒绝访问工作区外路径: {outside_root_resolved}"
-                        self.record_policy(
-                            "path_scope",
-                            str(outside_root_resolved),
-                            PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                            {"turn": turn, "tool": step.tool, "path": str(outside_root_resolved)},
-                            event_callback,
-                        )
-                        return (
-                            ToolExecutionResult(
-                                tool=step.tool,
-                                status="denied",
-                                summary=reason,
-                                trace_payload={"tool": step.tool, "status": "denied", "error": reason},
-                            ),
-                            None,
-                            PolicyDecision(decision="deny", risk=RiskLevel.DENY, reason=reason),
-                        )
-
-        # 3. 正常执行
+        # 2. 正常执行（路径越界检查由 PermissionChecker Layer 2 处理）
         trace = self.evidence.write_trace("tool_call", {"turn": turn, **step.model_dump()})
         result = self.tool_registry.execute(context, step)
         self.evidence.write_trace("tool_result", {"turn": turn, **result.trace_payload})

@@ -92,6 +92,7 @@ def compile_context_pack(
     budget_tokens: int = DEFAULT_CONTEXT_BUDGET_TOKENS,
     top_k_evidence: int = DEFAULT_TOP_K_EVIDENCE,
     history_summarizer: Callable[[list[str]], str] | None = None,
+    skill_loader: object | None = None,
 ) -> ContextPack:
     """编译一份预算内的上下文包：收集带优先级的候选 → 按优先级塞进 budget_tokens → 超出则丢弃。"""
     candidates: list[ContextItem] = []
@@ -112,8 +113,9 @@ def compile_context_pack(
     try:
         from xhx_agent.skills.loader import SkillLoader
 
-        skill_loader = SkillLoader(workspace)
-        matched_skills = skill_loader.match_skills(task)
+        if skill_loader is None:
+            skill_loader = SkillLoader(workspace)
+        matched_skills = skill_loader.match_skills(task)  # type: ignore[union-attr]
         for skill in matched_skills:
             if skill.content:
                 candidates.append(
@@ -626,7 +628,7 @@ def _infer_mode(changed_files: list[str] | None, recent_error: str | None) -> st
     if recent_error:
         return "repair-loop"
     if changed_files:
-        return "linear-edit"
+        return "loop"
     return "research-or-edit"
 
 

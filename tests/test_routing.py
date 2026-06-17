@@ -201,6 +201,7 @@ def test_checkpoint_4_build_routed_client(tmp_path):
 def test_checkpoint_6_role_wiring_takes_effect(tmp_path, monkeypatch):
     import xhx_agent.models
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     import xhx_agent.orchestrators.subagent as submod
 
     # Setup dummy project files
@@ -270,7 +271,7 @@ def test_checkpoint_6_role_wiring_takes_effect(tmp_path, monkeypatch):
             return FakeChildClient()
         return original_build(profile)
 
-    monkeypatch.setattr(loopmod, "build_chat_client", mock_build_stateful)
+    monkeypatch.setattr(basemod, "build_chat_client", mock_build_stateful)
     monkeypatch.setattr(submod, "build_chat_client", mock_build_stateful)
 
     res = RuntimeApp(tmp_path).run_task("do task", profile_name="base", mode="loop")

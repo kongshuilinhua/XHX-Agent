@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from xhx_agent.evidence.store import EvidenceStore
+from xhx_agent.models import build_chat_client  # noqa: F401  # module-level for test monkeypatch
+from xhx_agent.models.routing import build_routed_client  # noqa: F401
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.runtime.events import EventCallback
 from xhx_agent.runtime.profiles import ModelProfile
@@ -77,7 +79,9 @@ class OrchestratorContext:
     subagent_claims: dict[str, str] = field(default_factory=dict)
     # 并行写子 agent 用：串行化 git worktree 创建/清理 + _merge_into_parent（claims 与拷贝）的临界区。
     subagent_lock: threading.Lock = field(default_factory=threading.Lock)
-
+    # Team 模式：TeamManager 实例 + 当前团队名（仅 team orchestrator 设置）
+    team_manager: object | None = None
+    team_name: str = ""
 
 class Orchestrator(Protocol):
     """基于共享基座的顶层控制流策略。
@@ -89,3 +93,231 @@ class Orchestrator(Protocol):
     name: str
 
     def run(self, ctx: OrchestratorContext) -> RunResult: ...
+
+
+# ---------------------------------------------------------------------------
+# BaseReActOrchestrator — loop / team 共享的 ReAct 循环
+# ---------------------------------------------------------------------------
+
+
+class BaseReActOrchestrator:
+    """ReAct tool-use 统一循环的共享基类。
+
+    LoopOrchestrator 和 TeamOrchestrator 继承此类，仅覆盖系统提示词、路由角色
+    和 mode 标签，其余 ~200 行的 ReAct 循环逻辑全在此处。
+    """
+
+    name: str = "base"
+
+    # ---- 子类覆盖点 ----
+
+    def _system_prompt_content(self, ctx: OrchestratorContext) -> str:
+        raise NotImplementedError
+
+    def _role_name(self) -> str:
+        raise NotImplementedError
+
+    def _mode_name(self) -> str:
+        return self.name
+
+    def _before_run(self, ctx: OrchestratorContext, messages: list[dict]) -> None:
+        """子类可在循环开始前注入额外上下文。"""
+        pass
+
+    def _verify_changes(
+        self, ctx: OrchestratorContext, changed_files: list[str],
+    ) -> tuple[str | None, list[str]]:
+        """子类可覆盖：变更后自动验证。默认不做验证。
+
+        Returns:
+            (verification_status, commands_run) — status 可为 "passed"/"failed"/"skipped_no_changes"/None
+        """
+        if not changed_files:
+            return ("skipped_no_changes", [])
+        return (None, [])  # None → 调用方会用 "not_executed"
+
+    # ---- 共享 ReAct 循环 ----
+
+    def run(self, ctx: OrchestratorContext) -> "RunResult":
+        import json
+        import time
+        from xhx_agent.evals.metrics import RunMetrics
+        from xhx_agent.evidence.report import write_report
+        from xhx_agent.memory.recall import render_recalled_memories
+        from xhx_agent.models.routing import resolve_profile_for_role
+        from xhx_agent.models.types import ModelClientError
+        from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, chat_and_count, execute_tool_call
+        from xhx_agent.orchestrators.compaction import budget_for_window, compact_messages
+        from xhx_agent.repo_intel.xhx_md import render_xhx_md
+        from xhx_agent.runtime.app import RunResult
+        from xhx_agent.runtime.config import load_config
+        from xhx_agent.runtime.events import emit_event
+        from xhx_agent.runtime.profiles import resolve_context_window
+        from xhx_agent.runtime.session import save_transcript
+
+        client = build_routed_client(
+            ctx.original_workspace,
+            role=self._role_name(),
+            base_profile_name=ctx.profile.name,
+            event_callback=ctx.event_callback,
+            build_client_func=build_chat_client,
+        )
+        if hasattr(client, "set_delta_callback"):
+            client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
+
+        summarizer = build_chat_client(
+            resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
+        summarize_fn = getattr(summarizer, "summarize", None)
+
+        window = resolve_context_window(ctx.profile, getattr(client, "model", ""))
+        compact_threshold, compact_keep_recent_tokens = budget_for_window(window)
+        schemas = ctx.kernel.tool_registry.tool_schemas()
+
+        messages: list[dict] = [{
+            "role": "system",
+            "content": self._system_prompt_content(ctx)
+            + "\n\n" + render_xhx_md(ctx.scan)
+            + render_recalled_memories(ctx.original_workspace, ctx.task),
+        }]
+
+        if ctx.prior_messages:
+            messages.extend(m for m in ctx.prior_messages if m.get("role") != "system")
+
+        self._before_run(ctx, messages)
+
+        messages.append({"role": "user", "content": ctx.task})
+
+        changed_files: list[str] = []
+        risks: list[str] = []
+        max_turns = load_config(ctx.original_workspace).max_loop_turns
+        answer: str | None = None
+        status = "success"
+        turns_used = 0
+        mode = self._mode_name()
+
+        # 每次 run 开始前清空跨子 agent 冲突检测表（旧 graph 在每轮 execute 前清）。
+        # 不清空会导致前几轮的 claims 永久阻止后续 dispatch 改同一文件。
+        ctx.subagent_claims.clear()
+
+        for turn in range(1, max_turns + 1):
+            turns_used = turn
+            if ctx.cancel_check and ctx.cancel_check():
+                status = "cancelled"
+                risks.append("Run cancelled before model call.")
+                break
+
+            # Team 模式：排空 lead agent 邮箱，注入队友通知
+            team_mgr = getattr(ctx, "team_manager", None)
+            if team_mgr is not None:
+                team_name = getattr(ctx, "team_name", "")
+                if team_name:
+                    teammate_msgs = team_mgr.drain_lead_mailbox(team_name)
+                    for tm in teammate_msgs:
+                        messages.append({
+                            "role": "user",
+                            "content": f"[Teammate update from {tm.from_agent}]: {tm.content}",
+                        })
+
+            if summarize_fn:
+                len_before = len(messages)
+                messages = compact_messages(
+                    messages, summarize_fn,
+                    max_tokens=compact_threshold,
+                    keep_recent_tokens=compact_keep_recent_tokens,
+                )
+                len_after = len(messages)
+                if len_after < len_before:
+                    emit_event(ctx.event_callback, "compaction",
+                               f"Compacted messages from {len_before} to {len_after}.",
+                               turn=turn, before=len_before, after=len_after)
+
+            try:
+                result = chat_and_count(ctx, client, messages, schemas, turn=turn)
+            except ModelClientError as exc:
+                ctx.evidence.write_trace("model_error", {"turn": turn, **exc.to_trace_payload()})
+                emit_event(ctx.event_callback, "model_error", exc.message, turn=turn, code=exc.code)
+                status = "failed"
+                risks.append(exc.message)
+                break
+
+            if not result.tool_calls:
+                answer = result.content or ""
+                messages.append({"role": "assistant", "content": answer})
+                emit_event(ctx.event_callback, "model_plan",
+                           f"{mode} answer [turn {turn}]",
+                           turn=turn, step_count=0, status="done")
+                break
+
+            messages.append({
+                "role": "assistant",
+                "content": result.content or "",
+                "tool_calls": [{
+                    "id": tc.id, "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                } for tc in result.tool_calls],
+            })
+
+            def _run(tc, turn=turn):
+                return execute_tool_call(ctx, tc, turn)
+
+            reg = ctx.kernel.tool_registry
+
+            def _is_parallel_safe(tc, reg=reg) -> bool:
+                if tc.name == "dispatch":
+                    return str(tc.arguments.get("agent_type", "explore")) != "edit"
+                d = reg.definition(tc.name)
+                return d is not None and d.read_only
+
+            all_parallel_safe = (
+                len(result.tool_calls) >= 2
+                and all(_is_parallel_safe(tc) for tc in result.tool_calls)
+            )
+            if all_parallel_safe:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(result.tool_calls), 8)) as pool:
+                    outcomes = list(pool.map(_run, result.tool_calls))
+            else:
+                outcomes = [_run(tc) for tc in result.tool_calls]
+
+            for tc, content, changed in outcomes:
+                changed_files.extend(changed)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": content[:_MAX_TOOL_RESULT_CHARS],
+                })
+        else:
+            status = "failed"
+            risks.append(f"{mode} did not finish within {max_turns} turn(s).")
+
+        # 子类可覆盖以在变更后自动验证（team 模式会用）
+        verification_status, verification_cmds = self._verify_changes(ctx, changed_files)
+        if verification_cmds:
+            commands_run = verification_cmds
+        else:
+            commands_run = []
+            verification_status = verification_status or "not_executed"
+
+        summary = write_report(
+            workspace=ctx.original_workspace, run_id=ctx.run_id, task=ctx.task,
+            plan=[f"{mode} paradigm: {turns_used} turn(s)."],
+            changed_files=sorted(set(changed_files)), commands=commands_run,
+            verification=verification_status, risks=risks,
+        )
+        transcript_rel = save_transcript(ctx.original_workspace, ctx.run_id, messages)
+        ctx.evidence.write_trace("run_end", {"status": status, "summary_path": str(summary)})
+        metrics = RunMetrics(
+            duration_seconds=round(time.time() - ctx.start_time, 2),
+            turns=turns_used,
+            tokens_estimate=ctx.metrics_tracker.get("tokens", 0),
+            files_changed_count=len(set(changed_files)),
+            commands_run_count=len(commands_run), repair_attempts=0,
+            success=(status == "success"),
+        )
+        return RunResult(
+            run_id=ctx.run_id, status=status, turns=turns_used,
+            changed_files=sorted(set(changed_files)), commands=commands_run,
+            verification=verification_status,
+            summary_path=str(summary.relative_to(ctx.original_workspace)),
+            risk_summary=risks, mode=mode, answer=answer,
+            transcript_path=transcript_rel, metrics=metrics,
+        )

@@ -21,6 +21,7 @@ def test_loop_edit_task_runs_tool_then_answers(tmp_path):
 
 def test_loop_malformed_tool_args_does_not_crash(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
 
     seq = [
@@ -37,7 +38,7 @@ def test_loop_malformed_tool_args_does_not_crash(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("do something", profile_name="mock", mode="loop")
@@ -47,6 +48,7 @@ def test_loop_malformed_tool_args_does_not_crash(tmp_path, monkeypatch):
 
 def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
 
     seq = [
@@ -63,7 +65,7 @@ def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("do something", profile_name="mock", mode="loop")
     assert res.status == "success"
@@ -72,6 +74,7 @@ def test_loop_denied_unknown_tool_is_fed_back(tmp_path, monkeypatch):
 
 def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
 
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
@@ -96,7 +99,7 @@ def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read both", profile_name="mock", mode="loop")
     assert res.status == "success" and res.answer == "done"
@@ -104,6 +107,7 @@ def test_loop_runs_multiple_readonly_tools_in_one_turn(tmp_path, monkeypatch):
 
 def test_loop_terminal_tool_runs_safe_command(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
 
     seq = [
@@ -120,7 +124,7 @@ def test_loop_terminal_tool_runs_safe_command(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     events = []
     res = RuntimeApp(tmp_path).run_task("check status", profile_name="mock", mode="loop", event_callback=events.append)
@@ -131,6 +135,7 @@ def test_loop_terminal_tool_runs_safe_command(tmp_path, monkeypatch):
 
 def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
 
     seq = [
@@ -147,7 +152,7 @@ def test_loop_terminal_deny_is_fed_back(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("delete", profile_name="mock", mode="loop")
     assert res.status == "success" and res.answer == "ok"
@@ -157,6 +162,7 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
     import json
 
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
 
@@ -174,7 +180,7 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
             self.i += 1
             return r
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     res = RuntimeApp(tmp_path).run_task("read it", profile_name="mock", mode="loop")
     assert res.status == "success" and res.answer == "done reading"
@@ -188,6 +194,7 @@ def test_loop_persists_full_transcript(tmp_path, monkeypatch):
 
 def test_loop_restores_prior_messages(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
 
@@ -199,7 +206,7 @@ def test_loop_restores_prior_messages(tmp_path, monkeypatch):
             seen["contents"] = [m.get("content") for m in messages]
             return ChatResult(content="continued", tool_calls=[])
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: _Fake())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: _Fake())
     RuntimeApp(tmp_path).init_project()
     prior = [
         {"role": "system", "content": "OLD SYSTEM — must be dropped"},
@@ -224,6 +231,7 @@ def test_loop_runs_explore_dispatch_batch_in_parallel(tmp_path, monkeypatch):
     import threading
 
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     import xhx_agent.orchestrators.subagent as subagentmod
     from xhx_agent.models.types import ChatResult, ToolCall
     from xhx_agent.runtime.app import RuntimeApp
@@ -256,7 +264,7 @@ def test_loop_runs_explore_dispatch_batch_in_parallel(tmp_path, monkeypatch):
                 )
             return ChatResult(content="done")
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeClient())
 
     result = RuntimeApp(tmp_path).run_task("investigate two modules", assume_yes=True, mode="loop")
 

@@ -22,18 +22,38 @@ def _estimate_message_tokens(messages: list[dict]) -> int:
     return total
 
 
+def _resolve_window(ctx: OrchestratorContext, client: Any) -> int:
+    """解析本次调用模型的上下文窗口（profile.context_window > 模型名映射 > 缺省 128k）。"""
+    from xhx_agent.runtime.profiles import resolve_context_window
+
+    return resolve_context_window(getattr(ctx, "profile", None), getattr(client, "model", ""))
+
+
 def chat_and_count(
     ctx: OrchestratorContext, client: Any, messages: list[dict], schemas: list[dict], turn: int = 0
 ) -> Any:
-    """调 client.chat，累加 token 指标并在拿到 provider usage 时 emit token_usage 事件。
+    """调 client.chat，累加 token 指标并 emit token_usage / context_pack 事件。
 
     - 估算路径（_estimate_message_tokens）保持不变：run_end 的 tokens_estimate 与回退仍可用。
-    - 若 ChatResult 带 provider usage，则把真实 total 累加进 metrics_tracker['tokens_real']，
-      并 emit 'token_usage'（cumulative_total 供状态条实时显示）。
+    - 调用前先 emit 'context_pack'（used=本次将发送的估算 token，budget=模型窗口），让状态栏 Context
+      在长调用期间也能显示用量、不再恒为 '—'；这是 loop/graph/plan 模式缺失的那一环（linear 走 app.py）。
+    - 若 ChatResult 带 provider usage，则把真实 total 累加进 metrics_tracker['tokens_real']，emit
+      'token_usage'（cumulative_total 供状态条），并用 API 真实 prompt token 再发一次 context_pack
+      校正 Context 用量（对标 Claude：显示用 API usage 而非本地估算）。
     """
     import time
 
-    ctx.metrics_tracker["tokens"] = ctx.metrics_tracker.get("tokens", 0) + _estimate_message_tokens(messages)
+    window = _resolve_window(ctx, client)
+    estimated = _estimate_message_tokens(messages)
+    ctx.metrics_tracker["tokens"] = ctx.metrics_tracker.get("tokens", 0) + estimated
+    emit_event(
+        ctx.event_callback,
+        "context_pack",
+        "Context compiled.",
+        turn=turn,
+        budget_tokens=window,
+        used_tokens_estimate=estimated,
+    )
     t0 = time.perf_counter()
     result = client.chat(messages, schemas)
     duration_ms = int((time.perf_counter() - t0) * 1000)
@@ -66,7 +86,45 @@ def chat_and_count(
             duration_ms=duration_ms,
             turn=turn,
         )
+        # 用 API 返回的真实 prompt token 校正 Context 用量（resident 输入=系统+历史+工具 schema）。
+        if usage.prompt:
+            emit_event(
+                ctx.event_callback,
+                "context_pack",
+                "Context usage (provider).",
+                turn=turn,
+                budget_tokens=window,
+                used_tokens_estimate=int(usage.prompt),
+            )
     return result
+
+
+def window_compact(
+    ctx: OrchestratorContext, client: Any, messages: list[dict], summarize_fn, *, turn: int = 0
+) -> list[dict]:
+    """窗口感知压缩：超过 f(模型窗口) 阈值时把旧历史压成摘要，返回新 messages（否则原样）。
+
+    供 graph/plan 在调用模型前调用——防长对话累积超过模型窗口被 provider 静默截断而「失忆」。
+    summarize_fn 为空（如 mock 无 summarize）则跳过、零行为变更。
+    """
+    if not summarize_fn:
+        return messages
+    from xhx_agent.orchestrators.compaction import budget_for_window, compact_messages
+
+    window = _resolve_window(ctx, client)
+    threshold, keep_recent_tokens = budget_for_window(window)
+    before = len(messages)
+    out = compact_messages(messages, summarize_fn, max_tokens=threshold, keep_recent_tokens=keep_recent_tokens)
+    if len(out) < before:
+        emit_event(
+            ctx.event_callback,
+            "compaction",
+            f"Compacted messages from {before} to {len(out)}.",
+            turn=turn,
+            before=before,
+            after=len(out),
+        )
+    return out
 
 
 def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[Any, str, list[str], dict | None]:
@@ -88,6 +146,30 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
             agent_type = str(tc.arguments.get("agent_type") or "explore")
             description = str(tc.arguments.get("description", ""))
             prompt = str(tc.arguments.get("prompt", ""))
+
+            # Team 模式：将子 agent 注册为团队成员
+            team_mgr = getattr(ctx, "team_manager", None)
+            team_name = getattr(ctx, "team_name", "")
+            if team_mgr is not None and team_name:
+                import uuid, time
+                from xhx_agent.teams.models import TeammateInfo, BackendType
+                from xhx_agent.teams.progress import TeammateProgress
+
+                agent_id = f"agent-{uuid.uuid4().hex[:8]}"
+                member_name = f"{agent_type}-{agent_id[:4]}"
+                progress = TeammateProgress(name=member_name, team_name=team_name, status="running")
+                member = TeammateInfo(
+                    name=member_name, agent_id=agent_id, agent_type=agent_type,
+                    model="", worktree_path=str(ctx.workspace),
+                    backend_type=BackendType.IN_PROCESS.value, is_active=True,
+                    progress=progress,
+                )
+                team_mgr.register_member(team_name, member)
+                team_mgr.register_inprocess_handle(agent_id, member)  # 存储成员信息（非 None），后续可用来查找/取消
+                # 存储 agent_id 以便完成后更新进度
+                tc.arguments["_team_agent_id"] = agent_id
+                tc.arguments["_team_name"] = team_name
+
             try:
                 if agent_type in WRITE_AGENT_TYPES:
                     content, changed = run_write_subagent(ctx, description=description, prompt=prompt, turn=turn)
@@ -96,6 +178,11 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
                         ctx, description=description, prompt=prompt, agent_type=agent_type, turn=turn
                     )
                     changed = []
+                # 标记 team 成员完成（传 member_name 非 agent_id）
+                if team_mgr is not None and team_name:
+                    agent_id = tc.arguments.get("_team_agent_id", "")
+                    if agent_id:
+                        team_mgr.set_member_idle(team_name, member_name)
                 status = "success"
                 lines = (content or "").splitlines()
                 summary = lines[0] if lines else ""

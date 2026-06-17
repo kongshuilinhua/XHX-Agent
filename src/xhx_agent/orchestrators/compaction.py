@@ -17,7 +17,26 @@ DEFAULT_COMPACT_THRESHOLD_TOKENS = 12_000
 DEFAULT_KEEP_RECENT_MESSAGES = 6
 DEFAULT_KEEP_RECENT_TOKENS = 2_000
 DEFAULT_RESERVE_TOKENS = 1_000
+# 压缩时给模型输出 + 摘要本身预留的空间上限（对标 Claude 的 reserve；小窗口按 1/4 缩放）。
+DEFAULT_OUTPUT_RESERVE_TOKENS = 16_000
 _SUMMARY_PREFIX = "[Earlier turns compacted to save context]"
+
+
+def budget_for_window(context_window: int) -> tuple[int, int]:
+    """由模型上下文窗口推导 (压缩触发阈值, 保留近期 token)。对标 Claude / pi 的「阈值=f(窗口)」。
+
+    阈值 = 窗口 − 输出预留 − 安全 buffer；输出预留按 min(窗口//4, 16k)，避免小窗口预留过头。
+    keep_recent_tokens = min(窗口//3, 24k)：长窗口下保留更多近期原文，短窗口按比例缩。
+    窗口 ≤0（未知）时回退 128k 基准，绝不退回写死的 12k。
+    """
+    window = context_window if context_window > 0 else _DEFAULT_BUDGET_WINDOW
+    reserve = min(window // 4, DEFAULT_OUTPUT_RESERVE_TOKENS)
+    threshold = max(window - reserve - DEFAULT_RESERVE_TOKENS, 4_000)
+    keep_recent = min(window // 3, 24_000)
+    return threshold, keep_recent
+
+
+_DEFAULT_BUDGET_WINDOW = 128_000
 
 
 def _estimate_single_message_tokens(message: dict[str, Any]) -> int:
@@ -229,9 +248,24 @@ def compact_messages(
     cut = min(len(body) - keep_recent, token_cut)
     cut = max(0, cut)
 
-    # 避免 orphaned tool 消息 (切点不能落在 tool 消息上)
+    # 避免 orphaned tool 消息：切点不能落在 tool 消息上
     while cut < len(body) and body[cut].get("role") == "tool":
         cut += 1
+
+    # 进一步避免 orphan：如果切点前一条消息是带 tool_calls 的 assistant，
+    # 它的 tool 结果全在 compacted 里，AI 收到 tail 会看到孤儿 tool 消息。
+    # 解决办法：把前面的 assistant(tool_calls) 也推进 compacted 继续扫描。
+    while cut > 0 and cut <= len(body):
+        prev_idx = cut - 1
+        prev_msg = body[prev_idx]
+        if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+            # 切点前的 assistant 有 tool_calls，要把此 assistant 及
+            # 其后续 tool 消息全部纳入 compacted（或至少确保 tool 不全留在 tail）
+            # 简化处理：把切点后的连续 tool 消息也推进 compacted
+            while cut < len(body) and body[cut].get("role") == "tool":
+                cut += 1
+            break
+        break
 
     compacted = body[:cut]
     tail = body[cut:]

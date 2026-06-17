@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from xhx_agent.evidence.store import EvidenceStore
 from xhx_agent.models.types import ToolStep
 from xhx_agent.safety.kernel import SafeExecutionKernel
@@ -10,7 +12,6 @@ from xhx_agent.tools.registry import (
     ToolRegistry,
     default_tool_registry,
 )
-
 
 def _registry_with_mcp_tool(read_only: bool = False) -> ToolRegistry:
     reg = ToolRegistry()
@@ -28,7 +29,6 @@ def _registry_with_mcp_tool(read_only: bool = False) -> ToolRegistry:
         )
     )
     return reg
-
 
 def test_kernel_records_policy_and_executes_tool(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
@@ -52,7 +52,6 @@ def test_kernel_records_policy_and_executes_tool(tmp_path: Path) -> None:
     assert "tool_result" in trace_text
     assert "tool:read_file" in evidence_text
 
-
 def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -73,7 +72,6 @@ def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
     assert "policy_decision" in trace_text
     assert "tool_call" not in trace_text
 
-
 def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -84,7 +82,6 @@ def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
     # really executes; a non-git dir may fail but must not raise.
     assert result.status in ("success", "failed")
 
-
 def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -92,7 +89,6 @@ def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
     result = kernel.run_command_tool("rm -rf x", evidence_kind="command", assume_yes=False, confirm_callback=None)
 
     assert result.status == "deny"
-
 
 def test_run_command_tool_confirm_declined(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
@@ -103,177 +99,6 @@ def test_run_command_tool_confirm_declined(tmp_path: Path) -> None:
     )
 
     assert result.status == "confirm"
-
-
-def test_kernel_out_of_scope_read_default_allow(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    external = tmp_path / "external"
-    external.mkdir()
-    ext_file = external / "README.md"
-    ext_file.write_text("external content\n", encoding="utf-8")
-
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-
-    context = ToolContext(workspace=workspace, allowed_dirs=[], permission_mode="default")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
-
-    # Mock confirm_callback that returns True
-    confirm_called = []
-
-    def confirm_cb(prompt: str, policy) -> bool:
-        confirm_called.append((prompt, policy))
-        return True
-
-    result, trace, policy = kernel.execute_tool(
-        context,
-        step,
-        turn=1,
-        confirm_callback=confirm_cb,
-    )
-
-    assert len(confirm_called) == 1
-    assert "允许读取工作区外目录" in confirm_called[0][0]
-    assert str(external.resolve()) in confirm_called[0][0]
-    assert result is not None
-    assert result.status == "success"
-    # Target directory should be added to allowed_dirs
-    assert Path(external).resolve() in context.allowed_dirs
-
-    # A second read should NOT trigger the callback
-    confirm_called.clear()
-    result2, trace2, policy2 = kernel.execute_tool(
-        context,
-        step,
-        turn=2,
-        confirm_callback=confirm_cb,
-    )
-    assert len(confirm_called) == 0
-    assert result2.status == "success"
-
-
-def test_kernel_out_of_scope_read_default_deny(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    external = tmp_path / "external"
-    external.mkdir()
-    ext_file = external / "README.md"
-
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-
-    context = ToolContext(workspace=workspace, allowed_dirs=[], permission_mode="default")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
-
-    def confirm_cb(prompt: str, policy) -> bool:
-        return False
-
-    result, trace, policy = kernel.execute_tool(
-        context,
-        step,
-        turn=1,
-        confirm_callback=confirm_cb,
-    )
-
-    assert result is not None
-    assert result.status == "denied"
-    assert "用户拒绝访问工作区外路径" in result.summary
-
-
-def test_kernel_out_of_scope_read_auto(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    external = tmp_path / "external"
-    external.mkdir()
-    ext_file = external / "README.md"
-    ext_file.write_text("external content\n", encoding="utf-8")
-
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-
-    context = ToolContext(workspace=workspace, allowed_dirs=[], permission_mode="auto")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
-
-    confirm_called = []
-
-    def confirm_cb(prompt: str, policy) -> bool:
-        confirm_called.append(prompt)
-        return True
-
-    result, trace, policy = kernel.execute_tool(
-        context,
-        step,
-        turn=1,
-        confirm_callback=confirm_cb,
-    )
-
-    # In auto mode, read is automatically allowed, confirm_callback is not called
-    assert len(confirm_called) == 0
-    assert result.status == "success"
-    # Target directory should be added to allowed_dirs
-    assert Path(external).resolve() in context.allowed_dirs
-
-
-def test_kernel_out_of_scope_write_auto_confirm(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    external = tmp_path / "external"
-    external.mkdir()
-    ext_file = external / "patch.txt"
-
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-
-    context = ToolContext(workspace=workspace, allowed_dirs=[], permission_mode="auto")
-    # Write operation
-    patch_content = f"--- /dev/null\n+++ {ext_file.as_posix()}\n@@ -0,0 +1,1 @@\n+hello\n"
-    step = ToolStep(tool="apply_patch", arguments={"patch": patch_content})
-
-    confirm_called = []
-
-    def confirm_cb(prompt: str, policy) -> bool:
-        confirm_called.append(prompt)
-        return True
-
-    result, trace, policy = kernel.execute_tool(
-        context,
-        step,
-        turn=1,
-        confirm_callback=confirm_cb,
-    )
-
-    # Write in auto mode still triggers confirm_callback (safety baseline)
-    assert len(confirm_called) == 1
-    assert "允许修改工作区外目录" in confirm_called[0]
-    assert result.status == "success"
-
-
-def test_kernel_out_of_scope_assume_yes_deny(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    external = tmp_path / "external"
-    external.mkdir()
-    ext_file = external / "README.md"
-
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-
-    # assume_yes=True, but confirm_callback is None, permission_mode is default
-    context = ToolContext(workspace=workspace, allowed_dirs=[], permission_mode="default")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
-
-    result, trace, policy = kernel.execute_tool(
-        context,
-        step,
-        turn=1,
-        confirm_callback=None,  # no callback
-    )
-
-    # Should be denied automatically without blocking
-    assert result is not None
-    assert result.status == "denied"
-
 
 def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
@@ -310,7 +135,6 @@ def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None
     assert result_verify.status == "deny"
     assert result_verify.command == "pytest"
 
-
 def _exec_mcp(tmp_path: Path, *, read_only=False, permission_mode="default", confirm=None, assume_yes=False):
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, _registry_with_mcp_tool(read_only=read_only))
@@ -322,26 +146,22 @@ def _exec_mcp(tmp_path: Path, *, read_only=False, permission_mode="default", con
         assume_yes=assume_yes,
     )
 
-
 def test_mcp_tool_confirm_approved(tmp_path: Path) -> None:
     calls = []
     result, _trace, policy = _exec_mcp(tmp_path, confirm=lambda p, d: calls.append(p) or True)
     assert calls  # 弹框被触发
     assert result is not None and result.status == "success"
 
-
 def test_mcp_tool_confirm_declined(tmp_path: Path) -> None:
     result, _trace, policy = _exec_mcp(tmp_path, confirm=lambda p, d: False)
     assert result is not None and result.status == "denied"
     assert policy.decision == "deny"
-
 
 def test_mcp_tool_assume_yes_skips_confirm(tmp_path: Path) -> None:
     calls = []
     result, _trace, _policy = _exec_mcp(tmp_path, confirm=lambda p, d: calls.append(p) or True, assume_yes=True)
     assert not calls  # 预批 → 不弹框
     assert result is not None and result.status == "success"
-
 
 def test_mcp_tool_bypass_skips_confirm(tmp_path: Path) -> None:
     calls = []
@@ -351,13 +171,11 @@ def test_mcp_tool_bypass_skips_confirm(tmp_path: Path) -> None:
     assert not calls
     assert result is not None and result.status == "success"
 
-
 def test_mcp_tool_unattended_default_denies(tmp_path: Path) -> None:
     # 无回调、default 模式、未预批 → 安全默认拒绝
     result, _trace, policy = _exec_mcp(tmp_path, confirm=None, assume_yes=False)
     assert result is not None and result.status == "denied"
     assert policy.decision == "deny"
-
 
 def test_mcp_readonly_tool_no_confirm(tmp_path: Path) -> None:
     calls = []

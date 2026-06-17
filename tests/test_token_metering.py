@@ -38,6 +38,7 @@ def test_chat_and_count_accumulates():
 
 def test_loop_sets_token_metrics(tmp_path, monkeypatch):
     import xhx_agent.orchestrators.loop as loopmod
+    import xhx_agent.orchestrators.base as basemod
     from xhx_agent.models.types import ChatResult
     from xhx_agent.runtime.app import RuntimeApp
 
@@ -48,7 +49,7 @@ def test_loop_sets_token_metrics(tmp_path, monkeypatch):
         def chat(self, messages, tools):
             return ChatResult(content="Done task in loop", tool_calls=[])
 
-    monkeypatch.setattr(loopmod, "build_chat_client", lambda profile: FakeClient())
+    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeClient())
 
     res = RuntimeApp(tmp_path).run_task("do task", profile_name="mock", mode="loop")
 
@@ -101,16 +102,12 @@ def test_benchmark_token_metering_with_modes(tmp_path):
     write_default_profiles(tmp_path)
 
     runner = BenchmarkRunner(tmp_path)
-    results = runner.run_matrix("mock", ["loop", "plan", "graph"])
+    results = runner.run_matrix("mock", ["loop", "plan"])
 
     report = render_benchmark_report("mock", results)
 
     loop_tokens = report.summary["loop"]["mean_tokens"]
     plan_tokens = report.summary["plan"]["mean_tokens"]
-    graph_tokens = report.summary["graph"]["mean_tokens"]
 
     assert loop_tokens > 0
     assert plan_tokens > 0
-    assert graph_tokens > 0
-    # graph mode could be smaller because planner sends far fewer tools than loop mode
-    assert graph_tokens > 0

@@ -7,9 +7,14 @@ from typing import TYPE_CHECKING, Any
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.memory.recall import render_recalled_memories
 from xhx_agent.models import build_chat_client
-from xhx_agent.models.routing import build_routed_client
+from xhx_agent.models.routing import build_routed_client, resolve_profile_for_role
 from xhx_agent.models.types import ModelClientError
-from xhx_agent.orchestrators._toolturn import _MAX_TOOL_RESULT_CHARS, _execute_tool_call_rich, chat_and_count
+from xhx_agent.orchestrators._toolturn import (
+    _MAX_TOOL_RESULT_CHARS,
+    _execute_tool_call_rich,
+    chat_and_count,
+    window_compact,
+)
 from xhx_agent.orchestrators.base import OrchestratorContext
 from xhx_agent.repo_intel.xhx_md import render_xhx_md
 from xhx_agent.runtime.config import load_config
@@ -63,6 +68,9 @@ class PlanOrchestrator:
         if hasattr(client, "set_delta_callback"):
             client.set_delta_callback(lambda text: emit_event(ctx.event_callback, "model_delta", text))
 
+        summarizer = build_chat_client(resolve_profile_for_role(ctx.original_workspace, "summarize", ctx.profile.name))
+        summarize_fn = getattr(summarizer, "summarize", None)
+
         schemas = ctx.kernel.tool_registry.tool_schemas()
         phase1_schemas = []
         for s in schemas:
@@ -104,6 +112,7 @@ class PlanOrchestrator:
                 risks.append("Run cancelled before model call.")
                 break
 
+            messages = window_compact(ctx, client, messages, summarize_fn, turn=turn)
             try:
                 result = chat_and_count(ctx, client, messages, phase1_schemas, turn=turn)
             except ModelClientError as exc:
@@ -234,7 +243,16 @@ class PlanOrchestrator:
         # Phase 2: Execution & Verification —— 仅当计划获批才执行；纯讨论/澄清直接收尾返回回答。
         if status == "success" and plan_approved:
             status, turns_used = self._drive(
-                ctx, client, schemas, messages, changed_files, risks, max_turns, start_turn=turn, state=state
+                ctx,
+                client,
+                schemas,
+                messages,
+                changed_files,
+                risks,
+                max_turns,
+                start_turn=turn,
+                state=state,
+                summarize_fn=summarize_fn,
             )
         else:
             turns_used = turn - 1
@@ -251,7 +269,7 @@ class PlanOrchestrator:
             checkpoint_path,
             restore_plan_path,
         ) = self._verify_and_repair(
-            ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state
+            ctx, client, schemas, messages, changed_files, risks, max_turns, status, turns_used, state, summarize_fn
         )
         answer = state["answer"]
 
@@ -313,6 +331,7 @@ class PlanOrchestrator:
         status: str,
         turns_used: int,
         state: dict[str, Any],
+        summarize_fn=None,
     ) -> tuple[str, list[Any], list[str], int, Any, int, str | None, str | None]:
         """plan 招牌：执行产生 changed_files 后跑验证；失败且 auto_repair 时把失败回喂模型继续修（≤2 轮）。"""
         from xhx_agent.runtime.verify_loop import (
@@ -413,7 +432,16 @@ class PlanOrchestrator:
             )
             repair_cap = min(max_turns, turns_used + 2)
             status, turns_used = self._drive(
-                ctx, client, schemas, messages, changed_files, risks, repair_cap, start_turn=turns_used + 1, state=state
+                ctx,
+                client,
+                schemas,
+                messages,
+                changed_files,
+                risks,
+                repair_cap,
+                start_turn=turns_used + 1,
+                state=state,
+                summarize_fn=summarize_fn,
             )
             _refresh_repo_intel_index(ctx.workspace, ctx.evidence, ctx.event_callback, risks)
             if status in {"failed", "cancelled"}:
@@ -455,6 +483,7 @@ class PlanOrchestrator:
         *,
         start_turn: int,
         state: dict[str, Any],
+        summarize_fn=None,
     ) -> tuple[str, int]:
         """tool-calling 自主多轮循环：批量规划→执行→（回纯文本即停）。
 
@@ -469,6 +498,7 @@ class PlanOrchestrator:
                 status = "cancelled"
                 risks.append("Run cancelled before model call.")
                 return status, turns_used
+            messages[:] = window_compact(ctx, client, messages, summarize_fn, turn=turn)
             try:
                 result = chat_and_count(ctx, client, messages, schemas, turn=turn)
             except ModelClientError as exc:

@@ -83,12 +83,3 @@ def test_compile_context_pack_uses_history_summarizer(tmp_path) -> None:
     )
     tool_item = next(item for item in pack.items if item.kind == "tool_results")
     assert tool_item.content.startswith("[summary] semantic of 2")
-
-
-def test_make_history_summarizer_for_mock_profile(tmp_path) -> None:
-    from xhx_agent.runtime.app import RuntimeApp
-    from xhx_agent.runtime.profiles import ModelProfile
-
-    summarizer = RuntimeApp(tmp_path)._make_history_summarizer(ModelProfile(provider="mock"))
-    out = summarizer(["a: success: x", "b: failed: y"])
-    assert "2 tool step" in out

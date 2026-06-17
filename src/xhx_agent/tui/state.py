@@ -43,7 +43,7 @@ class ConsoleState:
     run_id: str | None = None
     task: str | None = None
     profile: str | None = None
-    mode: str = "linear-edit"
+    mode: str = "loop"
     detected_languages: list[str] = field(default_factory=list)
     file_count: int = 0
     plan_summary: str | None = None
