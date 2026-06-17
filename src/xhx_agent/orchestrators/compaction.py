@@ -248,9 +248,24 @@ def compact_messages(
     cut = min(len(body) - keep_recent, token_cut)
     cut = max(0, cut)
 
-    # 避免 orphaned tool 消息 (切点不能落在 tool 消息上)
+    # 避免 orphaned tool 消息：切点不能落在 tool 消息上
     while cut < len(body) and body[cut].get("role") == "tool":
         cut += 1
+
+    # 进一步避免 orphan：如果切点前一条消息是带 tool_calls 的 assistant，
+    # 它的 tool 结果全在 compacted 里，AI 收到 tail 会看到孤儿 tool 消息。
+    # 解决办法：把前面的 assistant(tool_calls) 也推进 compacted 继续扫描。
+    while cut > 0 and cut <= len(body):
+        prev_idx = cut - 1
+        prev_msg = body[prev_idx]
+        if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+            # 切点前的 assistant 有 tool_calls，要把此 assistant 及
+            # 其后续 tool 消息全部纳入 compacted（或至少确保 tool 不全留在 tail）
+            # 简化处理：把切点后的连续 tool 消息也推进 compacted
+            while cut < len(body) and body[cut].get("role") == "tool":
+                cut += 1
+            break
+        break
 
     compacted = body[:cut]
     tail = body[cut:]

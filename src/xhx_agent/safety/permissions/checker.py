@@ -22,9 +22,8 @@ from xhx_agent.safety.permissions.rules import RuleEngine, extract_content
 from xhx_agent.safety.permissions.sandbox import PathSandbox
 
 # Plan 模式下允许自动放行的工具白名单
+# 注意：ExitPlanMode 已由 present_plan 替代，此处仅保留 XHX-Agent 实际存在的工具
 _PLAN_MODE_ALLOWED_TOOLS = frozenset({
-    "Agent", "ToolSearch", "AskUserQuestion", "ExitPlanMode",
-    # XHX-Agent 等价工具
     "dispatch", "present_plan",
 })
 
@@ -129,5 +128,33 @@ class PermissionChecker:
     # ------------------------------------------------------------------
 
     def _is_plan_file(self, path: str) -> bool:
-        """检查 *path* 是否为当前 plan 文件。"""
-        return bool(self.plan_file_path and path == self.plan_file_path)
+        """检查 *path* 是否为当前 plan 文件。
+
+        复现 mewcode 的多策略匹配逻辑：
+        1. 精确匹配 plan_file_path
+        2. plan_file_path 为空时检查路径中是否包含 plans 目录
+        3. basename 匹配
+        4. 判定 plan_file_path 是否在目标路径中
+        """
+        if not path:
+            return False
+        # 策略 1: 精确匹配
+        if self.plan_file_path and path == self.plan_file_path:
+            return True
+        # 策略 2: plan_file_path 为空时检查 plans 目录
+        if not self.plan_file_path and ".xhx/plans/" in path:
+            return True
+        # 策略 3: basename 匹配
+        if self.plan_file_path:
+            try:
+                from pathlib import Path as _Path
+                plan_base = _Path(self.plan_file_path).name
+                target_base = _Path(path).name
+                if plan_base and plan_base == target_base:
+                    return True
+            except Exception:
+                pass
+        # 策略 4: plan_file_path 是目标路径的前缀
+        if self.plan_file_path and path.startswith(self.plan_file_path):
+            return True
+        return False

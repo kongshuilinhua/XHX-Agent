@@ -45,6 +45,7 @@ class ProjectConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     default_permission_mode: str = "default"  # 默认权限模式 (default, auto, bypass)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    verbose: bool = False  # 详细工具调用输出（对标 Claude Code --verbose）
 
 
 def default_config() -> ProjectConfig:
@@ -81,6 +82,13 @@ def write_global_config() -> bool:
     config = default_config().model_copy(update={"default_profile": "default"})
     path.write_text(config.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return True
+
+
+def save_config(workspace: Path, config: ProjectConfig) -> None:
+    """将 *config* 写入项目级 .xhx/config.json。"""
+    path = config_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(config.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
 
 def _read_config(path: Path) -> ProjectConfig | None:

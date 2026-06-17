@@ -628,7 +628,7 @@ def _infer_mode(changed_files: list[str] | None, recent_error: str | None) -> st
     if recent_error:
         return "repair-loop"
     if changed_files:
-        return "linear-edit"
+        return "loop"
     return "research-or-edit"
 
 

@@ -34,7 +34,7 @@ class ContextDebugReport(BaseModel):
 
 class ContextPack(BaseModel):
     task: str
-    mode: str = "linear-edit"
+    mode: str = "loop"
     budget_tokens: int
     used_tokens_estimate: int
     project_summary: dict[str, Any] = Field(default_factory=dict)

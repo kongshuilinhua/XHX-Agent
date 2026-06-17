@@ -94,16 +94,28 @@ def extract_content(tool_name: str, arguments: dict[str, Any]) -> str:
     """从工具参数中提取用于规则匹配的内容字段。
 
     对 apply_patch，解析 patch 内容提取文件路径供 PathSandbox 检查。
+    对多文件补丁返回空格分隔的路径列表；解析失败时回退到信封格式正则提取，
+    再失败返回空字符串（PathSandbox 不做拦截，由 patch 工具自身校验）。
     """
     if tool_name == "apply_patch":
         patch_arg = arguments.get("patch", "")
         if patch_arg:
+            patch_str = str(patch_arg)
             try:
                 from xhx_agent.tools.patch import _parse_patch
-                paths = [op.path for op in _parse_patch(str(patch_arg))]
-                return " ".join(paths) if paths else str(patch_arg)
+                paths = [op.path for op in _parse_patch(patch_str)]
+                return " ".join(paths) if paths else ""
             except Exception:
-                return str(patch_arg)
+                # 回退：尝试从信封格式提取路径（*** Update File: <path>）
+                import re
+                envelope_paths = re.findall(r"\*{3}\s*Update\s*File:\s*(\S+)", patch_str)
+                if envelope_paths:
+                    return " ".join(envelope_paths)
+                # 回退：尝试 unified diff 格式（--- a/<path> 或 +++ b/<path>）
+                diff_paths = re.findall(r"^[+]{3}\s+b/(\S+)", patch_str, re.MULTILINE)
+                if diff_paths:
+                    return " ".join(diff_paths)
+                return ""
         return ""
 
     field = _CONTENT_FIELDS.get(tool_name)

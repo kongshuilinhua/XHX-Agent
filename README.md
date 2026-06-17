@@ -12,7 +12,7 @@
 
 </div>
 
-> A **context-budgeted local coding agent runtime** with a **pluggable, tri-paradigm orchestrator**: run the same task as a single autonomous **`loop`** (ReAct, Claude-Code-style), as a batch-planned **`plan`** (Plan-Execute), or as a multi-agent **`graph`** (LangGraph) — all three speaking the **same native tool-calling protocol** over one shared safety / context / code-intelligence base.
+> A **context-budgeted local coding agent runtime** with a **pluggable, tri-paradigm orchestrator**: run the same task as a single autonomous **`loop`** (ReAct, Claude-Code-style), as a batch-planned **`plan`** (Plan-Execute), or as a multi-agent **`team`** (Coordinator + Worker, from mewcode) — all three speaking the **same native tool-calling protocol** over one shared safety / context / code-intelligence base.
 
 `xhx-agent` operates directly inside a local repository. It compiles a token-budgeted context pack before every model turn, classifies and gates shell commands through a safe execution kernel, edits inside an isolated git worktree, runs targeted tests, and records a replayable evidence trail. The same task can be driven by three interchangeable control-flow paradigms, selectable at runtime — so the loop-vs-plan-vs-graph design trade-off is concrete, comparable, and **benchmarked with real numbers**.
 
@@ -20,7 +20,7 @@
 
 ## Why this project is interesting
 
-- **One protocol, three paradigms.** A single `Orchestrator` abstraction with three real implementations that all drive the model through **native tool-calling** (no bespoke "model plan" DSL): an autonomous **`loop`** (read → edit → verify, iterating until done), a **`plan`** (batch-plan → execute → verify with bounded self-repair), and a **`graph`** built on a LangGraph `StateGraph` (coordinator → worker → reviewer, with a conditional retry loop). They share the exact same tool, safety, context, and code-intelligence layers — only the top-level control flow differs. All three are **verified end-to-end against a real model** (DeepSeek), not just the offline mock.
+- **One protocol, three paradigms.** A single `Orchestrator` abstraction with three real implementations that all drive the model through **native tool-calling**. All three are **verified end-to-end against a real model** (DeepSeek), not just the offline mock.
 - **Quantified, not hand-waved.** A built-in [benchmark harness](#benchmark-quantifying-the-paradigms) runs a fixture task-set across all three paradigms and emits a comparison report (turns / tokens / wall-clock / success / files changed) as Markdown + JSON. The token meter makes the multi-agent overhead a number: on a real model (DeepSeek), `graph` spends **~4× the tokens** of single-agent `loop`/`plan` for the same work — and isn't automatically more reliable.
 - **Cross-session memory — the fourth axis of context management.** Beyond per-turn budgeting, in-loop history compaction, and sub-agent delegation, `xhx-agent` keeps a `.xhx/memory/` of durable facts (`user` / `feedback` / `project` / `reference`). Recall is **deterministic** (keyword/token overlap on each fact's description — no extra LLM call) and injected into the system prompt under the token budget; a freshness check skips memories that name files no longer on disk. Writes are explicit (`/remember`) or **suggest-confirm** (the agent proposes after a run, you approve with one keypress). Verified end-to-end: a fact that exists *only* in memory is recalled and used by the real model.
 - **Multi-model routing + graceful fallback.** A run can route different roles to different profiles — cheap models for exploration/summarization, a strong model for edits — and **falls back down a profile chain** when the primary errors or rate-limits (à la Claude Code's `fallbackModel`). Routing and streaming are orthogonal: the fallback wrapper forwards the streaming callback to whichever client serves.
@@ -41,10 +41,10 @@ graph TD
     classDef base fill:#14302a,stroke:#2e8b57,stroke-width:1px,color:#e0eee0;
 
     E["Entry points<br/>CLI run · REPL · TUI · JSON-RPC"]:::entry
-    S["Orchestrator selection<br/>--mode loop / plan / graph<br/>(default: loop · linear/dag = legacy, explicit only)"]:::orch
+    S["Orchestrator selection<br/>--mode loop / plan / team<br/>(default: loop)"]:::orch
     L["loop paradigm<br/>single autonomous agent (ReAct)<br/>read → edit → verify, until done"]:::orch
     P["plan paradigm<br/>batch plan → execute → verify<br/>bounded self-repair (≤2 rounds)"]:::orch
-    G["graph paradigm (LangGraph)<br/>coordinator → worker → reviewer<br/>conditional retry loop"]:::orch
+    G["team paradigm (mewcode)<br/>Coordinator + Worker<br/>mailbox · worktree isolation"]:::orch
 
     subgraph base_box["Shared base — native tool-calling"]
         M["Long-term Memory<br/>(.xhx/memory · deterministic recall)"]:::base
@@ -59,13 +59,13 @@ graph TD
     E --> S
     S -->|loop| L
     S -->|plan| P
-    S -->|graph| G
+    S -->|team| G
     L --> M
     P --> M
     G --> M
 ```
 
-All three paradigms issue the same tool calls (`search`, `read_file`, `apply_patch`, `repo_query`, `verify`, `terminal`, `dispatch`, …) through the same kernel — the difference is purely *who decides what to call next*: one agent (`loop`), a plan-then-execute controller (`plan`), or a coordinator/worker/reviewer team (`graph`). Orthogonal to the paradigm, each run **routes roles to model profiles with a fallback chain**, **streams** output token-by-token, and keeps long histories in budget via **microcompact**.
+All three paradigms issue the same tool calls (`search`, `read_file`, `apply_patch`, `repo_query`, `verify`, `terminal`, `dispatch`, …) through the same kernel — the difference is purely *who decides what to call next*: one agent (`loop`), a plan-then-execute controller (`plan`), or a coordinator dispatching workers (`team`). Orthogonal to the paradigm, each run **routes roles to model profiles with a fallback chain**, **streams** output token-by-token, and keeps long histories in budget via **microcompact**.
 
 ---
 
@@ -129,7 +129,7 @@ Pick the orchestrator paradigm explicitly with `--mode`:
 ```bash
 uv run xhx run "refactor the math helpers" --profile mock --mode loop    # autonomous ReAct loop
 uv run xhx run "refactor the math helpers" --profile mock --mode plan    # plan → execute → verify
-uv run xhx run "refactor the math helpers" --profile mock --mode graph   # LangGraph multi-agent
+uv run xhx run "refactor the math helpers" --profile mock --mode team    # Coordinator + Worker multi-agent
 ```
 
 Open the interactive REPL or the full-screen dashboard:
@@ -147,16 +147,16 @@ In the REPL the model's answer **streams token-by-token** into a thin status lin
 
 All three run over the identical tool / safety / context / code-intelligence base and the same native tool-calling protocol — only the control flow differs.
 
-| | `loop` (default) | `plan` | `graph` |
+| | `loop` (default) | `plan` | `team` |
 |:--|:--|:--|:--|
-| **Style** | Single autonomous agent (ReAct) | Plan-Execute controller | Multi-agent workflow (LangGraph `StateGraph`) |
-| **Control flow** | One model iterates read → edit → verify across up to `max_loop_turns` until it reports done | Plans the whole task up front, executes the steps, verifies, and runs bounded self-repair on failure | Explicit roles: coordinator splits the task → a write-capable worker executes each sub-task → reviewer judges PASS/FAIL, with a conditional re-execute loop |
+| **Style** | Single autonomous agent (ReAct) | Plan-Execute controller | Coordinator + Worker (mewcode) |
+| **Control flow** | One model iterates read → edit → verify across up to `max_loop_turns` until it reports done | Plans the whole task up front, executes the steps, verifies, and runs bounded self-repair on failure | Coordinator splits the task, dispatches workers serially or in parallel, workers communicate via mailbox, independent verification |
 | **Decomposition** | Implicit, per-turn | Batch, up front | Coordinator-driven, into sub-tasks |
-| **Best for** | Open-ended edits, exploratory work | Tasks that benefit from an explicit plan + verification gate | Tasks where plan / execute / review separation across roles is valuable |
-| **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~4× tokens, ~3× time — multi-agent chatter) |
-| **Select via** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode graph` / `/mode graph` |
+| **Best for** | Open-ended edits, exploratory work | Tasks that benefit from an explicit plan + verification gate | Multi-agent collaboration with isolated worktrees |
+| **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~4× tokens, ~3× time — multi-agent coordination) |
+| **Select via** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode team` / `/mode team` |
 
-When `--mode` is omitted, the task runs on the default **`loop`** — the same native tool-calling path as the explicit paradigms. The legacy `linear` / `dag` orchestrators (the older ModelPlan path) are **retained but no longer the default**: reach them with an explicit `--mode linear` / `--mode dag`, or via the `--dry-run` preview.
+When `--mode` is omitted, the task runs on the default **`loop`** — the same native tool-calling path as the explicit paradigms. The legacy `linear` / `dag` orchestrators (the older ModelPlan path) have been **removed**; reach the new `team` mode via `--mode team` for multi-agent workflows.
 
 ---
 
@@ -165,8 +165,8 @@ When `--mode` is omitted, the task runs on the default **`loop`** — the same n
 The core thesis — *one base, three interchangeable paradigms* — is only convincing with numbers. `xhx benchmark` runs a fixture task-set across the paradigms and writes a comparison report (`.xhx/benchmark/report.md` + `report.json`):
 
 ```bash
-uv run xhx benchmark --modes loop,plan,graph --profile default  # real model (DeepSeek)
-uv run xhx benchmark --modes loop,plan,graph                    # offline, deterministic (mock)
+uv run xhx benchmark --modes loop,plan,team --profile default  # real model (DeepSeek)
+uv run xhx benchmark --modes loop,plan,team                    # offline, deterministic (mock)
 ```
 
 **Real model** (DeepSeek `deepseek-chat`) — three read-only research fixtures, per-paradigm means:
@@ -175,12 +175,12 @@ uv run xhx benchmark --modes loop,plan,graph                    # offline, deter
 |:--|:--:|:--:|:--:|:--:|
 | `loop` | 3/3 | 4.7 (tool iterations) | ~14.3K | 14.1 |
 | `plan` | 3/3 | 4.0 (tool iterations) | ~15.0K | 13.0 |
-| `graph` | 2/3 | 1.7 (review rounds) | **~58.9K** | 44.6 |
+| `team` | 2/3 | 1.7 (review rounds) | **~58.9K** | 44.6 |
 
 Two things jump out:
 
-- **The multi-agent `graph` costs ~4× the tokens and ~3× the wall-clock** of the single-agent `loop`/`plan` — coordinator, worker(s), and reviewer each carry their own full context. (Its lower "turn" count is a *different unit* — review rounds, not tool iterations.)
-- **More agents did not mean a better outcome here:** `graph` succeeded on only 2 of 3 fixtures (one reviewer returned FAIL), while `loop` and `plan` completed all three. Role separation buys explicit plan/review structure — it does not come for free, and it is not automatically more reliable.
+- **The multi-agent `team` costs ~4× the tokens and ~3× the wall-clock** of the single-agent `loop`/`plan` — coordinator, worker(s), and reviewer each carry their own full context. (Its lower "turn" count is a *different unit* — review rounds, not tool iterations.)
+- **More agents did not mean a better outcome here:** `team` succeeded on only 2 of 3 fixtures (one reviewer returned FAIL), while `loop` and `plan` completed all three. Role separation buys explicit plan/review structure — it does not come for free, and it is not automatically more reliable.
 
 The offline `mock` profile reproduces the *same shape* deterministically (`graph` ~3× the tokens of `loop`/`plan`) for CI and zero-key demos, though it doesn't exercise the LLM coordination `graph` depends on — so success rate there is only meaningful under a real model. Reproduce either table with the commands above (`--profile default` requires a `DEEPSEEK_API_KEY`).
 
@@ -191,7 +191,7 @@ The offline `mock` profile reproduces the *same shape* deterministically (`graph
 |:--|:--:|:--:|:--:|:--:|
 | `loop` | 3 | 1.0 | ~978 | 0.40 |
 | `plan` | 3 | 1.0 | ~986 | 0.38 |
-| `graph` | 3 | 2.0 | ~2919 | 0.77 |
+| `team` | 3 | 2.0 | ~2919 | 0.77 |
 
 </details>
 
@@ -205,7 +205,7 @@ Three findings worth more than a green test suite — each is a place where a *r
 
 **2 · A prompt is not a silver bullet.** I added a `dispatch` tool so the agent could hand a focused, multi-file investigation to an isolated read-only sub-agent — keeping the parent's context clean. The capability is wired, gated, and correct. But even with explicit prompt guidance, the real model overwhelmingly prefers to just read the files itself and rarely reaches for `dispatch`. Rather than dress that up, I'm recording it plainly: **changing model behavior often needs a stronger mechanism than a paragraph in the system prompt** — and knowing the difference is part of the job.
 
-**3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "graph has more overhead" into "graph costs ~4× the tokens" in the real-model table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
+**3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "team has more overhead" into "team costs ~4× the tokens" in the real-model table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
 
 **4 · An injection feature isn't real until a memory-only fact moves the output.** Cross-session recall is easy to *wire* and easy to fool yourself about. So the test wasn't "does the recall function return rows" — it was: write a fact that exists **only** in `.xhx/memory/` (the project mascot is a blue axolotl named Pacha), ask the real model an otherwise-unanswerable question, and confirm the recalled fact both reached the system prompt and shaped the answer. **Lesson:** for anything that silently injects context, verify end-to-end with a fact the model could not otherwise know — not with a unit test of the retriever.
 
@@ -222,7 +222,7 @@ uv run xhx run "<task>" [options]
 | Option | Description |
 |:--|:--|
 | `--profile <name>` | LLM profile, resolved `project .xhx/ → ~/.xhx/ → built-in` (`mock` runs offline). |
-| `--mode <loop\|plan\|graph\|linear\|dag>` | Pick the orchestrator paradigm (default: `loop`). |
+| `--mode <loop\|plan\|team>` | Pick the orchestrator paradigm (default: `loop`). |
 | `--auto-repair` | Enable up to 2 self-repair rounds when targeted verification fails. |
 | `--dry-run` | Preview plan, token budget, and risks, then exit. |
 | `-y`, `--yes` | Pre-approve `confirm`-tier commands (non-interactive). |
@@ -243,7 +243,7 @@ Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `ses
 Stated plainly so capability is never confused with roadmap.
 
 **Fully implemented**
-- Tri-paradigm orchestrator on one native tool-calling protocol: `loop` (autonomous ReAct), `plan` (Plan-Execute with bounded self-repair), and `graph` (LangGraph coordinator → worker → reviewer) — all wired into every entry point (CLI `--mode`, REPL/TUI `/mode`) and all verified end-to-end against a real model.
+- Tri-paradigm orchestrator on one native tool-calling protocol: `loop` (autonomous ReAct), `plan` (Plan-Execute with bounded self-repair), and `team` (Coordinator + Worker from mewcode) — all wired into every entry point (CLI `--mode`, REPL/TUI `/mode`).
 - Sub-agents via the `dispatch` tool: a read-only `explore` agent (its own message history + restricted toolset) and a **write-capable `edit` agent** that edits inside its own git worktree and **merges back serially with first-wins conflict detection**.
 - Three-paradigm benchmark harness (`xhx benchmark --modes …`) emitting a Markdown + JSON comparison report, with per-call token metering.
 - Long-term memory: `.xhx/memory/` of 4-type facts with deterministic recall injected into the system prompt under budget, a freshness check against current files, explicit `/remember` writes, and post-run **suggest-confirm** auto-extraction (`/automem`) — verified end-to-end against a real model.
@@ -268,8 +268,8 @@ Stated plainly so capability is never confused with roadmap.
 - REPL (prompt-toolkit) and full-screen TUI (Textual); JSON-RPC 2.0 stdio interface; offline `mock` profile; benchmark + replay.
 
 **Simplified / partial (by design)**
-- `linear` / `dag` (the older ModelPlan path) are retained but **no longer the default** — reachable only via explicit `--mode linear/dag` and the `--dry-run` preview; the headline decomposition work happens in `plan` and `graph`, which are LLM-driven via tool-calling.
-- The `graph` paradigm is a deliberately lean coordinator → worker → reviewer workflow, kept minimal for a clean contrast against `loop`/`plan`.
+- `linear` / `dag` (the older ModelPlan path) have been **removed**; the headline decomposition work happens in `plan` and `team`.
+- The `team` paradigm is a Coordinator + Worker system ported from mewcode: TeamManager, mailbox-based inter-agent communication, shared task store, coordinator system prompt, and in-process worker spawning.
 - Write `edit` sub-agents run sequentially, each isolated in its own worktree and merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution.
 - JS/TS import and call extraction uses regex (only JS/TS *symbols* use tree-sitter); Python uses full `ast`.
@@ -282,16 +282,20 @@ See [`docs/implementation/20-implementation-baseline.md`](docs/implementation/20
 
 ```text
 src/xhx_agent/
-  orchestrators/   loop · plan · graph (primary) + linear · dag (fallback) · sub-agent · microcompact
+  orchestrators/   loop · plan · team (primary) · sub-agent · microcompact
+  teams/           TeamManager · mailbox · shared tasks · coordinator · spawn
+  agents/          AgentDef parser · three-tier loader (builtin/user/project)
+  hooks/           event-driven hook engine · pre/post tool hooks
+  commands/        slash command registry + defaults
   memory/          long-term facts: store + deterministic recall + suggest-confirm extraction
   context/         Context Pack compiler + token budgeting + compaction
   repo_intel/      symbol / import / reference / call index (ast + tree-sitter, JSON + SQLite)
-  safety/          risk classification · policy · worktree · checkpoints · repair
-  planner/         intent classifier · execution modes · reviewer · agents
+  safety/          risk classification · policy · worktree · checkpoints · repair · permissions
+  planner/         execution modes · reviewer · agents
   verification/    targeted test router
   evals/           benchmark harness + RunMetrics
   evidence/        trace store + report generation
-  runtime/         app loop · sessions · config (incl. routing)
+  runtime/         app loop · sessions · config (incl. routing) · context window
   models/          mock + OpenAI-compatible (streaming) + multi-model routing & fallback
   cli/ · tui/      REPL, full-screen dashboard, JSON-RPC
 ```

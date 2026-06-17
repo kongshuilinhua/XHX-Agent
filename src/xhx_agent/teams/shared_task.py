@@ -24,7 +24,7 @@ class SharedTaskStore:
         self._path = file_path
         self._next_id: int = 1
         self._tasks: list[SharedTask] = []
-        self.init_empty()
+        self._load()  # 尝试加载已有数据，不覆盖
 
     def _load(self) -> None:
         if self._path.is_file():

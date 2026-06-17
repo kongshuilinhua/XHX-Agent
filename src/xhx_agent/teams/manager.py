@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from xhx_agent.teams.mailbox import Mailbox, create_message
+from xhx_agent.teams.mailbox import Mailbox, MailboxMessage, create_message
 from xhx_agent.teams.models import AgentTeam, TeammateInfo, BackendType, unique_team_name, resolve_team_dir
 from xhx_agent.teams.progress import TeammateProgress
 from xhx_agent.teams.registry import AgentNameRegistry
@@ -66,13 +66,17 @@ class TeamManager:
         if team is None:
             return
 
-        # 清理所有成员
+        # 停止所有活跃成员 + 清理 worktree
         registry = AgentNameRegistry.instance()
         for member in team.members:
             registry.unregister(member.name)
             handle = self._inprocess_handles.pop(member.agent_id, None)
             if handle and hasattr(handle, 'cancel'):
                 handle.cancel()
+            if member.worktree_path:
+                wt = Path(member.worktree_path)
+                if wt.exists() and wt != Path(".").resolve():
+                    shutil.rmtree(wt, ignore_errors=True)
 
         # 清理存储
         mb = self._mailboxes.pop(team_name, None)
@@ -81,10 +85,10 @@ class TeamManager:
         self._task_stores.pop(team_name, None)
         self._teams.pop(team_name, None)
 
-        # 删除团队目录
+        # 删除团队目录（含 trace/evidence 等残留）
         team_dir = resolve_team_dir(team_name)
         if team_dir.exists():
-            shutil.rmtree(team_dir)
+            shutil.rmtree(team_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # member management
@@ -113,6 +117,19 @@ class TeamManager:
                 message_type="text",
             )
             mailbox.write(team.lead_agent_id, msg)
+
+    def drain_lead_mailbox(self, team_name: str) -> list[MailboxMessage]:
+        """排空 lead agent 邮箱中的所有待处理消息。
+
+        Lead agent 每轮调用此方法收取队友通知。
+        """
+        team = self.get_team(team_name)
+        if team is None:
+            return []
+        mailbox = self._mailboxes.get(team_name)
+        if mailbox is None:
+            return []
+        return mailbox.consume(team.lead_agent_id)
 
     # ------------------------------------------------------------------
     # queries

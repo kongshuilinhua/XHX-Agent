@@ -125,7 +125,12 @@ class TextualSnapshot:
         detail_text: str = "",
     ) -> TextualSnapshot:
         run_id = state.run_id or "none"
-        header = f"xhx-agent | {state.status} | profile: {profile} | run: {run_id}"
+        # 显示工作目录（取最后 3 级，太长的路径裁剪前缀）
+        cwd = str(workspace)
+        if len(cwd) > 40:
+            parts = cwd.replace("\\", "/").split("/")
+            cwd = ".../" + "/".join(parts[-3:]) if len(parts) > 3 else cwd
+        header = f"xhx-agent | {cwd} | {state.status} | profile: {profile} | run: {run_id}"
         streaming = getattr(state, "is_streaming", False)
         ctx_label, _, ctx_level = context_meter(state.context_used_tokens_estimate, state.context_budget_tokens)
         if ctx_level == "ok":
@@ -421,7 +426,12 @@ class TextualCommandConsoleApp(App[None]):
         self.widgets_ready = False
         self.ui_thread_id: int | None = None
         self.auto_memory = True
-        self.verbose = False
+        # 从项目级 config 读取 verbose 初始值（对标 Claude Code AppState.verbose）
+        try:
+            from xhx_agent.runtime.config import load_config
+            self.verbose = load_config(workspace).verbose
+        except Exception:
+            self.verbose = False
         # 重绘合并：事件洪流（graph 等多 agent 模式）下，每事件全量重绘会把 worker 线程
         # （call_from_thread 阻塞）与终端拖死。改为「事件只更新数据 + 置脏」，由 on_mount
         # 安装的 set_interval 定时器把重绘频率封顶到 ~10fps。
@@ -880,6 +890,10 @@ class TextualCommandConsoleApp(App[None]):
             command, _ = parse_command(command_line)
             self.append_message(f"system> Unknown command: {command}")
             return True
+        # execute 对未知命令返回字符串消息，显式 append 后返回 True
+        if isinstance(result, str):
+            self.append_message(f"system> {result}")
+            return True
         return bool(result)
 
     def run_manual_verification(self) -> None:
@@ -894,6 +908,7 @@ class TextualCommandConsoleApp(App[None]):
             cancel_check=self.is_cancel_requested,
         )
         self.last_manual_verification = result
+        self.state.verification = result.status
         self.append_message(f"system> manual verification: {result.status}")
         self.set_detail(
             "verify",

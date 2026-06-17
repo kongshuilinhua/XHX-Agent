@@ -5,7 +5,7 @@ def test_completer_slash_commands(tmp_path):
     completer = XhxCompleter(tmp_path)
     # 补全斜杠命令前缀
     res1 = completer.get_completions("/ve")
-    assert "/verify" in res1
+    assert "/verbose" in res1
 
     # 补全全部斜杠命令
     res2 = completer.get_completions("/")

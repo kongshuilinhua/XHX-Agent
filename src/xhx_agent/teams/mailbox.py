@@ -31,7 +31,11 @@ class MailboxMessage:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> MailboxMessage:
-        return MailboxMessage(**data)
+        """从字典构造，仅选取 dataclass 定义中存在的字段。"""
+        from dataclasses import fields as dc_fields
+        valid_keys = {f.name for f in dc_fields(MailboxMessage)}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return MailboxMessage(**filtered)
 
 
 def create_message(
@@ -79,11 +83,23 @@ class Mailbox:
         return msgs
 
     def consume(self, agent_id: str) -> list[MailboxMessage]:
-        msgs = self.read(agent_id)
+        """读取并消费 agent 的所有消息。
+
+        逐文件读取→返回→删除，避免 read() 和 unlink() 之间的竞态条件。
+        """
         ad = self._agent_dir(agent_id)
-        for f in ad.iterdir():
+        msgs: list[MailboxMessage] = []
+        for f in sorted(ad.iterdir()):
             if f.suffix == ".json":
-                f.unlink()
+                try:
+                    msg = MailboxMessage.from_dict(
+                        json.loads(f.read_text(encoding="utf-8")))
+                    msgs.append(msg)
+                    f.unlink()  # 读完立即删除，不在 read/delete 间留窗口
+                except Exception:
+                    # 损坏的消息也删掉以免反复读取
+                    with __import__('contextlib').suppress(OSError):
+                        f.unlink()
         return msgs
 
     def broadcast(self, team_members: list, message: MailboxMessage, exclude: str = "") -> None:
