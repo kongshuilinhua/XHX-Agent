@@ -25,20 +25,24 @@ CUSTOM_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset({
 
 
 def resolve_agent_tools(
-    parent_registry: ToolRegistry,
-    definition: AgentDef,
+    parent_registry: "ToolRegistry",
+    definition: "AgentDef",
     is_background: bool = False,
-) -> ToolRegistry:
-    """根据 AgentDef 过滤工具集，返回新的 ToolRegistry。
+) -> "list[dict[str, Any]]":
+    """根据 AgentDef 过滤工具集，返回 schema 列表。
 
     过滤层级：
         1. 全局黑名单（ALL_AGENT_DISALLOWED_TOOLS）
         2. 自定义 agent 额外黑名单
         3. 定义中的 disallowed_tools
         4. 定义中的 tools（白名单）
+
+    Returns:
+        过滤后的 OpenAI function schema 列表（可直接喂给模型的 tools 参数）。
     """
-    # 先收集所有工具名
-    all_names = set(parent_registry.tool_schemas_names())
+    # 从 tool_schemas() 收集所有工具名（含 terminal/verify/dispatch 等无 runner 工具）
+    all_schemas = parent_registry.tool_schemas()
+    all_names = {s["function"]["name"] for s in all_schemas}
 
     # Layer 1: 全局禁用
     for name in ALL_AGENT_DISALLOWED_TOOLS:
@@ -59,9 +63,8 @@ def resolve_agent_tools(
         allowed_set = set(definition.tools)
         all_names = all_names & allowed_set
 
-    # 构建新的 tool schemas 列表
-    filtered_schemas = [
-        s for s in parent_registry.tool_schemas()
-        if s.get("name", "") in all_names
+    # 过滤 schema
+    return [
+        s for s in all_schemas
+        if s["function"]["name"] in all_names
     ]
-    return filtered_schemas  # type: ignore[return-value]

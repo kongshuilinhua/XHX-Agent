@@ -21,10 +21,10 @@
 
 ```
         ┌──────── 3 真范式（只差控制流，协议都用 tool-calling）────────┐
-        │  plan              graph              loop                   │
-        │  Plan-Execute      多 agent 工作流     ReAct tool-use loop     │
-        │  前置规划→批量执行  coordinator→        交错 think→act→观察     │
-        │  （必要时 replan）  execute→review      →再 think（Claude式）   │
+        │  plan              team              loop                   │
+        │  Plan-Execute      Coordinator+      ReAct tool-use loop     │
+        │  前置规划→批量执行  Worker 多 agent   交错 think→act→观察     │
+        │  （必要时 replan）  协作(mewcode)     →再 think（Claude式）   │
         └──────────────────────────────────────────────────────────────┘
                               ↓ 共用 ↓
    ┌──────── 统一 tool-calling 协议（消息历史 + 原生 tool_calls）────────┐
@@ -40,12 +40,12 @@
 
 | 范式 | 概念 | 模型介入方式 | 适合 | 状态 |
 |:--|:--|:--|:--|:--|
-| `plan` | Plan-and-Execute | 前置规划一次→批量执行→必要时 replan；模型一轮产出**一组** `tool_calls` | 步骤清晰、少 LLM 调用的批量任务 | ✅ tool-calling 已落地（3a，`--mode plan`）；`linear`/默认收敛 → 3b |
-| `graph` | 多 agent 工作流（LangGraph） | coordinator → execute → review，条件重执行（≤2 轮），各节点内用 tool-calling | 规划/执行/复核分离 | 🚧 由现有 `graph`/`dag` 迁移 |
-| `loop` | ReAct tool-use loop（Claude Code 式） | 每步问模型，看到每个工具结果再决定下一步；回文本=对话，回 `tool_calls`=执行再循环 | 对话 + 真实改代码，最好用 | 🚧 新建（Phase 1 主攻） |
+| `plan` | Plan-and-Execute | 前置规划一次→批量执行→必要时 replan；模型一轮产出**一组** `tool_calls` | 步骤清晰、少 LLM 调用的批量任务 | ✅ tool-calling 已落地 |
+| `team` | Coordinator + Worker 多 agent（mewcode 移植） | Coordinator 调度 worker→并行/串行执行→验证；邮件通信 + worktree 隔离 | 多 agent 协作、任务分解、独立验证 | 🚧 由 mewcode AgentTeams 移植，替代 LangGraph |
+| `loop` | ReAct tool-use loop（Claude Code 式） | 每步问模型，看到每个工具结果再决定下一步；回文本=对话，回 `tool_calls`=执行再循环 | 对话 + 真实改代码，最好用 | ✅ 已实现（默认模式） |
 
-**命名修订（旧→新）**：原 `loop`（自主 plan-execute）→ **`plan`**；新建的 tool-use 循环 → **`loop`**（它才真在"循环"）；`graph` 不变。
-**收敛**：原 `linear`（首改即停）→ `plan` 的停止策略开关；原 `dag`（Kahn 并发调度）→ `graph` 的执行层。
+**命名修订（旧→新）**：原 `loop`（自主 plan-execute）→ **`plan`**；原 `graph`（LangGraph 多 agent）→ **`team`**（mewcode Coordinator+Worker，更简洁、去掉了 LangGraph 依赖）；`loop` 不变。
+**收敛**：原 `linear`（首改即停）→ `plan` 的停止策略开关；原 `dag`（Kahn 并发调度）→ `team` 的执行层。
 
 ---
 
@@ -89,7 +89,7 @@
 - **Phase 3b-1 ✅ 已完成（2026-06-11）**：给 tool-calling `plan` 补齐证据 parity（apply_patch 证据 + patch-evidence-binding + checkpoint/restore），纯增量、默认路由不变；默认切换 + 测试迁移留 3b-2。
 - **Phase 3b-2 ✅ 已完成（2026-06-12）**：**默认路由切到 tool-calling `loop`** —— 省略 `--mode` 时不再走 legacy ModelPlan 的自动分类(linear/dag)，而是统一的 tool-calling loop（`select_orchestrator(mode)` → `DEFAULT_MODE="loop"`）。`ModelPlan`/`linear`/`dag`/`planner`/dry-run **全部保留**（仅不再默认、仍可经 `--mode linear/dag` 与预览路径触达），不做大规模删除（纯删高风险零增益）。受影响的 18 个 legacy 行为测试钉到显式 `mode="linear"/"dag"` 继续覆盖保留路径；新增 `test_runtime_app_default_mode_is_loop`。真模型验证：`xhx run`（无 `--mode`）→ `mode="loop"` 成功。至此默认路径与三范式「同一套 tool-calling 协议」彻底自洽。
 - **Phase 3**：`plan` 范式迁到 tool-calling（批量计划-执行 + 吸收 `linear` 停止策略）。**（plan 部分已落地，见 Phase 3a；剩 `linear`/默认收敛 → 3b。）**
-- **Phase 4**：`graph` 范式迁到 tool-calling（吸收 `dag` 为并发执行层）。
+- **Phase 4**: `graph` 范式迁到 tool-calling —— **已由 mewcode `team` (Coordinator+Worker) 范式替代**。原 LangGraph `StateGraph`（planner→execute→joiner，684 行）已删除；新 `TeamOrchestrator` 继承 `BaseReActOrchestrator`，自动创建 `TeamManager`、管理邮箱通信、注册 leader/worker。详见 [mewcode 集成报告](docs/mewcode-integration-report.md)。
 - **Phase 5a ✅ 已完成（2026-06-11）**：只读 `explore` 子 agent —— `dispatch` 工具 + `agent_type` 注册表 + 隔离只读子循环（search/read_file，自己的消息历史/限定轮数），跑完只回浓缩结论，父上下文只长一句；真模型验证。
 - **Phase 5b ✅ 已完成（2026-06-12）**：写型子 agent + 串行合并 + 冲突上报 —— `agent_type="edit"`（search/read_file/apply_patch）跑在自己的 **git worktree**（`tool_context.workspace` 重定向）里改代码，改完 `_merge_into_parent` **串行合并回父工作区**并对同文件做**先到先得冲突检测**（`ctx.subagent_claims`），非 git 仓库降级就地。自测 + 端到端验证：worktree 隔离（改动只进 worktree、父经合并才更新）、冲突先到先得上报。注：写型 dispatch 在 loop 里串行执行；真·并发执行为可选增强——安全保证来自隔离 + 串行冲突合并，不依赖并发。
 - **Phase 5**：子 agent / 并行探索（`dispatch` 工具 + `agent_type` 注册表 + 隔离子循环；只读 explore + 写型 worktree；并行执行 + 串行合并 + 冲突上报）。详见 §6。

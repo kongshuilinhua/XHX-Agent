@@ -206,6 +206,18 @@ class BaseReActOrchestrator:
                 risks.append("Run cancelled before model call.")
                 break
 
+            # Team 模式：排空 lead agent 邮箱，注入队友通知
+            team_mgr = getattr(ctx, "team_manager", None)
+            if team_mgr is not None:
+                team_name = getattr(ctx, "team_name", "")
+                if team_name:
+                    teammate_msgs = team_mgr.drain_lead_mailbox(team_name)
+                    for tm in teammate_msgs:
+                        messages.append({
+                            "role": "user",
+                            "content": f"[Teammate update from {tm.from_agent}]: {tm.content}",
+                        })
+
             if summarize_fn:
                 len_before = len(messages)
                 messages = compact_messages(

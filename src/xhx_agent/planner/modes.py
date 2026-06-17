@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 class ExecutionMode(StrEnum):
     DIRECT = "direct"
     RESEARCH_ONLY = "research-only"
-    LINEAR_EDIT = "linear-edit"
-    PLAN_REVIEW_ACT = "plan-review-act"
+    LINEAR_EDIT = "linear-edit"  # 已废弃，由 "loop" 替代；仅保留向后兼容
+    LOOP = "loop"
+    PLAN = "plan"
+    TEAM = "team"
     REPAIR_LOOP = "repair-loop"
 
 

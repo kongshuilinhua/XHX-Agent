@@ -693,6 +693,7 @@ class RuntimeApp:
         stop_on_first_change: bool = True,
         history_summarizer: Callable[[list[str]], str] | None = None,
         concurrent_readonly: bool = False,
+        assume_yes: bool = False,
     ) -> tuple[str, int, str | None]:
         """模型↔工具的多轮循环：每轮 编译上下文包 → 取模型计划 → 顺序执行工具 → 判定是否继续。
 
@@ -788,7 +789,8 @@ class RuntimeApp:
                         result, trace, policy = preexecuted[index]
                     else:
                         result, trace, policy = kernel.execute_tool(
-                            tool_context, step, turn, event_callback=event_callback
+                            tool_context, step, turn, event_callback=event_callback,
+                            assume_yes=assume_yes,
                         )
                     if result is None or trace is None:
                         recent_error = policy.reason

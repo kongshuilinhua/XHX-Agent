@@ -122,11 +122,26 @@ def decide_with_checker(
     if checker_decision.effect in ("allow", "deny"):
         return PolicyDecision.from_checker_decision(tool_name, checker_decision)
 
-    # ask → 需要用户确认（权限模式要求弹框）
+    # ask → 需要进一步判断
+    # 对标旧版 decide_tool：破坏性/网络工具在工作区隔离下自动放行，
+    # 仅 mcp_/custom_ 动态工具需要人工确认（因其无隔离沙箱、以 agent 权限运行）
+    if destructive or network:
+        return PolicyDecision(
+            decision="allow",
+            risk=RiskLevel.CONFIRM,
+            reason=f"{tool_name}: {checker_decision.reason} — allowed under worktree isolation.",
+        )
+    if tool_name.startswith("mcp_") or tool_name.startswith("custom_"):
+        return PolicyDecision(
+            decision="confirm",
+            risk=RiskLevel.CONFIRM,
+            reason=checker_decision.reason,
+            requires_user=True,
+        )
+    # 其余 ask 转为拒绝（安全默认拒绝，不静默放行）
     return PolicyDecision(
-        decision="confirm",
-        risk=RiskLevel.CONFIRM,
+        decision="deny",
+        risk=RiskLevel.DENY,
         reason=checker_decision.reason,
-        requires_user=True,
     )
 

@@ -165,7 +165,7 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
                     progress=progress,
                 )
                 team_mgr.register_member(team_name, member)
-                team_mgr.register_inprocess_handle(agent_id, None)
+                team_mgr.register_inprocess_handle(agent_id, member)  # 存储成员信息（非 None），后续可用来查找/取消
                 # 存储 agent_id 以便完成后更新进度
                 tc.arguments["_team_agent_id"] = agent_id
                 tc.arguments["_team_name"] = team_name
@@ -178,11 +178,11 @@ def _execute_tool_call_rich(ctx: OrchestratorContext, tc, turn: int) -> tuple[An
                         ctx, description=description, prompt=prompt, agent_type=agent_type, turn=turn
                     )
                     changed = []
-                # 标记 team 成员完成
+                # 标记 team 成员完成（传 member_name 非 agent_id）
                 if team_mgr is not None and team_name:
                     agent_id = tc.arguments.get("_team_agent_id", "")
                     if agent_id:
-                        team_mgr.set_member_idle(team_name, agent_id)
+                        team_mgr.set_member_idle(team_name, member_name)
                 status = "success"
                 lines = (content or "").splitlines()
                 summary = lines[0] if lines else ""

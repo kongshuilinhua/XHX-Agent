@@ -22,7 +22,6 @@ def register_default_commands(registry: CommandRegistry) -> None:
     r.register("/evidence", "Show recent safety policy evidence", _evidence)
     r.register("/perm", "Show or set permission mode", _perm, needs_arg=True, arg_hint="[default|acceptEdits|bypass]")
     r.register("/diff", "Show git diff summary for changes", _diff)
-    r.register("/verify", "Run verification for changed files", _verify)
     r.register("/repair", "Repair codebase after failed verification", _repair, needs_arg=True, arg_hint="[loop|auto]")
     r.register("/skills", "List available skill directories", _skills)
     r.register("/dashboard", "Print detailed dashboard runtime state", _dashboard)
@@ -32,7 +31,6 @@ def register_default_commands(registry: CommandRegistry) -> None:
     r.register("/resume", "Switch follow-up context to a past session", _resume, needs_arg=True, arg_hint="<run_id_prefix>")
     r.register("/tools", "Show details of recent tool calls", _tools)
     r.register("/verbose", "Toggle verbose inline tool call details", _verbose)
-    r.register("/status", "Show current agent status", _status)
 
 
 # ---- handlers below: each receives (app, argument) and calls TUI methods ----
@@ -103,13 +101,6 @@ def _diff(app: Any, _arg: str) -> bool:
     app.print_diff_summary()
     return True
 
-def _verify(app: Any, _arg: str) -> bool:
-    if getattr(app, '_slash_use_worker', False) and getattr(app, 'widgets_ready', False):
-        app.start_manual_verification_worker()
-    else:
-        app.run_manual_verification()
-    return True
-
 def _repair(app: Any, arg: str) -> bool:
     max_attempts = 2 if arg.lower() in {"loop", "auto"} else 1
     if getattr(app, '_slash_use_worker', False) and getattr(app, 'widgets_ready', False):
@@ -153,13 +144,21 @@ def _tools(app: Any, _arg: str) -> bool:
     return True
 
 def _verbose(app: Any, _arg: str) -> bool:
-    app.verbose = not getattr(app, "verbose", False)
-    app.append_message(f"system> verbose: {'on' if app.verbose else 'off'}")
+    """切换详细模式（对标 Claude Code --verbose）。持久化到项目级 config。"""
+    current = getattr(app, "verbose", False)
+    app.verbose = not current
+    state = "on" if app.verbose else "off"
+    app.append_message(f"system> verbose: {state}")
+
+    # 持久化到 .xhx/config.json（对标 Claude Code AppState.verbose → saveGlobalConfig）
+    try:
+        from xhx_agent.runtime.config import load_config, save_config
+        cfg = load_config(app.workspace)
+        cfg.verbose = app.verbose
+        save_config(app.workspace, cfg)
+        app.append_message("system> verbose saved to .xhx/config.json")
+    except Exception:
+        pass
     return True
 
-def _status(app: Any, _arg: str) -> bool:
-    app.append_message(
-        f"system> status: {app.state.status}; verification: {app.state.verification}; "
-        f"profile: {app.profile}; changed_files: {len(app.state.changed_files)}"
-    )
-    return True
+
