@@ -1040,11 +1040,14 @@ class Agent:
 
         tools = self.registry.get_all_schemas(self.protocol)
 
+        # tool schema 在 openai-compat 协议下是嵌套的（{"function": {"name": ...}}），
+        # anthropic 协议下是扁平的（{"name": ...}）；日志要兼容两种形状。
+        tool_names = [t.get("name") or t.get("function", {}).get("name") for t in tools]
         log.info(
             "[run_to_completion] agent=%s tools=%d names=%s coordinator=%s",
             self.agent_id,
             len(tools),
-            [t["name"] for t in tools][:10],
+            tool_names[:10],
             self.coordinator_mode,
         )
 
