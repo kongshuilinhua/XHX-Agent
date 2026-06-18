@@ -16,25 +16,25 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from xhx_agent.agents.adapter import run_agent_sync
 from xhx_agent.context.compiler import compile_context_pack
 from xhx_agent.context.debug import write_context_debug_report
 from xhx_agent.context.pack import ContextPack
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
-from xhx_agent.runtime.types import IN_PLACE_WARNING, PlanReview
-from xhx_agent.agents.adapter import run_agent_sync
-from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
-from xhx_agent.repo_intel.xhx_md import write_xhx_md
-from xhx_agent.runtime.config import load_config, write_default_config
+from xhx_agent.runtime.config import load_config
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.runtime.git_ops import DiffSummary, GitOps
-from xhx_agent.runtime.paths import ensure_xhx_dirs
-from xhx_agent.runtime.profiles import ModelProfile, get_profile, write_default_profiles
+from xhx_agent.runtime.init import InitResult
+from xhx_agent.runtime.init import init_project as _init_project
+from xhx_agent.runtime.profiles import ModelProfile, get_profile
+from xhx_agent.runtime.types import PlanReview
 from xhx_agent.runtime.utils import cancel_requested, new_run_id
 from xhx_agent.runtime.verify_loop import (
     ManualRepairResult,
@@ -43,25 +43,15 @@ from xhx_agent.runtime.verify_loop import (
     VerificationLoopContext,
     _last_verification_error,
     _refresh_repo_intel_index,
-    checkpoint_path_value,
-    restore_plan_path_value,
 )
 from xhx_agent.safety.checkpoint import Checkpoint
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.safety.policy import PolicyDecision
 from xhx_agent.safety.repair import MAX_REPAIR_ATTEMPTS, RepairDecision, decide_repair
 from xhx_agent.safety.worktree import WorktreeContext
-from xhx_agent.hooks import hooks_manager
 from xhx_agent.tools.registry import ToolContext, ToolRegistry, default_tool_registry
 from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
-
-
-class InitResult(BaseModel):
-    config_created: bool
-    profiles_created: bool
-    xhx_md_created: bool
-    repo_index_path: str
 
 
 class RunResult(BaseModel):
@@ -112,18 +102,7 @@ class RuntimeApp:
         self.allowed_dirs: list[Path] = []
 
     def init_project(self) -> InitResult:
-        ensure_xhx_dirs(self.workspace)
-        config_created = write_default_config(self.workspace)
-        profiles_created = write_default_profiles(self.workspace)
-        scan = scan_project(self.workspace)
-        xhx_md_created = write_xhx_md(self.workspace, scan)
-        repo_index = write_repo_intel_index(self.workspace)
-        return InitResult(
-            config_created=config_created,
-            profiles_created=profiles_created,
-            xhx_md_created=xhx_md_created,
-            repo_index_path=repo_index.relative_to(self.workspace).as_posix(),
-        )
+        return _init_project(self.workspace)
 
     def run_task(
         self,

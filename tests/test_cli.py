@@ -87,12 +87,12 @@ def test_repo_index_refresh_json_reports_current_index() -> None:
 
 
 def test_run_continue_records_and_resumes_session() -> None:
-    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.init import init_project
     from xhx_agent.runtime.session import session_history_path
 
     with runner.isolated_filesystem() as workspace:
         root = Path(workspace)
-        RuntimeApp(root).init_project()
+        init_project(root)
 
         first = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock"])
         assert first.exit_code == 0, first.output
@@ -107,12 +107,12 @@ def test_run_continue_records_and_resumes_session() -> None:
 
 
 def test_sessions_command_and_resume_by_id() -> None:
-    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.init import init_project
     from xhx_agent.runtime.session import list_sessions
 
     with runner.isolated_filesystem() as workspace:
         root = Path(workspace)
-        RuntimeApp(root).init_project()
+        init_project(root)
 
         empty = runner.invoke(app, ["sessions"])
         assert empty.exit_code == 0
@@ -132,11 +132,11 @@ def test_sessions_command_and_resume_by_id() -> None:
 
 
 def test_run_mode_flag_accepted() -> None:
-    from xhx_agent.runtime.app import RuntimeApp
+    from xhx_agent.runtime.init import init_project
 
     with runner.isolated_filesystem() as workspace:
         root = Path(workspace)
-        RuntimeApp(root).init_project()
+        init_project(root)
         result = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock", "--mode", "loop"])
         assert result.exit_code == 0, result.output
         assert "status:" in result.output

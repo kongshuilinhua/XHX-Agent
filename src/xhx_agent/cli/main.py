@@ -23,9 +23,9 @@ import typer
 from rich.console import Console
 
 from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
-from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import global_config_path, load_config, write_global_config
 from xhx_agent.runtime.headless import run_headless_task
+from xhx_agent.runtime.init import init_project
 from xhx_agent.runtime.profiles import global_profiles_path, load_profiles, write_global_profiles
 from xhx_agent.runtime.session import (
     format_follow_up,
@@ -115,7 +115,7 @@ def init(
             "falls back to this profile automatically."
         )
         return
-    result = RuntimeApp().init_project()
+    result = init_project(Path.cwd())
     console.print("Initialized xhx-agent project.")
     console.print(f"config.json: {'created' if result.config_created else 'exists'}")
     console.print(f"profiles.json: {'created' if result.profiles_created else 'exists'}")
@@ -263,9 +263,9 @@ def sessions() -> None:
 
     from xhx_agent.runtime.session import list_conversations
 
-    runtime = RuntimeApp()
+    workspace = Path.cwd().resolve()
     # One row per conversation (multi-turn console dialogues collapse to their latest entry).
-    entries = list_conversations(runtime.workspace)
+    entries = list_conversations(workspace)
     if not entries:
         console.print("No sessions recorded yet.")
         return
@@ -449,8 +449,7 @@ def compact(
     ] = None,
 ) -> None:
     """Manually compact the message history transcript of the latest session."""
-    runtime = RuntimeApp()
-    workspace = runtime.workspace
+    workspace = Path.cwd().resolve()
     previous = load_latest_session(workspace)
     if not previous or not previous.transcript_path:
         console.print("[red]No recent session transcript found to compact.[/red]")
