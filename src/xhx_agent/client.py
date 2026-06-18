@@ -430,6 +430,11 @@ class OpenAICompatClient(LLMClient):
         """
         converted: list[dict[str, Any]] = []
         for t in tools:
+            # 兼容两种输入：已是 Chat Completions 嵌套格式（{"type":"function","function":{...}}）
+            # 则原样透传；扁平格式（{"name":...,"input_schema"/"parameters":...}）再包一层。
+            if "function" in t:
+                converted.append(t)
+                continue
             converted.append(
                 {
                     "type": "function",
