@@ -162,7 +162,7 @@ def execute_action_sync(action: Action, ctx: HookContext) -> ActionResult:
     pre_tool_use / post_tool_use hook）。
     """
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         # 无运行中的事件循环 → 创建新的
         return asyncio.run(execute_action(action, ctx))

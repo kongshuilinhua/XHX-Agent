@@ -88,7 +88,7 @@ class PermissionChecker:
         if self.mode == PermissionMode.PLAN:
             if tool_name in _PLAN_MODE_ALLOWED_TOOLS:
                 return Decision(effect="allow", reason="Plan mode: allowed tool")
-            if tool_name in ("WriteFile", "EditFile", "apply_patch") and content:
+            if tool_name in ("WriteFile", "EditFile", "apply_patch") and content:  # noqa: SIM102 保持嵌套以提升可读性
                 if self._is_plan_file(content):
                     return Decision(effect="allow", reason="Plan mode: plan file write")
 
@@ -158,6 +158,4 @@ class PermissionChecker:
             except Exception:
                 pass
         # 策略 4: plan_file_path 是目标路径的前缀
-        if self.plan_file_path and path.startswith(self.plan_file_path):
-            return True
-        return False
+        return bool(self.plan_file_path and path.startswith(self.plan_file_path))

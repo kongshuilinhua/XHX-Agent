@@ -144,7 +144,7 @@ def find_relevant_memories(
     limit: int = 5,
 ) -> list[dict[str, str]]:
     """查找相关记忆（委托给 recall_memories）。"""
-    from pathlib import Path as P
+    from pathlib import Path as P  # noqa: N817 P 为局部 Path 短别名
 
     ws = P(workspace) if not isinstance(workspace, P) else workspace
     records = recall_memories(ws, task, limit=limit)

@@ -98,7 +98,7 @@ class SafeExecutionKernel:
         # 1. 策略判定（通过 PermissionChecker 五层检查）
         # 旧值映射：auto→default（仅读自动放行由 decide_with_checker 的 ask 回退处理）
         #           bypass→bypassPermissions
-        _MODE_ALIAS: dict[str, str] = {"auto": "default", "bypass": "bypassPermissions"}
+        _MODE_ALIAS: dict[str, str] = {"auto": "default", "bypass": "bypassPermissions"}  # noqa: N806 局部常量保持大写惯例
         from xhx_agent.safety.permissions.modes import resolve_permission_mode
 
         mode_raw = context.permission_mode or "default"

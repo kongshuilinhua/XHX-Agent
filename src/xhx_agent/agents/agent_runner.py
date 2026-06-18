@@ -200,7 +200,7 @@ class StreamCollector:
                 yield ThinkingText(text=event.text)
             elif isinstance(event, ThinkingComplete):
                 self.response.thinking_blocks.append(ThinkingBlock(thinking=event.thinking, signature=event.signature))
-            elif isinstance(event, ToolCallStart) or isinstance(event, ToolCallDelta):
+            elif isinstance(event, (ToolCallStart, ToolCallDelta)):
                 pass
             elif isinstance(event, ToolCallComplete):
                 self.response.tool_calls.append(event)
@@ -378,7 +378,7 @@ class Agent:
         import datetime
         import random
 
-        _ADJECTIVES = [
+        _ADJECTIVES = [  # noqa: N806 局部常量保持大写惯例
             "bold",
             "bright",
             "calm",
@@ -404,7 +404,7 @@ class Agent:
             "swift",
             "vivid",
         ]
-        _NOUNS = [
+        _NOUNS = [  # noqa: N806 局部常量保持大写惯例
             "sketch",
             "draft",
             "spark",

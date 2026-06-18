@@ -120,10 +120,7 @@ def is_safe_command(command: str) -> bool:
     for ch in ("|", ";", "&&", ">", "$(", "`"):
         if ch in trimmed:
             return False
-    for safe in _SAFE_COMMANDS:
-        if trimmed == safe or trimmed.startswith(safe + " "):
-            return True
-    return False
+    return any(trimmed == safe or trimmed.startswith(safe + " ") for safe in _SAFE_COMMANDS)
 
 
 class DangerousCommandDetector:

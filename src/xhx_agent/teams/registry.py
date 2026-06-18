@@ -33,7 +33,7 @@ class AgentNameRegistry:
     def resolve(self, name_or_id: str) -> str | None:
         if name_or_id in self._names:
             return self._names[name_or_id]
-        for n, aid in self._names.items():
+        for _n, aid in self._names.items():
             if aid == name_or_id:
                 return aid
         return None

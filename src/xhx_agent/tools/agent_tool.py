@@ -10,6 +10,7 @@ from xhx_agent.tools.base import Tool, ToolResult
 if TYPE_CHECKING:
     from xhx_agent.agent import Agent
     from xhx_agent.agents.loader import AgentLoader
+    from xhx_agent.agents.parser import AgentDef
     from xhx_agent.agents.task_manager import TaskManager
     from xhx_agent.agents.trace import TraceManager
     from xhx_agent.client import LLMClient

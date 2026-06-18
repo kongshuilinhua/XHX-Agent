@@ -45,9 +45,7 @@ class Hook:
     executed: bool = False
 
     def should_run(self) -> bool:
-        if self.once and self.executed:
-            return False
-        return True
+        return not (self.once and self.executed)
 
     def mark_executed(self) -> None:
         self.executed = True

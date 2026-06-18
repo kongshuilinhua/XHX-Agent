@@ -80,10 +80,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
             bold = "[bold]" if i == cursor else ""
             end_bold = "[/]" if i == cursor else ""
 
-            if is_multi:
-                check = "● " if self._selected[self._q_idx].get(i) else "○ "
-            else:
-                check = ""
+            check = ("● " if self._selected[self._q_idx].get(i) else "○ ") if is_multi else ""
 
             desc_part = f" — [dim]{desc}[/]" if desc else ""
             lines.append(f"{prefix}{check}{bold}{label}{end_bold}{desc_part}")

@@ -6,7 +6,12 @@ import random
 import re
 import time as _time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xhx_agent.askuser_dialog import InlineAskUserWidget
+    from xhx_agent.permission_dialog import InlinePermissionWidget
+    from xhx_agent.plan_dialog import InlinePlanWidget
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -124,7 +129,7 @@ def expand_at_refs(text: str, work_dir: str) -> str:
         if not os.path.isfile(full_path):
             return m.group(0)
         try:
-            content = open(full_path, encoding="utf-8", errors="replace").read(MAX_AT_REF_BYTES)
+            content = open(full_path, encoding="utf-8", errors="replace").read(MAX_AT_REF_BYTES)  # noqa: SIM115 句柄需在方法间持有,不能用 with
             return f"[File: {rel_path}]\n```\n{content}\n```"
         except Exception:
             return m.group(0)
@@ -166,7 +171,7 @@ class ChatInput(TextArea):
         if self._history_file.exists():
             try:
                 lines = self._history_file.read_text(encoding="utf-8").splitlines()
-                self._history = [l for l in lines if l.strip()]
+                self._history = [l for l in lines if l.strip()]  # noqa: E741 单字母变量沿用既有渲染逻辑命名
             except Exception:
                 pass
 
@@ -1200,7 +1205,6 @@ class XHXApp(App):
                 block._render_expanded()
 
         for summary in self.query(ToolGroupSummary):
-            was_expanded = summary._expanded
             summary.toggle()
             parent = summary.parent
             if parent:
@@ -2016,7 +2020,7 @@ def run_textual_console(
 
     将 XHX-Agent 的 profile 配置转换为新 TUI 需要的 ProviderConfig。
     """
-    from pathlib import Path as P
+    from pathlib import Path as P  # noqa: N817 P 为局部 Path 短别名
 
     from xhx_agent.config import ProviderConfig
     from xhx_agent.runtime.profiles import get_profile

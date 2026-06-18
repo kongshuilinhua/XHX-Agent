@@ -18,10 +18,7 @@ def format_task_notification(task: BackgroundTask) -> str:
     elapsed = ""
     if task.end_time is not None:
         secs = task.end_time - task.start_time
-        if secs >= 60:
-            elapsed = f"{secs / 60:.1f}m"
-        else:
-            elapsed = f"{secs:.1f}s"
+        elapsed = f"{secs / 60:.1f}m" if secs >= 60 else f"{secs:.1f}s"
 
     tokens = ""
     if task.progress.input_tokens or task.progress.output_tokens:

@@ -108,7 +108,7 @@ def register_skill_tools(skill_dir: Path, registry: object) -> int:
                 destructive=False,
                 network=False,
                 is_command=False,
-                runner=lambda ctx, args, impl=impl: _run_skill_tool(tool_name, impl, args),
+                runner=lambda ctx, args, impl=impl: _run_skill_tool(tool_name, impl, args),  # noqa: B023 闭包即时调用,循环变量绑定无误
             )
         except Exception as e:
             log.warning("Failed to register skill tool '%s': %s", tool_name, e)

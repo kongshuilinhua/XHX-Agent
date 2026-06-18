@@ -24,10 +24,11 @@ from rich.console import Console
 
 from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
 from xhx_agent.runtime.config import global_config_path, load_config, write_global_config
-from xhx_agent.runtime.headless import run_headless_task
+from xhx_agent.runtime.headless import HeadlessResult, run_headless_task
 from xhx_agent.runtime.init import init_project
 from xhx_agent.runtime.profiles import global_profiles_path, load_profiles, write_global_profiles
 from xhx_agent.runtime.session import (
+    SessionEntry,
     format_follow_up,
     load_latest_session,
     load_session,
@@ -156,7 +157,7 @@ def repo_index(
             console.print(f"  - {path}")
 
 
-def _record_run_session(workspace: Path, task: str, result: object) -> object:
+def _record_run_session(workspace: Path, task: str, result: HeadlessResult) -> SessionEntry:
     """把一次 headless 运行落入会话索引，让 `xhx sessions` / --continue / --resume 仍可用。
 
     用一个最小的 duck-typed 适配对象对接 record_session，避免依赖旧栈的重型 RunResult。
@@ -168,12 +169,12 @@ def _record_run_session(workspace: Path, task: str, result: object) -> object:
     runs_dir = workspace / ".xhx" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     summary_file = runs_dir / f"{run_id}.md"
-    summary_text = getattr(result, "summary", "") or getattr(result, "error", "") or ""
+    summary_text = result.summary or result.error or ""
     summary_file.write_text(summary_text, encoding="utf-8")
 
     adapter = SimpleNamespace(
         run_id=run_id,
-        status=getattr(result, "status", "completed"),
+        status=result.status,
         verification="",
         changed_files=[],
         summary_path=summary_file.relative_to(workspace).as_posix(),
@@ -181,7 +182,7 @@ def _record_run_session(workspace: Path, task: str, result: object) -> object:
         mode="",
         messages=None,
     )
-    return record_session(workspace, task, adapter)
+    return record_session(workspace, task, adapter)  # type: ignore[arg-type]  # duck-typed 适配对象
 
 
 @app.command("run")

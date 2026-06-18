@@ -66,7 +66,7 @@ class HookEngine:
 
         内部用 ``asyncio.run`` 创建临时事件循环。"""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # 已有运行中的事件循环 → 在新线程跑
             import concurrent.futures
 

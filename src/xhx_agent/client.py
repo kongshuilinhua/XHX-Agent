@@ -109,7 +109,7 @@ class LLMClient(ABC):
     ) -> AsyncIterator[StreamEvent]:
         yield TextDelta("")
 
-    def set_max_output_tokens(self, tokens: int) -> None:
+    def set_max_output_tokens(self, tokens: int) -> None:  # noqa: B027 抽象基类的可选 no-op 钩子,子类按需覆盖
         pass
 
 
@@ -520,7 +520,7 @@ class OpenAICompatClient(LLMClient):
                             yield ToolCallDelta(text=tc.function.arguments)
 
                 # --- 结束原因 ---
-                if choice.finish_reason in ("tool_calls", "stop"):
+                if choice.finish_reason in ("tool_calls", "stop"):  # noqa: SIM102 保持嵌套以分别处理两种 finish_reason
                     if choice.finish_reason == "tool_calls":
                         for _idx, call in sorted(active_calls.items()):
                             try:

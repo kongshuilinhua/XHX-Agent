@@ -667,7 +667,7 @@ def _compute_keep_start_index(messages: list[Message]) -> int:
             break
 
         kept_tokens += tok
-        kept_count += 1
+        kept_count += 1  # noqa: SIM113 索引在循环外也被引用,不宜用 enumerate
         keep_start = i
 
         # 保底条件已满足（token 下限或消息条数下限达到其一）：
@@ -787,7 +787,7 @@ async def auto_compact(
     max_retries = 3
     llm_output: str | None = None
 
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         try:
             from xhx_agent.tools.base import StreamEnd, TextDelta
 

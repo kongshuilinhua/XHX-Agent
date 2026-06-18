@@ -58,7 +58,7 @@ class TestTuiImports:
         from xhx_agent.commands.completion import CompletionPopup
         from xhx_agent.memory import SessionManager
 
-        s = SessionManager()
+        SessionManager()
         p = CompletionPopup()
         assert p.is_visible is False
         assert hasattr(p, "hide")
