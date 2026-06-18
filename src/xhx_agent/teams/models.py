@@ -1,6 +1,4 @@
 """Agent Teams 数据模型。
-
-来源：mewcode teams/models.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

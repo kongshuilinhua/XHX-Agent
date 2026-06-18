@@ -1,6 +1,4 @@
 """六级权限模式矩阵。
-
-来源：mewcode permissions/modes.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ ToolCategory = Literal["read", "write", "command"]
 
 
 class PermissionMode(StrEnum):
-    """六种权限模式，与 mewcode / Claude Code 对齐。"""
+    """六种权限模式，与 Claude Code 对齐。"""
 
     DEFAULT = "default"          # 读自动放行，写/命令需确认
     ACCEPT_EDITS = "acceptEdits" # 读+写自动放行，命令需确认

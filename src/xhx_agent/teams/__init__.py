@@ -1,6 +1,4 @@
 """Agent Teams 系统：协调者模式多 Agent 协作。
-
-来源：mewcode teams/，适配 XHX-Agent（仅 in-process 后端）。
 """
 
 from xhx_agent.teams.coordinator import get_coordinator_system_prompt

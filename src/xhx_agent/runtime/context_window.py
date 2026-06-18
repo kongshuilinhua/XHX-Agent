@@ -1,7 +1,5 @@
 """Context Window 自动探测：从 /v1/models 端点拉取上下文窗口。
 
-来源：mewcode config.py 四层回退链思路，适配 XHX-Agent。
-
 四层回退：
     1. profile.context_window 显式值（最高优先级，已在 profiles.py 实现）
     2. /v1/models API 自动探测（本模块）

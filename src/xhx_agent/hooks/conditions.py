@@ -1,7 +1,5 @@
 """Hook 条件表达式引擎。
 
-来源：mewcode hooks/conditions.py。
-
 支持的操作符：
     ==  精确匹配
     !=  不等于

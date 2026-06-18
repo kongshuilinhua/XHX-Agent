@@ -1,6 +1,4 @@
 """Hook 动作执行器：command / prompt / http / agent。
-
-来源：mewcode hooks/executors.py，适配 XHX-Agent（新增同步包装器）。
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# 异步执行器（原始 mewcode 接口）
+# 异步执行器（原始接口）
 # ---------------------------------------------------------------------------
 
 

@@ -17,7 +17,7 @@ from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from xhx_agent.cli.completion import XhxCompleter
-from xhx_agent.orchestrators.base import PlanReview
+from xhx_agent.runtime.types import PlanReview
 from xhx_agent.runtime.app import ManualRepairResult, ManualVerificationResult, RunResult, RuntimeApp
 from xhx_agent.runtime.events import RuntimeEvent
 from xhx_agent.runtime.profiles import load_profiles
@@ -887,7 +887,7 @@ class TextualCommandConsoleApp(App[None]):
         result = self.command_registry.execute(self, command_line)
         if result is None:
             from xhx_agent.commands.parser import parse_command
-            command, _ = parse_command(command_line)
+            command, _, _ = parse_command(command_line)
             self.append_message(f"system> Unknown command: {command}")
             return True
         # execute 对未知命令返回字符串消息，显式 append 后返回 True

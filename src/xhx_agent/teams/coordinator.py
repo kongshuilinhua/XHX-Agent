@@ -1,4 +1,4 @@
-"""Coordinator 模式系统提示词。来源：mewcode teams/coordinator.py。"""
+"""Coordinator 模式系统提示词。"""
 
 from __future__ import annotations
 

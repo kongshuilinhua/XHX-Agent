@@ -2,9 +2,7 @@
 
 支持两种 Skill 格式：
     - 旧格式：目录内有 SKILL.md（含 triggers frontmatter），无 name 也适用
-    - 新格式：SKILL.md（含 name/description/mode/context frontmatter），来源 mewcode
-
-来源：mewcode skills/loader.py，适配 XHX-Agent。
+    - 新格式：SKILL.md（含 name/description/mode/context frontmatter）
 """
 
 from __future__ import annotations
@@ -148,6 +146,11 @@ class SkillLoader:
                     logger.warning("Hot reload failed for %s: %s", name, e)
 
         return sd
+
+    def get_catalog(self) -> list[tuple[str, str]]:
+        """返回 (name, description) 的技能目录列表。"""
+        all_skills = self.load_all()
+        return [(name, sd.description or "") for name, sd in all_skills.items()]
 
     # ------------------------------------------------------------------
     # internal

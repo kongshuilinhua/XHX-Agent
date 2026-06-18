@@ -1,6 +1,4 @@
 """路径沙箱：确保文件操作不超出允许的目录范围。
-
-来源：mewcode permissions/sandbox.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """LLM 自动记忆提取：分析对话，提取值得长期记忆的事实。
 
-来源：mewcode memory/auto_memory.py，与 XHX-Agent 现有的确定性召回互补：
+与现有的确定性召回互补：
 - recall.py → 确定性 token 重叠召回（快速、可复现、零成本）
 - auto_memory.py → LLM 深度分析提取（语义理解、跨会话关联）
 

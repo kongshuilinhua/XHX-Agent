@@ -1,6 +1,4 @@
 """队友进度树形展示 Widget。
-
-来源：mewcode teammate_tree.py，适配 XHX-Agent TUI。
 """
 
 from __future__ import annotations

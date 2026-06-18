@@ -1,6 +1,4 @@
 """Agent 定义解析器：Markdown + YAML frontmatter → AgentDef。
-
-来源：mewcode agents/parser.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

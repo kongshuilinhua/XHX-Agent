@@ -1,6 +1,4 @@
 """目录型 Skill：通过 tool.json + references/*.py 定义自定义工具。
-
-来源：mewcode skills/directory.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

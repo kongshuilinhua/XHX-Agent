@@ -1,6 +1,4 @@
 """Agent 加载器：三层加载（项目 > 用户 > 内置）+ 热重载。
-
-来源：mewcode agents/loader.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

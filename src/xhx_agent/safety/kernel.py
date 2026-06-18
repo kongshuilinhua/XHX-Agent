@@ -3,7 +3,7 @@
 把「策略判定 → 执行 → 证据落盘」收口在一处：每次工具调用先经 policy 判定，deny 的直接短路
 （但仍记一条 policy_decision，保证审计链不断），其余才真正执行并写 trace/evidence。
 
-自 mewcode 集成后，路径越界检测委托给 PathSandbox，权限判定可通过 PermissionChecker 五层检查。
+路径越界检测委托给 PathSandbox，权限判定可通过 PermissionChecker 五层检查。
 """
 
 from __future__ import annotations

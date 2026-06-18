@@ -1,4 +1,4 @@
-"""TeamManager：团队生命周期管理。来源：mewcode teams/manager.py。"""
+"""TeamManager：团队生命周期管理。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from xhx_agent.teams.shared_task import SharedTaskStore
 class TeamManager:
     """管理 Agent 团队的生命周期。"""
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self._teams: dict[str, AgentTeam] = {}
         self._task_stores: dict[str, SharedTaskStore] = {}
         self._mailboxes: dict[str, Mailbox] = {}

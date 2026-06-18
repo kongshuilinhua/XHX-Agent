@@ -60,7 +60,7 @@ class CommandRegistry:
         """解析并执行一条命令。返回 handler 的返回值。"""
         from xhx_agent.commands.parser import parse_command
 
-        command, argument = parse_command(command_line)
+        command, argument, _ = parse_command(command_line)
         if not command:
             return None
 
@@ -94,6 +94,18 @@ class CommandRegistry:
             for info in self._commands.values()
             if info.name.startswith(prefix)
         ]
+
+    def register_sync(self, command: Any) -> None:
+        """同步注册一个 Command 对象（新 TUI 兼容接口）。"""
+        if command is None:
+            return
+        self.register(
+            name=command.name,
+            description=command.description,
+            handler=command.handler or (lambda app, arg: None),
+            needs_arg=bool(command.arg_prompt),
+            arg_hint=command.arg_prompt or "",
+        )
 
     def __len__(self) -> int:
         return len(self._commands)

@@ -1,6 +1,4 @@
 """Agent 定义系统：Markdown + YAML frontmatter 格式的 Agent 定义 + 三层加载。
-
-来源：mewcode agents/，适配 XHX-Agent。
 """
 
 from xhx_agent.agents.loader import AgentLoader

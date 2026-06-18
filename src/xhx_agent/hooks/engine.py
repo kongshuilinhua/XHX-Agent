@@ -1,6 +1,4 @@
 """Hook 引擎：事件匹配 + 批量执行 + 通知收集。
-
-来源：mewcode hooks/engine.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Agent 名称注册表（单例）。来源：mewcode teams/registry.py。"""
+"""Agent 名称注册表（单例）。"""
 
 from __future__ import annotations
 

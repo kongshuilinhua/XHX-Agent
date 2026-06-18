@@ -133,3 +133,31 @@ def render_recalled_memories(workspace: Path, query: str, *, limit: int = 5) -> 
         if body:
             lines.append(f"  {body}")
     return "\n".join(lines)
+
+
+# ---- 桥接：新 TUI 需要的额外接口 ----
+
+
+def find_relevant_memories(
+    workspace: str | Path,
+    task: str,
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    """查找相关记忆（委托给 recall_memories）。"""
+    from pathlib import Path as P
+    ws = P(workspace) if not isinstance(workspace, P) else workspace
+    records = recall_memories(ws, task, limit=limit)
+    return [
+        {"name": r.name, "description": r.description, "body": r.content}
+        for r in records
+    ]
+
+
+def render_reminder(memories: list[dict[str, str]]) -> str:
+    """渲染记忆为提醒文本。"""
+    if not memories:
+        return ""
+    lines = ["## Recalled memory"]
+    for m in memories:
+        lines.append(f"- **{m.get('name', '')}**: {m.get('description', '')}")
+    return "\n".join(lines)

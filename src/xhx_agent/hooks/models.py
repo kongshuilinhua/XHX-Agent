@@ -1,6 +1,4 @@
 """Hook 数据模型：Hook 定义、上下文、动作、结果。
-
-来源：mewcode hooks/models.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

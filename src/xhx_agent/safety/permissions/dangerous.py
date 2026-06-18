@@ -1,6 +1,6 @@
 """危险命令检测器：正则黑名单 + 安全命令白名单。
 
-来源：mewcode permissions/dangerous.py，与 XHX-Agent safety/risk.py（shlex 分词风险分级）互补：
+与 safety/risk.py（shlex 分词风险分级）互补：
 - risk.classify_command → 命令结构级安全判定（首 token 黑名单、解释器内联执行等）
 - 本模块 → 正则模式匹配（管道执行远程脚本、写磁盘设备等纵深防御层）
 

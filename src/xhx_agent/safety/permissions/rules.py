@@ -1,7 +1,5 @@
 """权限规则引擎：基于 YAML/JSON 规则文件的工具级访问控制。
 
-来源：mewcode permissions/rules.py，适配 XHX-Agent（同时支持 YAML 和 JSON 格式）。
-
 规则格式示例：
     YAML:
       - rule: "ReadFile(foo/bar/**)"

@@ -33,7 +33,7 @@ from xhx_agent.runtime.session import (
     record_session,
 )
 from xhx_agent.safety.policy import PolicyDecision
-from xhx_agent.tui.textual_app import run_textual_console
+from xhx_agent.tui.app import run_textual_console
 
 
 def _ensure_utf8_console() -> None:
@@ -62,11 +62,19 @@ def _ensure_utf8_console() -> None:
             pass
 
 
-app = typer.Typer(help="xhx-agent local coding agent CLI.")
+app = typer.Typer(help="xhx-agent local coding agent CLI.", invoke_without_command=True)
 config_app = typer.Typer(help="Manage xhx-agent configuration.")
 app.add_typer(config_app, name="config")
 _ensure_utf8_console()
 console = Console()
+
+
+@app.callback()
+def _default_callback() -> None:
+    """无子命令时默认启动交互式 TUI。"""
+    workspace = Path.cwd()
+    config = load_config(workspace)
+    run_textual_console(workspace=workspace, profile=config.default_profile)
 
 
 @app.command("init")
@@ -256,17 +264,7 @@ def sessions() -> None:
 def chat(
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
 ) -> None:
-    workspace = Path.cwd()
-    config = load_config(workspace)
-    active_profile = profile or config.default_profile
-    run_textual_console(workspace=workspace, profile=active_profile)
-
-
-@app.command("tui")
-def tui(
-    fullscreen: Annotated[bool, typer.Option("--fullscreen", help="Deprecated: fullscreen is now the default.")] = True,
-    profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
-) -> None:
+    """启动交互式 TUI 终端（默认入口）。"""
     workspace = Path.cwd()
     config = load_config(workspace)
     active_profile = profile or config.default_profile
@@ -463,7 +461,7 @@ def compact(
         console.print("[red]Summarize client capability not found on active profile.[/red]")
         return
 
-    from xhx_agent.orchestrators.compaction import compact_messages
+    from xhx_agent.context.compaction import compact_messages
 
     len_before = len(messages)
     try:

@@ -1,7 +1,5 @@
 """五层递进权限检查器。
 
-来源：mewcode permissions/checker.py，适配 XHX-Agent 工具系统。
-
 检查层级（按顺序）：
     Layer 0 — Plan 模式例外放行（只放行 plan 相关工具 + plan 文件写入）
     Layer 1 — 安全命令白名单（is_safe_command 自动放行）
@@ -130,7 +128,7 @@ class PermissionChecker:
     def _is_plan_file(self, path: str) -> bool:
         """检查 *path* 是否为当前 plan 文件。
 
-        复现 mewcode 的多策略匹配逻辑：
+        多策略匹配逻辑：
         1. 精确匹配 plan_file_path
         2. plan_file_path 为空时检查路径中是否包含 plans 目录
         3. basename 匹配

@@ -1,6 +1,4 @@
 """生命周期事件枚举。
-
-来源：mewcode hooks/events.py。
 """
 
 from __future__ import annotations

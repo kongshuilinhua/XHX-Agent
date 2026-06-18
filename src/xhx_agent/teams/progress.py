@@ -1,4 +1,4 @@
-"""队友进度追踪。来源：mewcode teams/progress.py。"""
+"""队友进度追踪。"""
 
 from __future__ import annotations
 

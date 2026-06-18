@@ -1,4 +1,4 @@
-"""In-Process 队友生成。来源：mewcode teams/spawn_inprocess.py。
+"""In-Process 队友生成。
 
 仅支持 in-process 后端（Windows 兼容）。"""
 

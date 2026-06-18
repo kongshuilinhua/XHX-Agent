@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import subprocess
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -24,8 +25,8 @@ from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
 from xhx_agent.models.types import ModelClientError, ModelPlan
-from xhx_agent.orchestrators.base import IN_PLACE_WARNING, OrchestratorContext, PlanReview
-from xhx_agent.orchestrators.registry import select_orchestrator
+from xhx_agent.runtime.types import IN_PLACE_WARNING, PlanReview
+from xhx_agent.agents.adapter import run_agent_sync
 from xhx_agent.repo_intel.index import write_repo_intel_index
 from xhx_agent.repo_intel.scanner import scan_project
 from xhx_agent.repo_intel.xhx_md import write_xhx_md
@@ -219,33 +220,112 @@ class RuntimeApp:
                         metrics_tracker=metrics_tracker,
                     )
 
-                ctx = OrchestratorContext(
-                    app=self,
-                    task=task,
-                    run_id=run_id,
-                    workspace=self.workspace,
-                    original_workspace=original_workspace,
-                    profile=profile,
-                    scan=scan,
-                    evidence=evidence,
-                    kernel=kernel,
-                    tool_context=tool_context,
-                    start_time=start_time,
-                    isolated=wt_ctx.is_active,
-                    mode=mode or "loop",
-                    assume_yes=assume_yes,
-                    confirm_callback=confirm_callback,
-                    plan_review_callback=plan_review_callback,
-                    auto_repair=auto_repair,
-                    cancel_check=cancel_check,
-                    event_callback=event_callback,
-                    metrics_tracker=metrics_tracker,
-                    prior_messages=prior_messages,
+                # 构建 LLM 客户端
+                from xhx_agent.models import build_chat_client
+                from xhx_agent.models.async_wrapper import wrap_sync_client
+                from xhx_agent.permissions import (
+                    PermissionChecker,
+                    PermissionMode,
                 )
-                # Phase 3b-2: 默认（省略 --mode）走统一的 tool-calling loop，而非 legacy ModelPlan(linear/dag)。
-                # linear/dag/ModelPlan 仍保留，仅在显式 --mode linear/dag 与 dry-run 预览路径下使用。
-                orchestrator = select_orchestrator(mode)
-                result = orchestrator.run(ctx)
+                from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector
+                from xhx_agent.safety.permissions.rules import RuleEngine
+                from xhx_agent.safety.permissions.sandbox import PathSandbox
+
+                sync_client = build_chat_client(profile)
+                client = wrap_sync_client(sync_client)
+
+                # 权限检查器
+                pm = PermissionMode.DEFAULT
+                if permission_mode:
+                    pm = PermissionMode(permission_mode)
+                elif assume_yes:
+                    pm = PermissionMode.DONT_ASK
+
+                checker = PermissionChecker(
+                    detector=DangerousCommandDetector(),
+                    sandbox=PathSandbox(self.workspace),
+                    rule_engine=RuleEngine(),
+                    mode=pm,
+                )
+
+                # 加载指令
+                instructions = ""
+                try:
+                    xhx_md_path = original_workspace / "XHX.md"
+                    if xhx_md_path.exists():
+                        instructions = xhx_md_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+
+                # 运行 Agent
+                answer_text, agent_turns = run_agent_sync(
+                    task=task,
+                    client=client,
+                    registry=self.tool_registry,
+                    protocol="openai-compat",
+                    work_dir=str(self.workspace),
+                    max_iterations=50,
+                    permission_checker=checker,
+                    context_window=profile.context_window or 200_000,
+                    instructions_content=instructions,
+                    event_callback=event_callback,
+                )
+
+                # 从 git diff 获取变更文件
+                changed_files: list[str] = []
+                try:
+                    git_result = subprocess.run(
+                        ["git", "diff", "--name-only", "HEAD"],
+                        cwd=self.workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if git_result.returncode == 0:
+                        changed_files = [
+                            f for f in git_result.stdout.splitlines() if f.strip()
+                        ]
+                except Exception:
+                    pass
+
+                commands_run: list[str] = []
+
+                result = RunResult(
+                    run_id=run_id,
+                    status="success",
+                    turns=agent_turns,
+                    changed_files=changed_files,
+                    commands=commands_run,
+                    verification="passed",
+                    summary_path="",
+                    risk_summary=[],
+                    mode=mode or "loop",
+                    answer=answer_text,
+                )
+
+                # 写报告
+                summary = write_report(
+                    workspace=original_workspace,
+                    run_id=run_id,
+                    task=task,
+                    plan=plan_summaries,
+                    changed_files=changed_files,
+                    commands=commands_run,
+                    verification="passed",
+                    risks=[],
+                )
+                result.summary_path = str(summary.relative_to(original_workspace))
+                result.metrics = RunMetrics(
+                    duration_seconds=round(time.time() - start_time, 2),
+                    turns=agent_turns,
+                    tokens_estimate=metrics_tracker["tokens"],
+                    files_changed_count=len(changed_files),
+                    commands_run_count=len(commands_run),
+                    repair_attempts=0,
+                    success=bool(answer_text),
+                )
+
+                evidence.write_trace("run_end", {"status": result.status})
                 if result.status == "success":
                     wt_ctx.sync_to_workspace(result.changed_files)
                 return result

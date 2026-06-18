@@ -1,0 +1,43 @@
+"""Agent 系统桥接：从 agents/agent_runner 重导出核心类。"""
+
+from xhx_agent.agents.agent_runner import (
+    Agent,
+    AgentEvent,
+    CompactNotification,
+    ErrorEvent,
+    HookEvent,
+    LoopComplete,
+    PermissionRequest,
+    PermissionResponse,
+    RetryEvent,
+    StreamText,
+    ThinkingText,
+    ToolResultEvent,
+    ToolUseEvent,
+    TurnComplete,
+    UsageEvent,
+    StreamingExecutor,
+    cancel_reason,
+    partition_tool_calls,
+)
+
+__all__ = [
+    "Agent",
+    "AgentEvent",
+    "CompactNotification",
+    "ErrorEvent",
+    "HookEvent",
+    "LoopComplete",
+    "PermissionRequest",
+    "PermissionResponse",
+    "RetryEvent",
+    "StreamText",
+    "StreamingExecutor",
+    "ThinkingText",
+    "ToolResultEvent",
+    "ToolUseEvent",
+    "TurnComplete",
+    "UsageEvent",
+    "cancel_reason",
+    "partition_tool_calls",
+]

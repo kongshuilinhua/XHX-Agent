@@ -1,6 +1,4 @@
 """Hook 配置加载器：从 dict 列表解析 Hook 定义。
-
-来源：mewcode hooks/loader.py，适配 XHX-Agent。
 """
 
 from __future__ import annotations

@@ -365,20 +365,23 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "dispatch": ToolDefinition(
         name="dispatch",
         description=(
-            "把一个【聚焦、需读多个文件的多步调查】委派给隔离子 agent：它有自己的上下文、受限只读工具、"
+            "把一个【聚焦、需读多个文件的多步调查】委派给隔离子 agent：它有自己的上下文、受限工具、"
             "限定轮数，跑完只回浓缩结论，从而不污染你的主上下文。"
             "适合：摸清不熟悉的模块、并行探索多个独立问题。"
             "不适合：读单个已知文件（直接用 read_file 即可）。"
-            "agent_type='explore'（只读：search/read_file）做调查；"
-            "agent_type='edit'（可写：search/read_file/apply_patch）在隔离 git worktree 里改代码，"
-            "改完自动串行合并回工作区并对冲突文件做检测——适合可并行、互不重叠的修改子任务。"
+            "agent_type 从 Agent 定义文件中动态加载（项目 .xhx/agents/ > 用户 ~/.xhx/agents/ > 内置）："
+            "内置 'Explore'（只读：search/read_file）做调查；"
+            "内置 'Plan'（只读：search/read_file/repo_query）做架构规划；"
+            "内置 'general-purpose'（全部工具）做通用任务；"
+            "agent_type='edit' 在隔离 git worktree 里改代码，改完自动串行合并回工作区并冲突检测。"
+            "用户可在 .xhx/agents/ 下放 .md 文件自定义任意 agent 类型。"
         ),
         parameters={
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "子任务一句话描述（给人看的）"},
                 "prompt": {"type": "string", "description": "给子 agent 的完整指令"},
-                "agent_type": {"type": "string", "enum": ["explore", "edit"], "default": "explore"},
+                "agent_type": {"type": "string", "default": "Explore", "description": "Agent 类型名，对应 .md 定义文件中的 name 字段"},
             },
             "required": ["prompt"],
         },
@@ -439,6 +442,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolRunner] = {}
         self._definitions: dict[str, ToolDefinition] = {}
+        self._disabled: set[str] = set()
 
     def register(self, name: ToolName, runner: ToolRunner) -> None:
         self._tools[name] = runner
@@ -456,6 +460,10 @@ class ToolRegistry:
     def definition(self, name: str) -> ToolDefinition | None:
         return self._definitions.get(name)
 
+    def get(self, name: str) -> ToolDefinition | None:
+        """新 API 兼容：按名称获取工具定义。"""
+        return self._definitions.get(name)
+
     @property
     def names(self) -> set[str]:
         return set(self._tools)
@@ -466,6 +474,23 @@ class ToolRegistry:
             {"type": "function", "function": {"name": d.name, "description": d.description, "parameters": d.parameters}}
             for d in self._definitions.values()
         ]
+
+    def get_all_schemas(self, protocol: str = "openai-compat") -> list[dict[str, Any]]:
+        """新 API 兼容：同 tool_schemas。"""
+        return self.tool_schemas()
+
+    def list_tools(self) -> list[ToolDefinition]:
+        """新 API 兼容：列出所有已注册工具。"""
+        return list(self._definitions.values())
+
+    def disable(self, name: str) -> None:
+        self._disabled.add(name)
+
+    def enable(self, name: str) -> None:
+        self._disabled.discard(name)
+
+    def is_enabled(self, name: str) -> bool:
+        return name not in self._disabled
 
     def validate_plan(self, plan: ModelPlan) -> None:
         for index, step in enumerate(plan.steps, start=1):

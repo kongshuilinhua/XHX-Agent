@@ -1,6 +1,4 @@
 """Agent 工具过滤：按定义限制工具集。
-
-来源：mewcode agents/tool_filter.py，适配 XHX-Agent 的 ToolRegistry。
 """
 
 from __future__ import annotations

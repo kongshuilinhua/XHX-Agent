@@ -1,6 +1,6 @@
 """权限子系统：6 模式矩阵 + 五层递进检查 + YAML/JSON 规则引擎 + 路径沙箱。
 
-从 mewcode permissions/ 迁移，与 XHX-Agent 现有的 risk.py（命令风险分级）互补：
+与现有的 risk.py（命令风险分级）互补：
 - risk.py   → 命令本身是否危险（安全执行边界）
 - permissions/ → 工具调用应该放行/拒绝/询问（用户授权边界）
 """
