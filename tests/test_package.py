@@ -8,7 +8,6 @@ def test_package_exports() -> None:
     assert xhx_agent.__version__ == "1.0.0"
 
     # Verify key exports are accessible and not None
-    assert xhx_agent.RuntimeApp is not None
     assert xhx_agent.RunResult is not None
     assert xhx_agent.ToolRegistry is not None
     assert xhx_agent.ToolContext is not None
@@ -29,7 +28,6 @@ def test_package_exports() -> None:
 def test_package_all_attribute() -> None:
     # Verify __all__ list matches exposed names
     expected = [
-        "RuntimeApp",
         "RunResult",
         "ToolRegistry",
         "ToolContext",
