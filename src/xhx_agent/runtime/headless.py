@@ -14,6 +14,7 @@ from typing import Any
 from xhx_agent.agents.agent_runner import Agent
 from xhx_agent.client import LLMClient, create_client
 from xhx_agent.config import ProviderConfig
+from xhx_agent.hooks import HookEngine, default_verification_hook
 from xhx_agent.memory import MemoryManager, load_instructions
 from xhx_agent.permissions import (
     DangerousCommandDetector,
@@ -35,6 +36,7 @@ class HeadlessResult:
     input_tokens: int = 0
     output_tokens: int = 0
     error: str = ""
+    verification: str = ""  # 启用 verify 时的验证结论（空=未启用/无可验证项）
 
 
 def _build_permission_checker(work_dir: Path, mode: PermissionMode) -> PermissionChecker:
@@ -59,10 +61,12 @@ def build_headless_agent(
     permission_mode: PermissionMode = PermissionMode.DEFAULT,
     max_iterations: int = 50,
     client: LLMClient | None = None,
+    verify: bool = False,
 ) -> Agent:
     """构造一个可在非交互场景下跑到完成的 Agent。
 
     ``client`` 留作注入口：默认从 profile 解析真实模型客户端，测试时可直接注入。
+    ``verify=True`` 时挂上内置 verification 钩子，agent 停止时自动跑变更相关的定向测试。
     """
     ws = Path(workspace).resolve()
     provider: ProviderConfig | None = None
@@ -79,6 +83,7 @@ def build_headless_agent(
 
     registry = create_default_registry(workspace=str(ws))
     checker = _build_permission_checker(ws, permission_mode)
+    hook_engine = HookEngine([default_verification_hook()]) if verify else None
 
     return Agent(
         client=client,
@@ -90,6 +95,7 @@ def build_headless_agent(
         context_window=context_window,
         instructions_content=load_instructions(str(ws)),
         memory_manager=MemoryManager(str(ws)),
+        hook_engine=hook_engine,
     )
 
 
@@ -101,13 +107,15 @@ async def run_headless_task_async(
     assume_yes: bool = False,
     max_iterations: int = 50,
     client: LLMClient | None = None,
+    verify: bool = False,
     event_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> HeadlessResult:
-    """异步把任务跑到完成。``assume_yes`` 时自动放行需确认的工具调用。"""
+    """异步把任务跑到完成。``assume_yes`` 时自动放行需确认的工具调用；``verify`` 时停止后自动验证。"""
     mode = PermissionMode.DONT_ASK if assume_yes else PermissionMode.DEFAULT
     try:
         agent = build_headless_agent(
-            workspace, profile, permission_mode=mode, max_iterations=max_iterations, client=client
+            workspace, profile, permission_mode=mode, max_iterations=max_iterations,
+            client=client, verify=verify,
         )
     except Exception as exc:  # 配置/构造期失败：直接返回 error，不抛给 CLI
         return HeadlessResult(status="error", summary="", error=str(exc))
@@ -123,11 +131,18 @@ async def run_headless_task_async(
             error=str(exc),
         )
 
+    verification = ""
+    if agent.hook_engine is not None:
+        for note in agent.hook_engine.drain_notifications():
+            if note.hook_id == "builtin-verification":
+                verification = note.output
+
     return HeadlessResult(
         status="completed",
         summary=text,
         input_tokens=agent.total_input_tokens,
         output_tokens=agent.total_output_tokens,
+        verification=verification,
     )
 
 

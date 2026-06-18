@@ -60,6 +60,9 @@ class HookContext:
     file_path: str = ""
     message: str = ""
     error: str = ""
+    # 工作目录与本轮累计改动的文件，供 verification 等需要项目级上下文的动作使用。
+    work_dir: str = ""
+    changed_files: list[str] = field(default_factory=list)
 
     def get_field(self, name: str) -> str:
         """获取上下文字段值（供条件表达式使用）。"""

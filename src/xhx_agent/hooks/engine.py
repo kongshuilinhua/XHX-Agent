@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 
 from xhx_agent.hooks.executors import execute_action
-from xhx_agent.hooks.models import ActionResult, Hook, HookContext, ToolRejectedError
+from xhx_agent.hooks.models import Hook, HookContext
 
 log = logging.getLogger(__name__)
 

@@ -32,7 +32,7 @@ async def execute_command(action: Action, ctx: HookContext) -> ActionResult:
             stdout, _ = await asyncio.wait_for(
                 proc.communicate(), timeout=action.timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return ActionResult(
@@ -89,11 +89,56 @@ async def execute_agent(action: Action, ctx: HookContext) -> ActionResult:
     return ActionResult(output="agent executor not yet implemented", success=True)
 
 
+async def execute_verification(action: Action, ctx: HookContext) -> ActionResult:
+    """根据本轮改动文件推断并运行定向验证命令（默认跑变更相关的测试）。
+
+    用 ``ctx.work_dir`` + ``ctx.changed_files`` 经 infer_verification 推断命令；推断不出则
+    视为成功跳过。任一命令失败即整体失败，输出含失败命令与其结果，供调用方注入回对话。
+    """
+    from pathlib import Path
+
+    from xhx_agent.verification.router import infer_verification
+
+    work_dir = ctx.work_dir or "."
+    plan = infer_verification(Path(work_dir), list(ctx.changed_files))
+    if not plan.commands:
+        return ActionResult(output=plan.skip_reason or "No verification command inferred.", success=True)
+
+    outputs: list[str] = []
+    for cmd in plan.commands:
+        command = cmd.command
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=work_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=action.timeout)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return ActionResult(output=f"Verification timed out: {command}", success=False)
+            tail = stdout.decode(errors="replace").strip()[-2000:] if stdout else ""
+            if proc.returncode != 0:
+                return ActionResult(
+                    output=f"Verification FAILED ({cmd.reason}):\n$ {command}\n{tail}",
+                    success=False,
+                )
+            outputs.append(f"$ {command}\n{tail}")
+        except Exception as e:
+            return ActionResult(output=f"Verification execution error: {e}", success=False)
+
+    return ActionResult(output="Verification passed.\n" + "\n".join(outputs), success=True)
+
+
 _EXECUTOR_MAP = {
     "command": execute_command,
     "prompt": execute_prompt,
     "http": execute_http,
     "agent": execute_agent,
+    "verification": execute_verification,
 }
 
 

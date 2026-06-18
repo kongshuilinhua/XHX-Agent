@@ -19,6 +19,16 @@ from xhx_agent.hooks.models import (
 
 log = logging.getLogger(__name__)
 
+
+def default_verification_hook(timeout: int = 120) -> Hook:
+    """构造内置「改完自动跑定向测试」钩子：在 agent 停止时触发 verification 动作。"""
+    return Hook(
+        id="builtin-verification",
+        event="stop",
+        action=Action(type="verification", timeout=timeout),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 旧 stage → 新 LifecycleEvent 映射
 # ---------------------------------------------------------------------------

@@ -354,6 +354,8 @@ class Agent:
         self._team_manager: Any = None
         self.notification_fn: Callable[[], list[str]] | None = None
         self.file_history: Any = None
+        # 本轮累计被改动的文件（相对路径），供 stop 事件上的 verification 钩子定向跑测试。
+        self._changed_files: list[str] = []
 
     @property
     def _transcript_path(self) -> str:
@@ -413,10 +415,22 @@ class Agent:
             file_path=str(kwargs.get("file_path", "")),
             message=str(kwargs.get("message", "")),
             error=str(kwargs.get("error", "")),
+            work_dir=str(self.work_dir),
+            changed_files=list(self._changed_files),
         )
+
+    _MUTATION_TOOLS = {"WriteFile", "EditFile", "apply_patch"}
 
     def _infer_file_path(self, args: dict) -> str:
         return str(args.get("file_path", args.get("path", "")))
+
+    def _record_changed_file(self, tool_name: str, args: dict) -> None:
+        """记录写/改类工具触及的文件，供后续 verification 定向测试。"""
+        if tool_name not in self._MUTATION_TOOLS:
+            return
+        path = self._infer_file_path(args)
+        if path and path not in self._changed_files:
+            self._changed_files.append(path)
 
     def _drain_hook_events(self) -> list[HookEvent]:
         if not self.hook_engine:
@@ -505,7 +519,7 @@ class Agent:
                     yield he
 
             hook_prompts = (
-                self.hook_engine.get_prompt_messages() if self.hook_engine else None
+                self.hook_engine.collect_prompt_messages() if self.hook_engine else None
             )
             system = build_system_prompt(
                 hook_prompts=hook_prompts,
@@ -690,7 +704,11 @@ class Agent:
                                 tool_args=tc.arguments,
                                 file_path=file_path,
                             )
-                            rejection = await self.hook_engine.run_pre_tool_hooks(hook_ctx)
+                            rejection = None
+                            try:
+                                await self.hook_engine.run_hooks("pre_tool_use", hook_ctx)
+                            except ToolRejectedError as _rej:
+                                rejection = _rej
                             for he in self._drain_hook_events():
                                 yield he
                             if rejection is not None:
@@ -1031,7 +1049,7 @@ class Agent:
             conversation.add_user_message(task)
 
         hook_prompts = (
-            self.hook_engine.get_prompt_messages() if self.hook_engine else None
+            self.hook_engine.collect_prompt_messages() if self.hook_engine else None
         )
         system = build_system_prompt(
             hook_prompts=hook_prompts,
@@ -1173,6 +1191,10 @@ class Agent:
                 ctx = self._build_hook_context("turn_end")
                 await self.hook_engine.run_hooks("turn_end", ctx)
 
+        # agent 已停止：触发 stop 事件，让 verification 等收尾钩子运行（如改完自动跑定向测试）。
+        if self.hook_engine:
+            await self.hook_engine.run_hooks("stop", self._build_hook_context("stop"))
+
         return last_text
 
     async def _execute_tool_noninteractive(
@@ -1199,10 +1221,11 @@ class Agent:
                 tool_args=tc.arguments,
                 file_path=file_path,
             )
-            rejection = await self.hook_engine.run_pre_tool_hooks(hook_ctx)
-            if rejection is not None:
+            try:
+                await self.hook_engine.run_hooks("pre_tool_use", hook_ctx)
+            except ToolRejectedError as rej:
                 return ToolResult(
-                    output=f"Hook rejected: {rejection.reason}",
+                    output=f"Hook rejected: {rej.reason}",
                     is_error=True,
                 )
 
@@ -1233,6 +1256,9 @@ class Agent:
             result = ToolResult(
                 output=f"Tool execution error: {e}", is_error=True
             )
+
+        if not result.is_error:
+            self._record_changed_file(tc.tool_name, tc.arguments)
 
         if self.hook_engine:
             file_path = self._infer_file_path(tc.arguments)

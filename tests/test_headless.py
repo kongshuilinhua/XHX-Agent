@@ -87,3 +87,47 @@ def test_headless_missing_profile_returns_error(tmp_path: Path) -> None:
 
     assert result.status == "error"
     assert "nonexistent" in result.error.lower()
+
+
+def _write_test_then_done(test_body: str) -> list[list[StreamEvent]]:
+    return [
+        [
+            ToolCallComplete(
+                tool_id="t1",
+                tool_name="WriteFile",
+                arguments={"file_path": "tests/test_x.py", "content": test_body},
+            ),
+            StreamEnd(stop_reason="tool_use", input_tokens=5, output_tokens=5),
+        ],
+        [
+            TextDelta("done"),
+            StreamEnd(stop_reason="end_turn", input_tokens=2, output_tokens=2),
+        ],
+    ]
+
+
+def _scaffold_python_project(root: Path) -> None:
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (root / "tests").mkdir(parents=True, exist_ok=True)
+
+
+def test_headless_verify_reports_passing_tests(tmp_path: Path, monkeypatch: Any) -> None:
+    _scaffold_python_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    client = FakeLLMClient(_write_test_then_done("def test_ok():\n    assert True\n"))
+
+    result = run_headless_task(tmp_path, "add a test", assume_yes=True, verify=True, client=client)
+
+    assert result.status == "completed"
+    assert "passed" in result.verification.lower() or "Verification passed" in result.verification
+
+
+def test_headless_verify_reports_failing_tests(tmp_path: Path, monkeypatch: Any) -> None:
+    _scaffold_python_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    client = FakeLLMClient(_write_test_then_done("def test_bad():\n    assert False\n"))
+
+    result = run_headless_task(tmp_path, "add a test", assume_yes=True, verify=True, client=client)
+
+    assert result.status == "completed"
+    assert "FAILED" in result.verification

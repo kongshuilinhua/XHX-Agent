@@ -211,6 +211,9 @@ def run(
             help="Orchestrator paradigm: loop | plan | graph (linear = auto-classify fallback; default: auto-classified).",
         ),
     ] = None,
+    verify: Annotated[
+        bool, typer.Option("--verify", help="Run change-targeted tests after the agent stops.")
+    ] = False,
 ) -> None:
     workspace = Path.cwd()
     # --mode / --auto-repair 是旧编排器/修复循环的概念，统一 Agent 循环下不再适用，仅作兼容接受。
@@ -230,7 +233,7 @@ def run(
             target = "most recent session" if cont else f"session '{resume}'"
             console.print(f"No {target} found; starting fresh.")
 
-    result = run_headless_task(workspace, effective_task, profile=profile, assume_yes=yes)
+    result = run_headless_task(workspace, effective_task, profile=profile, assume_yes=yes, verify=verify)
     entry = _record_run_session(workspace, task, result)
 
     if json_output:
@@ -241,6 +244,7 @@ def run(
                     "status": result.status,
                     "summary": result.summary,
                     "error": result.error,
+                    "verification": result.verification,
                     "input_tokens": result.input_tokens,
                     "output_tokens": result.output_tokens,
                 },
@@ -255,6 +259,8 @@ def run(
         console.print(f"summary: {result.summary}")
     if result.error:
         console.print(f"error: {result.error}")
+    if result.verification:
+        console.print(f"verification:\n{result.verification}")
 
 
 @app.command("sessions")
