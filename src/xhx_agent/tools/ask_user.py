@@ -1,38 +1,72 @@
-"""AskUser 工具 — 交互式用户询问。"""
+"""AskUser 工具 —— 交互式用户询问。
 
+工具被调用时挂起一个 ``_pending_event``（含问题与一个 future），TUI 检测到后弹出内联
+询问框、收集答案并 resolve future；工具据此返回用户回答。
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import asyncio
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from xhx_agent.tools.base import Tool, ToolResult
 
 
+class QuestionItem(BaseModel):
+    type: str = Field(description="Question type: text, radio, select, checkbox")
+    name: str = Field(description="Question identifier")
+    message: str = Field(description="Question text to display")
+    options: list[str] = Field(
+        default_factory=list,
+        description="Options for radio/select/checkbox types",
+    )
+
+
 class AskUserParams(BaseModel):
-    questions: list[dict[str, Any]] = field(default_factory=list)
+    questions: list[QuestionItem] = Field(description="List of questions to ask the user")
 
 
-@dataclass
 class AskUserEvent:
-    questions: list[dict[str, Any]] = field(default_factory=list)
-    future: Any = None
+    def __init__(
+        self,
+        questions: list[dict[str, Any]],
+        future: asyncio.Future[dict[str, str]],
+    ) -> None:
+        self.questions = questions
+        self.future = future
 
 
 class AskUserTool(Tool):
     name = "AskUserQuestion"
-    description = "Ask the user one or more questions to clarify requirements."
+    description = (
+        "Ask the user one or more questions when you need information that cannot be "
+        "determined from code or context alone. Supports text input, radio (single select), "
+        "select, and checkbox (multi select) question types."
+    )
     params_model = AskUserParams
-    category = "read"
+    category: str = "read"
     is_system_tool = True
 
-    def __init__(self, callback: Any = None, **kwargs: Any) -> None:
-        self._callback = callback
+    def __init__(self, **kwargs: Any) -> None:
+        self._pending_event: AskUserEvent | None = None
 
     async def execute(self, params: AskUserParams) -> ToolResult:
-        if self._callback:
-            event = AskUserEvent(questions=params.questions)
-            result = await self._callback(event)
-            return ToolResult(output=str(result))
-        return ToolResult(output="AskUser not configured.", is_error=True)
+        questions_data = [q.model_dump() for q in params.questions]
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, str]] = loop.create_future()
+        self._pending_event = AskUserEvent(questions=questions_data, future=future)
+
+        try:
+            answers = await asyncio.wait_for(future, timeout=300)
+        except TimeoutError:
+            return ToolResult(output="User did not respond within 5 minutes", is_error=True)
+        finally:
+            self._pending_event = None
+
+        lines = []
+        for q in params.questions:
+            answer = answers.get(q.name, "(no answer)")
+            lines.append(f"{q.name}: {answer}")
+        return ToolResult(output="\n".join(lines))
