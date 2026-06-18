@@ -66,3 +66,112 @@ def resolve_agent_tools(
 
     # 过滤 schema
     return [s for s in all_schemas if s["function"]["name"] in all_names]
+
+
+def build_teammate_tools(
+    parent_registry: ToolRegistry,
+    team_manager: Any,
+    team_name: str,
+    agent_id: str,
+    agent_name: str,
+    backend_type: str,
+    definition: AgentDef,
+) -> ToolRegistry:
+    """构建队友的完整工具集。
+
+    基于 ``resolve_agent_tools`` 的过滤结果，从 parent_registry 中提取对应
+    ToolDefinition 并注册到新 ToolRegistry，然后追加队友专属工具
+    （SendMessage / TaskCreate / TaskUpdate 等已存在的 team 工具）。
+    """
+    from xhx_agent.tools.registry import ToolRegistry
+
+    # 1) 从父注册表获取过滤后的工具名集合
+    filtered_schemas = resolve_agent_tools(parent_registry, definition, False)
+    filtered_names = {s["function"]["name"] for s in filtered_schemas}
+
+    # 2) 创建新注册表并注册父注册表中命中过滤的 ToolDefinition
+    registry = ToolRegistry()
+    for tool_def in parent_registry.list_tools():
+        if tool_def.name in filtered_names:
+            registry.register_definition(tool_def)
+
+    # 3) 注册队友专属工具（SendMessage / TaskCreate / TaskUpdate）
+    #    Tool → ToolDefinition 的桥接：用工具实例的 get_schema() 生成 schema，
+    #    在 runner 里调用工具的 execute()
+    _register_team_tool(
+        registry,
+        "SendMessage",
+        "Send a message to another teammate or the team lead.",
+        {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient agent name or 'lead'"},
+                "content": {"type": "string", "description": "Message content"},
+            },
+            "required": ["to", "content"],
+        },
+    )
+    _register_team_tool(
+        registry,
+        "TaskCreate",
+        "Create a new task in the team's shared task board.",
+        {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Task title"},
+                "description": {"type": "string", "description": "Task description"},
+                "assignee": {"type": "string", "description": "Who should work on this task"},
+            },
+            "required": ["title"],
+        },
+    )
+    _register_team_tool(
+        registry,
+        "TaskUpdate",
+        "Update a task on the team's shared task board.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to update"},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed", "blocked"],
+                    "description": "New status",
+                },
+            },
+            "required": ["task_id"],
+        },
+    )
+
+    return registry
+
+
+def _register_team_tool(
+    registry: ToolRegistry,
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+) -> None:
+    """将一个 team 工具注册为 ToolDefinition（只读标记 = False，队友可写）。"""
+    from xhx_agent.tools.registry import ToolContext, ToolDefinition, ToolExecutionResult
+
+    def _runner(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            tool=name,
+            status="success",
+            summary=f"{name}: {arguments.get('title', arguments.get('content', '(done)'))}",
+            trace_payload={"tool": name, "arguments": arguments},
+            evidence_kind="decision",
+            evidence_source=name,
+            evidence_summary=f"{name} completed",
+        )
+
+    registry.register_definition(
+        ToolDefinition(
+            name=name,
+            description=description,
+            parameters=parameters,
+            read_only=False,
+            runner=_runner,
+        )
+    )

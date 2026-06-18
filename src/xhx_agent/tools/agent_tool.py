@@ -274,7 +274,7 @@ class AgentTool(Tool):
             PermissionMode,
             RuleEngine,
         )
-        from xhx_agent.teams.models import BackendType, TeammateInfo
+        from xhx_agent.teams.models import TeammateInfo
         from xhx_agent.teams.registry import AgentNameRegistry
 
         team = self._team_manager.get_team(p.team_name)
@@ -336,8 +336,10 @@ class AgentTool(Tool):
         # 3. 选择 LLM
         client = self._select_llm(p, definition)
 
-        # 4. 检测后端类型
-        backend = self._team_manager.detect_backend()
+        # 4. 检测后端类型（仅 in-process）
+        from xhx_agent.teams.spawn import detect_backend
+
+        backend = detect_backend()
 
         # 5. 构建队友的工具集
         trace_node = self._trace_manager.create(
@@ -412,11 +414,7 @@ class AgentTool(Tool):
         )
         self._team_manager.register_member(p.team_name, member)
 
-        # 8. 按后端类型启动队友
-        if backend in (BackendType.TMUX, BackendType.ITERM2):
-            return self._spawn_pane_teammate(p, team, member, backend, wt, agent_id, teammate_name)
-
-        # 进程内模式：直接用 task_manager 执行并通知结果
+        # 8. 仅 in-process 模式：直接用 task_manager 执行
         task_id = self._task_manager.launch(
             agent=sub_agent,
             task="" if is_fork else p.prompt,
@@ -432,64 +430,6 @@ class AgentTool(Tool):
                 f"Worktree: {wt.path}\n"
                 f"Task ID: {task_id}\n"
                 f"The system will notify when it completes."
-            )
-        )
-
-    def _spawn_pane_teammate(
-        self,
-        p: Any,
-        team: Any,
-        member: Any,
-        backend: Any,
-        wt: Any,
-        agent_id: str,
-        teammate_name: str,
-    ) -> ToolResult:
-        from xhx_agent.teams.models import BackendType
-
-        mailbox = self._team_manager.get_mailbox(p.team_name)
-        mailbox_dir = str(mailbox._base_dir) if mailbox else ""
-
-        try:
-            if backend == BackendType.TMUX:
-                from xhx_agent.teams.spawn_tmux import spawn_tmux_teammate
-
-                pane_info = spawn_tmux_teammate(
-                    team_name=p.team_name,
-                    teammate_name=teammate_name,
-                    worktree_path=wt.path,
-                    prompt=p.prompt,
-                    agent_type=p.subagent_type or "",
-                    model=p.model or "",
-                    mailbox_dir=mailbox_dir,
-                )
-                self._team_manager.register_pane_id(agent_id, pane_info.pane_id)
-            elif backend == BackendType.ITERM2:
-                from xhx_agent.teams.spawn_iterm2 import spawn_iterm2_teammate
-
-                pane_info = spawn_iterm2_teammate(
-                    team_name=p.team_name,
-                    teammate_name=teammate_name,
-                    worktree_path=wt.path,
-                    prompt=p.prompt,
-                    agent_type=p.subagent_type or "",
-                    model=p.model or "",
-                    mailbox_dir=mailbox_dir,
-                )
-        except Exception as e:
-            log.warning("Pane spawn failed, falling back to in-process: %s", e)
-            return ToolResult(
-                output=f"Pane spawn failed ({e}), teammate not started. Retry or set teammate_mode to in-process.",
-                is_error=True,
-            )
-
-        return ToolResult(
-            output=(
-                f"Teammate '{teammate_name}' spawned in team '{p.team_name}'.\n"
-                f"Agent ID: {agent_id}\n"
-                f"Backend: {backend.value} (pane)\n"
-                f"Worktree: {wt.path}\n"
-                f"The teammate is running in an independent process."
             )
         )
 

@@ -239,7 +239,7 @@ class ChatInput(TextArea):
     def action_nav_up(self) -> None:
         popup = self._popup()
         if popup is not None and popup.is_visible:
-            popup.move_up()
+            popup.nav_up()
             return
         if not self._history:
             return
@@ -256,7 +256,7 @@ class ChatInput(TextArea):
     def action_nav_down(self) -> None:
         popup = self._popup()
         if popup is not None and popup.is_visible:
-            popup.move_down()
+            popup.nav_down()
             return
         if self._history_index == -1:
             return
@@ -1138,7 +1138,7 @@ class XHXApp(App):
         await self._dispatch_command(text)
 
     def on_chat_input_tab_complete(self, event: ChatInput.TabComplete) -> None:
-        matches = complete(self.command_registry, event.text)
+        matches = complete(event.text, self.command_registry)
         if not matches:
             return
         popup = self.query_one(CompletionPopup)
@@ -1147,25 +1147,25 @@ class XHXApp(App):
             input_widget.clear()
             input_widget.insert(matches[0][1] + " ")
         else:
-            popup.show_pairs(matches)
+            popup.show_items([display for display, _value in matches])
 
     def on_chat_input_slash_menu_update(self, event: ChatInput.SlashMenuUpdate) -> None:
         popup = self.query_one(CompletionPopup)
         if event.prefix is None:
             popup.hide()
             return
-        matches = complete(self.command_registry, event.prefix)
+        matches = complete(event.prefix, self.command_registry)
         if not matches:
             popup.hide()
             return
-        popup.show_pairs(matches)
+        popup.show_items([display for display, _value in matches])
 
     def on_chat_input_at_file_request(self, event: ChatInput.AtFileRequest) -> None:
         work_dir = self.agent.work_dir if self.agent else os.getcwd()
         matches = scan_files_for_at(event.prefix, work_dir)
         if matches:
             popup = self.query_one(CompletionPopup)
-            popup.show([f"@{m}" for m in matches])
+            popup.show_items([f"@{m}" for m in matches])
 
     def on_completion_popup_selected(self, event: CompletionPopup.Selected) -> None:
         input_widget = self.query_one("#chat-input", ChatInput)
@@ -1213,6 +1213,8 @@ class XHXApp(App):
                         child.display = summary._expanded
 
         for block in self.query(SubAgentBlock):
+            if not isinstance(block, SubAgentBlock):
+                continue
             if block._done:
                 block._collapsed = not block._collapsed
                 block._render_done()
@@ -1236,47 +1238,19 @@ class XHXApp(App):
             self._agent_task.cancel()
 
     async def _prefetch_relevant_memories(self, query: str) -> str:
-        """Run the recall selector as a side-query with an 8s timeout.
-
-        Creates a fresh LLM client so the selector's system prompt is
-        independent of the main conversation's system prompt. Returns the
-        rendered system-reminder body, or "" on any failure / timeout.
-        """
-        if self.memory_manager is None or self._selected_provider is None:
+        """同步召回相关记忆，用线程防阻塞事件循环。失败返回 ""。"""
+        if self.agent is None:
             return ""
 
-        provider = self._selected_provider
-        user_dir = self.memory_manager.user_mem_dir
-        project_dir = self.memory_manager.project_mem_dir
-
-        async def selector(system_prompt: str, user_message: str) -> str:
-            from xhx_agent.tools.base import StreamEnd, TextDelta
-
-            side_client = create_client(provider)
-            mini_conv = ConversationManager()
-            mini_conv.history = [Message(role="user", content=user_message)]
-            collected = ""
-            async for event in side_client.stream(mini_conv, system=system_prompt):
-                if isinstance(event, TextDelta):
-                    collected += event.text
-                elif isinstance(event, StreamEnd):
-                    pass
-            return collected
-
         try:
-            results = await asyncio.wait_for(
-                find_relevant_memories(
-                    query=query,
-                    user_mem_dir=user_dir,
-                    project_mem_dir=project_dir,
-                    recent_tools=None,
-                    already_surfaced=None,
-                    selector=selector,
-                ),
-                timeout=8.0,
+            results = await asyncio.to_thread(
+                find_relevant_memories,
+                self.agent.work_dir,
+                query,
+                5,
             )
             return render_reminder(results)
-        except (TimeoutError, Exception):
+        except TimeoutError:
             return ""
 
     async def _send_message(self, text: str, is_notification: bool = False) -> None:
@@ -1832,24 +1806,27 @@ class XHXApp(App):
         self._mcp_connecting = True
         self._update_mode_label()
         manager = MCPManager()
-        manager.load_configs(self._mcp_server_configs)
+        # 在后台线程中同步执行连接（connect_all 内部用 anyio portal）
+        await asyncio.to_thread(
+            manager.connect_all,
+            self._mcp_server_configs,
+            None,  # on_error
+        )
         tools_before = len(self.registry.list_tools())
-        errors = await manager.register_all_tools(self.registry)
+        manager.register_tools_to_registry(self.registry)
         self.mcp_manager = manager
         self._mcp_connecting = False
         self._update_mode_label()
-        for err in errors:
-            self._show_system_message(f"MCP warning: {err}")
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
-        server_count = len(manager._clients)
+        server_count = len(getattr(manager, "_sessions", {}))
         if server_count > 0:
             self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             parts = []
             for cfg in self._mcp_server_configs:
                 srv_name = cfg.name if hasattr(cfg, "name") else str(cfg)
-                tool_names = [t.name for t in self.registry.list_tools() if t.name.startswith(f"mcp__{srv_name}__")]
+                tool_names = [t.name for t in self.registry.list_tools() if t.name.startswith(f"mcp_{srv_name}_")]
                 section = f"## {srv_name}\n"
                 if tool_names:
                     section += "Available tools: " + ", ".join(tool_names)
@@ -1869,7 +1846,7 @@ class XHXApp(App):
                 pass
             self._mcp_init_task = None
         if self.mcp_manager is not None:
-            await self.mcp_manager.shutdown()
+            self.mcp_manager.close()
             self.mcp_manager = None
 
     # -----------------------------------------------------------------

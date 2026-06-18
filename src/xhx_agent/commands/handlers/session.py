@@ -20,8 +20,8 @@ async def handle_session(ctx: CommandContext) -> None:
             return
         lines = ["历史会话："]
         for s in sessions[-20:]:  # 最近 20 个
-            sid = getattr(s, "run_id", str(s))
-            task = getattr(s, "task", "")[:60] or ""
+            sid = getattr(s, "session_id", str(s))
+            task = getattr(s, "title", "")[:60] or ""
             lines.append(f"  {sid}  {task}")
         ctx.ui.add_system_message("\n".join(lines))
         return

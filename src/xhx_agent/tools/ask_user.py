@@ -3,6 +3,7 @@
 工具被调用时挂起一个 ``_pending_event``（含问题与一个 future），TUI 检测到后弹出内联
 询问框、收集答案并 resolve future；工具据此返回用户回答。
 """
+
 from __future__ import annotations
 
 import asyncio

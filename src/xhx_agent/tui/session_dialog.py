@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
-from xhx_agent.memory.session import SessionMeta
+from xhx_agent.memory import SessionMeta
 
 
 def _format_size(size: int) -> str:
@@ -111,7 +111,7 @@ class InlineResumeWidget(Vertical, can_focus=True):
             self._filtered = list(self._sessions)
         else:
             s = self._search.lower()
-            self._filtered = [m for m in self._sessions if s in (m.title or "").lower() or s in m.id.lower()]
+            self._filtered = [m for m in self._sessions if s in (m.title or "").lower() or s in m.session_id.lower()]
         self._cursor = 0
         self._refresh()
 
@@ -127,7 +127,7 @@ class InlineResumeWidget(Vertical, can_focus=True):
 
     def action_select(self) -> None:
         if self._filtered and 0 <= self._cursor < len(self._filtered):
-            self.post_message(self.Selected(self._filtered[self._cursor].id))
+            self.post_message(self.Selected(self._filtered[self._cursor].session_id))
         else:
             self.post_message(self.Selected(None))
 
