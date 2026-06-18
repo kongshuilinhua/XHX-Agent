@@ -1,5 +1,4 @@
-"""生命周期事件枚举。
-"""
+"""生命周期事件枚举。"""
 
 from __future__ import annotations
 

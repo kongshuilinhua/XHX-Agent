@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 @dataclass
 class Condition:
     """单条条件：field operator value。"""
+
     field: str
     operator: str
     value: str
@@ -49,6 +50,7 @@ class Condition:
 @dataclass
 class ConditionGroup:
     """条件组：多个 Condition 按 and/or 组合。"""
+
     conditions: list[Condition] = field(default_factory=list)
     logic: str = "and"  # "and" | "or"
 
@@ -62,6 +64,7 @@ class ConditionGroup:
 
 class ConditionParseError(Exception):
     """条件表达式解析错误。"""
+
     pass
 
 
@@ -75,7 +78,7 @@ def _parse_single(expr: str) -> Condition:
         if idx == -1:
             continue
         field_part = expr[:idx].strip()
-        value_part = expr[idx + len(op):].strip()
+        value_part = expr[idx + len(op) :].strip()
         if value_part.startswith('"') and value_part.endswith('"'):
             value_part = value_part[1:-1]
         return Condition(field=field_part, operator=op, value=value_part)
@@ -99,8 +102,7 @@ def parse_condition(expr: str) -> ConditionGroup | None:
 
     if has_and and has_or:
         raise ConditionParseError(
-            "Cannot mix '&&' and '||' in a single condition expression. "
-            "Split into separate hooks instead."
+            "Cannot mix '&&' and '||' in a single condition expression. Split into separate hooks instead."
         )
 
     if has_and:

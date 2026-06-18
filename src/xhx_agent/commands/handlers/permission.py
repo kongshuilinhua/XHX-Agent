@@ -1,9 +1,9 @@
 """权限模式命令。"""
+
 from __future__ import annotations
 
 from xhx_agent.commands import Command, CommandContext
 from xhx_agent.permissions import PermissionMode
-
 
 _MODE_LIST = [m.value for m in PermissionMode]
 

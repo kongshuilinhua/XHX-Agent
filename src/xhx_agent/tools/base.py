@@ -97,11 +97,5 @@ class StreamEnd:
 
 
 StreamEvent = (
-    TextDelta
-    | ThinkingDelta
-    | ThinkingComplete
-    | ToolCallStart
-    | ToolCallDelta
-    | ToolCallComplete
-    | StreamEnd
+    TextDelta | ThinkingDelta | ThinkingComplete | ToolCallStart | ToolCallDelta | ToolCallComplete | StreamEnd
 )

@@ -22,9 +22,7 @@ class Glob(Tool):
     async def execute(self, params: Params) -> ToolResult:
         base = Path(params.path)
         if not base.exists():
-            return ToolResult(
-                output=f"Error: path not found: {params.path}", is_error=True
-            )
+            return ToolResult(output=f"Error: path not found: {params.path}", is_error=True)
 
         try:
             matches = sorted(

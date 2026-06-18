@@ -1,4 +1,5 @@
 """MCP 集成测试：不再依赖 RuntimeApp，直接测 MCPManager 的工具注册与生命周期。"""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector, is_safe_command
@@ -21,14 +21,18 @@ from xhx_agent.safety.permissions.sandbox import PathSandbox
 
 # Plan 模式下允许自动放行的工具白名单
 # 注意：ExitPlanMode 已由 present_plan 替代，此处仅保留 XHX-Agent 实际存在的工具
-_PLAN_MODE_ALLOWED_TOOLS = frozenset({
-    "dispatch", "present_plan",
-})
+_PLAN_MODE_ALLOWED_TOOLS = frozenset(
+    {
+        "dispatch",
+        "present_plan",
+    }
+)
 
 
 @dataclass
 class Decision:
     """权限检查结果。"""
+
     effect: DecisionEffect
     reason: str
 
@@ -146,6 +150,7 @@ class PermissionChecker:
         if self.plan_file_path:
             try:
                 from pathlib import Path as _Path
+
                 plan_base = _Path(self.plan_file_path).name
                 target_base = _Path(path).name
                 if plan_base and plan_base == target_base:

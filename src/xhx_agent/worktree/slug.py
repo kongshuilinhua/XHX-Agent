@@ -19,10 +19,7 @@ def validate_slug(name: str) -> str | None:
         if seg in (".", ".."):
             return "name must not contain '.' or '..' as a segment"
         if not _SEGMENT_RE.match(seg):
-            return (
-                f"invalid segment: {seg!r} "
-                "(allowed: letters, digits, '.', '-', '_')"
-            )
+            return f"invalid segment: {seg!r} (allowed: letters, digits, '.', '-', '_')"
 
     return None
 

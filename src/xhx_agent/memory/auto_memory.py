@@ -109,9 +109,7 @@ class MemoryManager:
         existing = self._load_existing()
 
         prompt = (
-            f"{MEMORY_EXTRACTION_PROMPT}\n\n"
-            f"## 现有记忆（请在此基础上更新）\n\n{existing}\n\n"
-            f"## 对话内容\n\n{conv_text}"
+            f"{MEMORY_EXTRACTION_PROMPT}\n\n## 现有记忆（请在此基础上更新）\n\n{existing}\n\n## 对话内容\n\n{conv_text}"
         )
 
         try:

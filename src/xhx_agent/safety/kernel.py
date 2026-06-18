@@ -14,8 +14,8 @@ from pathlib import Path
 from xhx_agent.evidence.store import EvidenceStore, RawTraceEntry
 from xhx_agent.runtime.events import EventCallback, emit_event
 from xhx_agent.safety.checkpoint import Checkpoint, CheckpointRestorePlan, create_checkpoint, create_restore_plan
-from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector
 from xhx_agent.safety.permissions.checker import PermissionChecker
+from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector
 from xhx_agent.safety.permissions.rules import RuleEngine
 from xhx_agent.safety.permissions.sandbox import PathSandbox
 from xhx_agent.safety.policy import PolicyDecision, decide_with_checker
@@ -100,6 +100,7 @@ class SafeExecutionKernel:
         #           bypass→bypassPermissions
         _MODE_ALIAS: dict[str, str] = {"auto": "default", "bypass": "bypassPermissions"}
         from xhx_agent.safety.permissions.modes import resolve_permission_mode
+
         mode_raw = context.permission_mode or "default"
         self.permission_checker.mode = resolve_permission_mode(_MODE_ALIAS.get(mode_raw, mode_raw))
 

@@ -57,9 +57,10 @@ select = ["E", "F", "W", "I", "N", "UP", "SIM", "B", "C4"]
 ignore = ["E501", "B904", "SIM105"]
 
 [tool.ruff.lint.per-file-ignores]
-# main.py 在导入前先加载 .env；textual_app.py 有为单测 monkeypatch 而置于文件中部的导入——均为有意为之。
+# main.py 在导入前先加�?.env；textual_app.py 有为单测 monkeypatch 而置于文件中部的导入——均为有意为之�?
 "src/xhx_agent/cli/main.py" = ["E402"]
 "src/xhx_agent/tui/textual_app.py" = ["E402"]
+"src/xhx_agent/agents/agent_runner.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.13"

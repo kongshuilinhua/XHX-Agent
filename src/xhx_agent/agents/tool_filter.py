@@ -1,5 +1,4 @@
-"""Agent 工具过滤：按定义限制工具集。
-"""
+"""Agent 工具过滤：按定义限制工具集。"""
 
 from __future__ import annotations
 
@@ -10,23 +9,27 @@ if TYPE_CHECKING:
     from xhx_agent.tools.registry import ToolRegistry
 
 # 所有子 agent 禁用的工具
-ALL_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset({
-    "dispatch",        # 子 agent 不能再派发
-    "present_plan",    # plan 模式专用
-})
+ALL_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "dispatch",  # 子 agent 不能再派发
+        "present_plan",  # plan 模式专用
+    }
+)
 
 # 自定义 agent（项目/用户级）额外禁用
-CUSTOM_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset({
-    "dispatch",
-    "present_plan",
-})
+CUSTOM_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "dispatch",
+        "present_plan",
+    }
+)
 
 
 def resolve_agent_tools(
-    parent_registry: "ToolRegistry",
-    definition: "AgentDef",
+    parent_registry: ToolRegistry,
+    definition: AgentDef,
     is_background: bool = False,
-) -> "list[dict[str, Any]]":
+) -> list[dict[str, Any]]:
     """根据 AgentDef 过滤工具集，返回 schema 列表。
 
     过滤层级：
@@ -62,7 +65,4 @@ def resolve_agent_tools(
         all_names = all_names & allowed_set
 
     # 过滤 schema
-    return [
-        s for s in all_schemas
-        if s["function"]["name"] in all_names
-    ]
+    return [s for s in all_schemas if s["function"]["name"] in all_names]

@@ -11,17 +11,12 @@ from xhx_agent.tools.base import SKIP_DIRS, Tool, ToolResult
 class Params(BaseModel):
     pattern: str = Field(description="Regex pattern to search for")
     path: str = Field(default=".", description="Base directory to search from")
-    include: str = Field(
-        default="", description="Glob filter for filenames (e.g. '*.py')"
-    )
+    include: str = Field(default="", description="Glob filter for filenames (e.g. '*.py')")
 
 
 class Grep(Tool):
     name = "Grep"
-    description = (
-        "Search file contents using a regex pattern, "
-        "returning file:line:content matches."
-    )
+    description = "Search file contents using a regex pattern, returning file:line:content matches."
     params_model = Params
     category = "read"
     is_concurrency_safe = True
@@ -29,9 +24,7 @@ class Grep(Tool):
     async def execute(self, params: Params) -> ToolResult:
         base = Path(params.path)
         if not base.exists():
-            return ToolResult(
-                output=f"Error: path not found: {params.path}", is_error=True
-            )
+            return ToolResult(output=f"Error: path not found: {params.path}", is_error=True)
 
         try:
             regex = re.compile(params.pattern)

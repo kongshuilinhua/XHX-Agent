@@ -1,4 +1,5 @@
 """Skill 注册命令。"""
+
 from typing import Any
 
 

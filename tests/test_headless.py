@@ -2,6 +2,7 @@
 
 同时作为新栈（agent_runner.Agent）的第一个端到端测试夹具。
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

@@ -18,11 +18,9 @@ class PromptBuilder:
     def __init__(self) -> None:
         self._sections: list[PromptSection] = []
 
-
     def add(self, section: PromptSection) -> PromptBuilder:
         self._sections.append(section)
         return self
-
 
     def build(self) -> str:
         self._sections.sort(key=lambda s: s.priority)
@@ -203,9 +201,7 @@ _PLAN_MODE_SPARSE_REMINDER = (
 _REMINDER_INTERVAL = 5
 
 
-def build_plan_mode_reminder(
-    plan_path: str, plan_exists: bool, iteration: int
-) -> str:
+def build_plan_mode_reminder(plan_path: str, plan_exists: bool, iteration: int) -> str:
     if plan_exists:
         plan_file_info = (
             f"Plan file: {plan_path}\n"
@@ -233,6 +229,7 @@ def build_plan_mode_reminder(
 # 对外接口
 # ---------------------------------------------------------------------------
 
+
 def build_system_prompt(
     hook_prompts: list[str] | None = None,
     coordinator_mode: bool = False,
@@ -244,6 +241,7 @@ def build_system_prompt(
 ) -> str:
     if coordinator_mode:
         from xhx_agent.teams.coordinator import get_coordinator_system_prompt
+
         return get_coordinator_system_prompt(agent_catalog=agent_catalog)
 
     b = PromptBuilder()
@@ -257,11 +255,13 @@ def build_system_prompt(
     b.add(environment_section(work_dir))
 
     if custom_instructions:
-        b.add(PromptSection(
-            name="CustomInstructions",
-            priority=80,
-            content=f"# Project Instructions\n\n{custom_instructions}",
-        ))
+        b.add(
+            PromptSection(
+                name="CustomInstructions",
+                priority=80,
+                content=f"# Project Instructions\n\n{custom_instructions}",
+            )
+        )
 
     if skill_section:
         b.add(PromptSection(name="Skills", priority=90, content=skill_section))

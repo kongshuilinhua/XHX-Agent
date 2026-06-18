@@ -2,6 +2,7 @@
 
 旧栈 planner 已删除；新栈 Agent 的测试见 test_headless.py。
 """
+
 from __future__ import annotations
 
 

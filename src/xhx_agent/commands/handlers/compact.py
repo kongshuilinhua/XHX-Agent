@@ -1,4 +1,5 @@
 """上下文压缩命令。"""
+
 from __future__ import annotations
 
 from xhx_agent.commands import Command, CommandContext

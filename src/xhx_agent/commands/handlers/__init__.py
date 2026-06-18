@@ -1,4 +1,5 @@
 """命令处理器包 —— 注册所有内置斜杠命令。"""
+
 from __future__ import annotations
 
 from typing import Any

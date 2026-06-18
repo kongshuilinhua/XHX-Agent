@@ -12,15 +12,9 @@ if TYPE_CHECKING:
 
 
 class Params(BaseModel):
-    file_path: str = Field(
-        description="Absolute or relative path to the file to read"
-    )
-    offset: int = Field(
-        default=0, description="Line offset to start reading from (0-based)"
-    )
-    limit: int = Field(
-        default=2000, description="Maximum number of lines to read"
-    )
+    file_path: str = Field(description="Absolute or relative path to the file to read")
+    offset: int = Field(default=0, description="Line offset to start reading from (0-based)")
+    limit: int = Field(default=2000, description="Maximum number of lines to read")
 
 
 class ReadFile(Tool):
@@ -33,7 +27,7 @@ class ReadFile(Tool):
     def __init__(
         self,
         file_cache: Any = None,
-        file_state_cache: "FileStateCache | None" = None,
+        file_state_cache: FileStateCache | None = None,
     ) -> None:
         self._cache = file_cache
         self._state_cache = file_state_cache
@@ -41,13 +35,9 @@ class ReadFile(Tool):
     async def execute(self, params: Params) -> ToolResult:
         path = Path(params.file_path)
         if not path.exists():
-            return ToolResult(
-                output=f"Error: file not found: {params.file_path}", is_error=True
-            )
+            return ToolResult(output=f"Error: file not found: {params.file_path}", is_error=True)
         if not path.is_file():
-            return ToolResult(
-                output=f"Error: not a file: {params.file_path}", is_error=True
-            )
+            return ToolResult(output=f"Error: not a file: {params.file_path}", is_error=True)
 
         resolved = str(path.resolve())
 
@@ -68,11 +58,8 @@ class ReadFile(Tool):
                 pass
 
         lines = text.splitlines()
-        selected = lines[params.offset: params.offset + params.limit]
-        numbered = [
-            f"{i + params.offset + 1}\t{line}"
-            for i, line in enumerate(selected)
-        ]
+        selected = lines[params.offset : params.offset + params.limit]
+        numbered = [f"{i + params.offset + 1}\t{line}" for i, line in enumerate(selected)]
         return ToolResult(output="\n".join(numbered))
 
 

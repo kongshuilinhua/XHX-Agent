@@ -5,16 +5,15 @@ import contextvars
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 # 取消原因上下文变量。在 cancel() agent task 之前设置，让被中断的
 # 工具（如 Bash）能判断是用户主动中断（不杀进程）还是系统取消。
-cancel_reason: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "cancel_reason", default=""
-)
+cancel_reason: contextvars.ContextVar[str] = contextvars.ContextVar("cancel_reason", default="")
 
 from pydantic import ValidationError
 
@@ -23,7 +22,6 @@ from xhx_agent.context import (
     CompactBoundary,
     CompactCircuitBreaker,
     CompactEvent,
-    ContentReplacementRecord,
     ContentReplacementState,
     RecoveryState,
     append_replacement_records,
@@ -31,19 +29,15 @@ from xhx_agent.context import (
     auto_compact,
     create_replacement_state,
     ensure_session_dir,
-    load_replacement_records,
-    reconstruct_replacement_state,
 )
 from xhx_agent.conversation import ConversationManager, ToolResultBlock, ToolUseBlock
 from xhx_agent.conversation import ThinkingBlock as ConvThinkingBlock
+from xhx_agent.hooks import HookContext, HookEngine, ToolRejectedError
 from xhx_agent.memory.auto_memory import MemoryManager
 from xhx_agent.permissions import (
-    Decision,
     PermissionChecker,
     PermissionMode,
 )
-from xhx_agent.hooks import HookContext, HookEngine, ToolRejectedError
-from xhx_agent.hooks.engine import HookNotification
 from xhx_agent.prompts import build_environment_context, build_plan_mode_reminder, build_system_prompt
 from xhx_agent.tools import ToolRegistry
 from xhx_agent.tools.base import (
@@ -69,6 +63,7 @@ MAX_OUTPUT_TOKENS_RECOVERIES = 3
 # ---------------------------------------------------------------------------
 # AgentEvent 事件类型
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class StreamText:
@@ -129,7 +124,7 @@ class CompactNotification:
     message: str
     # 结构化 boundary（摘要 + 原文保留尾部），UI/session 层用它持久化 compact_boundary 记录。
     # 失败路径下为 None。
-    boundary: "CompactBoundary | None" = None
+    boundary: CompactBoundary | None = None
 
 
 @dataclass
@@ -173,6 +168,7 @@ AgentEvent = (
 # LLM 响应收集器
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ThinkingBlock:
     thinking: str
@@ -195,9 +191,7 @@ class StreamCollector:
     def __init__(self) -> None:
         self.response = LLMResponse()
 
-    async def consume(
-        self, stream: AsyncIterator[StreamEvent]
-    ) -> AsyncIterator[AgentEvent]:
+    async def consume(self, stream: AsyncIterator[StreamEvent]) -> AsyncIterator[AgentEvent]:
         async for event in stream:
             if isinstance(event, TextDelta):
                 self.response.text += event.text
@@ -205,12 +199,8 @@ class StreamCollector:
             elif isinstance(event, ThinkingDelta):
                 yield ThinkingText(text=event.text)
             elif isinstance(event, ThinkingComplete):
-                self.response.thinking_blocks.append(
-                    ThinkingBlock(thinking=event.thinking, signature=event.signature)
-                )
-            elif isinstance(event, ToolCallStart):
-                pass
-            elif isinstance(event, ToolCallDelta):
+                self.response.thinking_blocks.append(ThinkingBlock(thinking=event.thinking, signature=event.signature))
+            elif isinstance(event, ToolCallStart) or isinstance(event, ToolCallDelta):
                 pass
             elif isinstance(event, ToolCallComplete):
                 self.response.tool_calls.append(event)
@@ -230,6 +220,7 @@ class StreamCollector:
 # ---------------------------------------------------------------------------
 # tool 批量执行
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ToolBatch:
@@ -256,6 +247,7 @@ def partition_tool_calls(
 # ---------------------------------------------------------------------------
 # streaming 执行器 — 在 LLM streaming 期间启动 tool 执行
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ToolExecResult:
@@ -287,13 +279,15 @@ class StreamingExecutor:
         out: list[_ToolExecResult] = []
         for r in results:
             if isinstance(r, Exception):
-                out.append(_ToolExecResult(
-                    tool_id="",
-                    tool_name="",
-                    result=ToolResult(output=f"Tool execution error: {r}", is_error=True),
-                    elapsed=0.0,
-                    is_unknown=False,
-                ))
+                out.append(
+                    _ToolExecResult(
+                        tool_id="",
+                        tool_name="",
+                        result=ToolResult(output=f"Tool execution error: {r}", is_error=True),
+                        elapsed=0.0,
+                        is_unknown=False,
+                    )
+                )
             else:
                 out.append(r)
         return out
@@ -302,6 +296,7 @@ class StreamingExecutor:
 # ---------------------------------------------------------------------------
 # Agent 主循环
 # ---------------------------------------------------------------------------
+
 
 class Agent:
     def __init__(
@@ -323,9 +318,7 @@ class Agent:
         self.work_dir = work_dir
         self.max_iterations = max_iterations
         self.permission_checker = permission_checker
-        self.permission_mode: PermissionMode = (
-            permission_checker.mode if permission_checker else PermissionMode.DEFAULT
-        )
+        self.permission_mode: PermissionMode = permission_checker.mode if permission_checker else PermissionMode.DEFAULT
         self.context_window = context_window
         self.session_dir = ensure_session_dir(work_dir)
         self.compact_breaker = CompactCircuitBreaker()
@@ -382,14 +375,61 @@ class Agent:
     def _get_plan_path(self) -> Path:
         if self._plan_path_cache is not None:
             return self._plan_path_cache
-        import random
         import datetime
-        _ADJECTIVES = ["bold", "bright", "calm", "cool", "deep", "fair", "fast", "fine",
-                       "glad", "keen", "kind", "lean", "mild", "neat", "pure", "safe",
-                       "slim", "soft", "tall", "warm", "wise", "grand", "swift", "vivid"]
-        _NOUNS = ["sketch", "draft", "spark", "bloom", "trail", "ridge", "creek", "grove",
-                  "cliff", "cloud", "field", "forge", "frost", "haven", "pearl", "stone",
-                  "storm", "river", "tower", "delta", "flame", "orbit", "pulse", "shore"]
+        import random
+
+        _ADJECTIVES = [
+            "bold",
+            "bright",
+            "calm",
+            "cool",
+            "deep",
+            "fair",
+            "fast",
+            "fine",
+            "glad",
+            "keen",
+            "kind",
+            "lean",
+            "mild",
+            "neat",
+            "pure",
+            "safe",
+            "slim",
+            "soft",
+            "tall",
+            "warm",
+            "wise",
+            "grand",
+            "swift",
+            "vivid",
+        ]
+        _NOUNS = [
+            "sketch",
+            "draft",
+            "spark",
+            "bloom",
+            "trail",
+            "ridge",
+            "creek",
+            "grove",
+            "cliff",
+            "cloud",
+            "field",
+            "forge",
+            "frost",
+            "haven",
+            "pearl",
+            "stone",
+            "storm",
+            "river",
+            "tower",
+            "delta",
+            "flame",
+            "orbit",
+            "pulse",
+            "shore",
+        ]
         plans_dir = Path(self.work_dir) / ".xhx" / "plans"
         plans_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%m%d-%H%M")
@@ -410,7 +450,6 @@ class Agent:
 
     def set_skill_catalog(self, catalog: str) -> None:
         self._skill_catalog = catalog
-
 
     def set_agent_catalog(self, catalog: str, catalog_list: list[tuple[str, str]] | None = None) -> None:
         self._agent_catalog = catalog
@@ -480,9 +519,7 @@ class Agent:
             iteration += 1
 
             if iteration > self.max_iterations:
-                yield ErrorEvent(
-                    message=f"Agent reached maximum iterations ({self.max_iterations})"
-                )
+                yield ErrorEvent(message=f"Agent reached maximum iterations ({self.max_iterations})")
                 break
 
             if self.hook_engine:
@@ -516,9 +553,7 @@ class Agent:
                 )
                 conversation.inject_environment(env_context)
                 mem = self.memory_manager.load() if self.memory_manager else ""
-                conversation.inject_long_term_memory(
-                    self.instructions_content, mem
-                )
+                conversation.inject_long_term_memory(self.instructions_content, mem)
             elif isinstance(compact_result, str):
                 yield ErrorEvent(message=compact_result)
 
@@ -528,9 +563,7 @@ class Agent:
                 for he in self._drain_hook_events():
                     yield he
 
-            hook_prompts = (
-                self.hook_engine.collect_prompt_messages() if self.hook_engine else None
-            )
+            hook_prompts = self.hook_engine.collect_prompt_messages() if self.hook_engine else None
             system = build_system_prompt(
                 hook_prompts=hook_prompts,
                 coordinator_mode=self.coordinator_mode,
@@ -542,16 +575,12 @@ class Agent:
                 if self.permission_checker:
                     self.permission_checker.plan_file_path = plan_path
                 plan_exists = self._get_plan_path().exists()
-                plan_reminder = build_plan_mode_reminder(
-                    plan_path, plan_exists, iteration
-                )
+                plan_reminder = build_plan_mode_reminder(plan_path, plan_exists, iteration)
                 conversation.add_system_reminder(plan_reminder)
 
             if self.hook_engine:
                 for note in self.hook_engine.drain_notifications():
-                    conversation.add_system_reminder(
-                        f"Hook [{note.hook_id}] {note.event}: {note.output}"
-                    )
+                    conversation.add_system_reminder(f"Hook [{note.hook_id}] {note.event}: {note.output}")
 
             deferred_names = self.registry.get_deferred_tool_names()
             if deferred_names:
@@ -567,9 +596,7 @@ class Agent:
             # Layer 1: 在 LLM 调用前应用 tool-result budget，确保 api_conv 反映
             # 本轮迭代中所有已发生的写入（system reminders、hook 通知等）。
             # 原始 conversation 不会被修改；替换决策保存在 self.replacement_state 中。
-            api_conv, _new_records = apply_tool_result_budget(
-                conversation, self.session_dir, self.replacement_state
-            )
+            api_conv, _new_records = apply_tool_result_budget(conversation, self.session_dir, self.replacement_state)
             if _new_records:
                 append_replacement_records(self.session_dir, _new_records)
 
@@ -594,8 +621,7 @@ class Agent:
             )
 
             conv_thinking = [
-                ConvThinkingBlock(thinking=tb.thinking, signature=tb.signature)
-                for tb in response.thinking_blocks
+                ConvThinkingBlock(thinking=tb.thinking, signature=tb.signature) for tb in response.thinking_blocks
             ]
 
             if response.stop_reason == "max_tokens":
@@ -603,9 +629,7 @@ class Agent:
                     self.client.set_max_output_tokens(MAX_TOKENS_CEILING)
                     max_tokens_escalated = True
                     if response.text:
-                        conversation.add_assistant_message(
-                            response.text, thinking_blocks=conv_thinking
-                        )
+                        conversation.add_assistant_message(response.text, thinking_blocks=conv_thinking)
                         conversation.add_user_message(
                             "Output token limit hit. Resume directly from where you stopped. "
                             "Do not apologize or repeat previous content. Pick up mid-thought if needed."
@@ -614,29 +638,20 @@ class Agent:
                     continue
                 elif output_recoveries < MAX_OUTPUT_TOKENS_RECOVERIES:
                     output_recoveries += 1
-                    conversation.add_assistant_message(
-                        response.text, thinking_blocks=conv_thinking
-                    )
+                    conversation.add_assistant_message(response.text, thinking_blocks=conv_thinking)
                     conversation.add_user_message(
                         "Output token limit hit. Resume directly from where you stopped. "
                         "Break remaining work into smaller pieces."
                     )
-                    yield RetryEvent(
-                        reason=f"max_tokens recovery {output_recoveries}/{MAX_OUTPUT_TOKENS_RECOVERIES}"
-                    )
+                    yield RetryEvent(reason=f"max_tokens recovery {output_recoveries}/{MAX_OUTPUT_TOKENS_RECOVERIES}")
                     continue
             else:
                 output_recoveries = 0
 
             if not response.tool_calls:
-                conversation.add_assistant_message(
-                    response.text, thinking_blocks=conv_thinking
-                )
+                conversation.add_assistant_message(response.text, thinking_blocks=conv_thinking)
                 self._loop_count += 1
-                if (
-                    self._loop_count % MEMORY_EXTRACTION_INTERVAL == 0
-                    and self.memory_manager
-                ):
+                if self._loop_count % MEMORY_EXTRACTION_INTERVAL == 0 and self.memory_manager:
                     asyncio.ensure_future(self._extract_memories(conversation))
                 if self.hook_engine:
                     ctx = self._build_hook_context("turn_end")
@@ -659,9 +674,7 @@ class Agent:
                 )
                 for tc in response.tool_calls
             ]
-            conversation.add_assistant_message(
-                response.text, tool_uses, thinking_blocks=conv_thinking
-            )
+            conversation.add_assistant_message(response.text, tool_uses, thinking_blocks=conv_thinking)
             # 在 assistant 回复加入历史后锚定实际用量：基线（input + cache + output）
             # 覆盖到当前位置，因此下一轮迭代顶部的 auto-compact 检查只需对
             # 接下来追加的 tool results 做字符估算。
@@ -683,9 +696,7 @@ class Agent:
                             consecutive_unknown += 1
                         else:
                             consecutive_unknown = 0
-                        content = self._maybe_persist_or_truncate(
-                            br.tool_id, br.result.output
-                        )
+                        content = self._maybe_persist_or_truncate(br.tool_id, br.result.output)
                         tool_results.append(
                             ToolResultBlock(
                                 tool_use_id=br.tool_id,
@@ -726,9 +737,7 @@ class Agent:
                                     output=f"Hook rejected: {rejection.reason}",
                                     is_error=True,
                                 )
-                                content = self._maybe_persist_or_truncate(
-                                    tc.tool_id, result.output
-                                )
+                                content = self._maybe_persist_or_truncate(tc.tool_id, result.output)
                                 tool_results.append(
                                     ToolResultBlock(
                                         tool_use_id=tc.tool_id,
@@ -771,9 +780,7 @@ class Agent:
                             for he in self._drain_hook_events():
                                 yield he
 
-                        content = self._maybe_persist_or_truncate(
-                            tc.tool_id, result.output
-                        )
+                        content = self._maybe_persist_or_truncate(tc.tool_id, result.output)
                         tool_results.append(
                             ToolResultBlock(
                                 tool_use_id=tc.tool_id,
@@ -790,14 +797,10 @@ class Agent:
                         )
 
             if consecutive_unknown >= 3:
-                yield ErrorEvent(
-                    message="Agent terminated: too many consecutive unknown tool calls"
-                )
+                yield ErrorEvent(message="Agent terminated: too many consecutive unknown tool calls")
                 break
 
-            exit_plan_called = any(
-                tc.tool_name == "ExitPlanMode" for tc in response.tool_calls
-            )
+            exit_plan_called = any(tc.tool_name == "ExitPlanMode" for tc in response.tool_calls)
             conversation.add_tool_results_message(tool_results)
             if exit_plan_called:
                 yield TurnComplete(turn=iteration)
@@ -810,7 +813,6 @@ class Agent:
                 for he in self._drain_hook_events():
                     yield he
             yield TurnComplete(turn=iteration)
-
 
     def _consume_mailbox(self, conversation: ConversationManager) -> None:
         if not self.team_name or not self._team_manager:
@@ -836,9 +838,7 @@ class Agent:
             return tc.arguments.get("file_path", tc.tool_name)
         return str(tc.arguments)
 
-    async def _execute_single_tool_direct(
-        self, tc: ToolCallComplete
-    ) -> _ToolExecResult:
+    async def _execute_single_tool_direct(self, tc: ToolCallComplete) -> _ToolExecResult:
         tool = self.registry.get(tc.tool_name)
         start = time.monotonic()
 
@@ -878,24 +878,17 @@ class Agent:
             is_unknown=False,
         )
 
-
-    async def _execute_batch_parallel(
-        self, calls: list[ToolCallComplete]
-    ) -> list[_ToolExecResult]:
+    async def _execute_batch_parallel(self, calls: list[ToolCallComplete]) -> list[_ToolExecResult]:
         tasks = [self._execute_single_tool_direct(tc) for tc in calls]
         return list(await asyncio.gather(*tasks))
 
-    async def _execute_tool(
-        self, tc: ToolCallComplete
-    ) -> AsyncIterator[tuple[ToolResult, float, bool]]:
+    async def _execute_tool(self, tc: ToolCallComplete) -> AsyncIterator[tuple[ToolResult, float, bool]]:
         tool = self.registry.get(tc.tool_name)
         start = time.monotonic()
         is_unknown = False
 
         if tool is None:
-            result = ToolResult(
-                output=f"Error: unknown tool '{tc.tool_name}'", is_error=True
-            )
+            result = ToolResult(output=f"Error: unknown tool '{tc.tool_name}'", is_error=True)
             is_unknown = True
             elapsed = time.monotonic() - start
             yield result, elapsed, is_unknown
@@ -946,6 +939,7 @@ class Agent:
 
                 if response == PermissionResponse.ALLOW_ALWAYS:
                     from xhx_agent.permissions.rules import Rule, extract_content
+
                     content = extract_content(tc.tool_name, tc.arguments)
                     pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"
                     rule = Rule(tool_name=tc.tool_name, pattern=pattern, effect="allow")
@@ -955,22 +949,16 @@ class Agent:
             params = tool.params_model.model_validate(tc.arguments)
             result = await tool.execute(params)
         except ValidationError as e:
-            result = ToolResult(
-                output=f"Parameter validation error: {e}", is_error=True
-            )
+            result = ToolResult(output=f"Parameter validation error: {e}", is_error=True)
         except Exception as e:
-            result = ToolResult(
-                output=f"Tool execution error: {e}", is_error=True
-            )
+            result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
 
         self._snapshot_for_recovery(tc, result)
 
         elapsed = time.monotonic() - start
         yield result, elapsed, is_unknown
 
-    def _snapshot_for_recovery(
-        self, tc: ToolCallComplete, result: ToolResult
-    ) -> None:
+    def _snapshot_for_recovery(self, tc: ToolCallComplete, result: ToolResult) -> None:
         """捕获 ReadFile 刚交给模型的内容，以便 Layer 2 压缩对话后
         auto_compact 能重新附加这些数据。每次 ReadFile 多一次磁盘读取，
         比从 tool 输出中反向解析行号要划算。
@@ -981,30 +969,24 @@ class Agent:
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(path, encoding="utf-8", errors="replace") as fh:
                 content = fh.read()
         except OSError:
             return
         self.recovery_state.record_file_read(path, content)
 
-    async def _extract_memories(
-        self, conversation: ConversationManager
-    ) -> None:
+    async def _extract_memories(self, conversation: ConversationManager) -> None:
         if self._extracting or not self.memory_manager:
             return
         self._extracting = True
         try:
-            await self.memory_manager.extract(
-                self.client, conversation, self.protocol
-            )
+            await self.memory_manager.extract(self.client, conversation, self.protocol)
         except Exception as e:
             log.debug("Memory extraction failed: %s", e)
         finally:
             self._extracting = False
 
-    async def manual_compact(
-        self, conversation: ConversationManager
-    ) -> CompactNotification | ErrorEvent:
+    async def manual_compact(self, conversation: ConversationManager) -> CompactNotification | ErrorEvent:
         # auto_compact 会用摘要替换 conversation.history，所有 tool-result 内容
         # （原始或已替换的）都将被丢弃。这里跳过 apply_tool_result_budget —
         # 它在主循环中的唯一目的是为 LLM 调用生成 api_conv，而本路径不需要
@@ -1023,13 +1005,11 @@ class Agent:
         )
         if isinstance(result, CompactEvent):
             env_context = build_environment_context(
-            self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog
-        )
+                self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog
+            )
             conversation.inject_environment(env_context)
             memory_content = self.memory_manager.load() if self.memory_manager else ""
-            conversation.inject_long_term_memory(
-                self.instructions_content, memory_content
-            )
+            conversation.inject_long_term_memory(self.instructions_content, memory_content)
             return CompactNotification(
                 before_tokens=result.before_tokens,
                 message=f"上下文已压缩（压缩前 {result.before_tokens:,} tokens）",
@@ -1038,7 +1018,9 @@ class Agent:
         return ErrorEvent(message=result or "压缩失败：对话历史为空或未达到压缩条件")
 
     async def run_to_completion(
-        self, task: str, conversation: ConversationManager | None = None,
+        self,
+        task: str,
+        conversation: ConversationManager | None = None,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         if conversation is None:
@@ -1051,16 +1033,12 @@ class Agent:
 
             if self.instructions_content:
                 memory_content = self.memory_manager.load() if self.memory_manager else ""
-                conversation.inject_long_term_memory(
-                    self.instructions_content, memory_content
-                )
+                conversation.inject_long_term_memory(self.instructions_content, memory_content)
 
         if task:
             conversation.add_user_message(task)
 
-        hook_prompts = (
-            self.hook_engine.collect_prompt_messages() if self.hook_engine else None
-        )
+        hook_prompts = self.hook_engine.collect_prompt_messages() if self.hook_engine else None
         system = build_system_prompt(
             hook_prompts=hook_prompts,
             coordinator_mode=self.coordinator_mode,
@@ -1114,9 +1092,7 @@ class Agent:
                     + "\n".join(deferred_names)
                 )
 
-            api_conv, _new_records = apply_tool_result_budget(
-                conversation, self.session_dir, self.replacement_state
-            )
+            api_conv, _new_records = apply_tool_result_budget(conversation, self.session_dir, self.replacement_state)
             if _new_records:
                 append_replacement_records(self.session_dir, _new_records)
 
@@ -1130,26 +1106,33 @@ class Agent:
             self.total_output_tokens += response.output_tokens
 
             if event_callback:
-                event_callback({
-                    "type": "usage",
-                    "usage": {
-                        "inputTokens": self.total_input_tokens,
-                        "outputTokens": self.total_output_tokens,
-                    },
-                })
+                event_callback(
+                    {
+                        "type": "usage",
+                        "usage": {
+                            "inputTokens": self.total_input_tokens,
+                            "outputTokens": self.total_output_tokens,
+                        },
+                    }
+                )
 
             if response.text:
                 last_text = response.text
                 if event_callback:
-                    event_callback({
-                        "type": "stream_text",
-                        "text": response.text,
-                    })
+                    event_callback(
+                        {
+                            "type": "stream_text",
+                            "text": response.text,
+                        }
+                    )
 
             log.info(
                 "[run_to_completion] agent=%s iter=%d tool_calls=%d text_len=%d stop=%s",
-                self.agent_id, iteration, len(response.tool_calls),
-                len(response.text), response.stop_reason,
+                self.agent_id,
+                iteration,
+                len(response.tool_calls),
+                len(response.text),
+                response.stop_reason,
             )
 
             if not response.tool_calls:
@@ -1181,11 +1164,13 @@ class Agent:
             tool_results: list[ToolResultBlock] = []
             for tc in response.tool_calls:
                 if event_callback:
-                    event_callback({
-                        "type": "tool_use",
-                        "toolName": tc.tool_name,
-                        "args": tc.arguments,
-                    })
+                    event_callback(
+                        {
+                            "type": "tool_use",
+                            "toolName": tc.tool_name,
+                            "args": tc.arguments,
+                        }
+                    )
                 result = await self._execute_tool_noninteractive(tc)
                 content = self._maybe_persist_or_truncate(tc.tool_id, result.output)
                 tool_results.append(
@@ -1208,15 +1193,11 @@ class Agent:
 
         return last_text
 
-    async def _execute_tool_noninteractive(
-        self, tc: ToolCallComplete
-    ) -> ToolResult:
+    async def _execute_tool_noninteractive(self, tc: ToolCallComplete) -> ToolResult:
         tool = self.registry.get(tc.tool_name)
 
         if tool is None:
-            return ToolResult(
-                output=f"Error: unknown tool '{tc.tool_name}'", is_error=True
-            )
+            return ToolResult(output=f"Error: unknown tool '{tc.tool_name}'", is_error=True)
 
         if not self.registry.is_enabled(tc.tool_name):
             return ToolResult(
@@ -1260,13 +1241,9 @@ class Agent:
             params = tool.params_model.model_validate(tc.arguments)
             result = await tool.execute(params)
         except ValidationError as e:
-            result = ToolResult(
-                output=f"Parameter validation error: {e}", is_error=True
-            )
+            result = ToolResult(output=f"Parameter validation error: {e}", is_error=True)
         except Exception as e:
-            result = ToolResult(
-                output=f"Tool execution error: {e}", is_error=True
-            )
+            result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
 
         if not result.is_error:
             self._record_changed_file(tc.tool_name, tc.arguments)

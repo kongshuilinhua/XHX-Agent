@@ -21,8 +21,7 @@ class TaskCreateParams(BaseModel):
 class TaskCreateTool(Tool):
     name = "TaskCreate"
     description = (
-        "Create a shared task in the team's task board. "
-        "Supports dependency tracking with blocks/blocked_by fields."
+        "Create a shared task in the team's task board. Supports dependency tracking with blocks/blocked_by fields."
     )
     params_model = TaskCreateParams
     category = "command"
@@ -30,7 +29,7 @@ class TaskCreateTool(Tool):
 
     def __init__(
         self,
-        team_manager: "TeamManager",
+        team_manager: TeamManager,
         team_name: str,
         agent_name: str = "",
     ) -> None:

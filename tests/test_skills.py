@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 
 from xhx_agent.context.compiler import compile_context_pack
+from xhx_agent.hooks import hooks_manager
 from xhx_agent.repo_intel.scanner import ProjectScan
 from xhx_agent.runtime.mcp_config import MCPServerConfig
-from xhx_agent.hooks import hooks_manager
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.skills.metadata import Skill, SkillMetadata

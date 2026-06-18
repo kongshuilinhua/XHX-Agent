@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from xhx_agent.tools.base import StreamEnd, StreamEvent, TextDelta, ToolCallComplete
 
@@ -36,7 +37,7 @@ class AsyncClientWrapper:
                 None,
                 lambda: self._client.chat(api_messages, tools),
             )
-        except Exception as e:
+        except Exception:
             yield StreamEnd(
                 stop_reason="error",
                 input_tokens=0,
@@ -80,6 +81,7 @@ class AsyncClientWrapper:
 
             if isinstance(fn_args, str):
                 import json
+
                 try:
                     fn_args = json.loads(fn_args)
                 except json.JSONDecodeError:

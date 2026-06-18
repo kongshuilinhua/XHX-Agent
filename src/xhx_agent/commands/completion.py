@@ -1,4 +1,5 @@
 """命令补全系统。"""
+
 from textual.widgets import Static
 
 
@@ -16,10 +17,7 @@ class CompletionPopup(Static):
         self._items = items
         self._selected_idx = 0 if items else -1
         if items:
-            text = "\n".join(
-                f"{'> ' if i == self._selected_idx else '  '}{item}"
-                for i, item in enumerate(items[:10])
-            )
+            text = "\n".join(f"{'> ' if i == self._selected_idx else '  '}{item}" for i, item in enumerate(items[:10]))
             self.update(text)
             self.display = True
             self.is_visible = True
@@ -50,8 +48,7 @@ class CompletionPopup(Static):
 
     def _refresh_display(self) -> None:
         text = "\n".join(
-            f"{'> ' if i == self._selected_idx else '  '}{item}"
-            for i, item in enumerate(self._items[:10])
+            f"{'> ' if i == self._selected_idx else '  '}{item}" for i, item in enumerate(self._items[:10])
         )
         self.update(text)
 

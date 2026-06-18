@@ -3,16 +3,17 @@
 已删除依赖旧栈的命令: /mode /evidence /repair /dashboard /live /context /diff /skills。
 已由 handlers/ 覆盖的命令: /clear /help /plan /permission /compact /status /memory /session。
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from xhx_agent.commands import Command, CommandContext
 
-
 # ---------------------------------------------------------------------------
 # handler 函数
 # ---------------------------------------------------------------------------
+
 
 async def _handle_exit(ctx: CommandContext) -> None:
     """退出 TUI。"""
@@ -47,7 +48,6 @@ async def _handle_deny(ctx: CommandContext) -> None:
 
 async def _handle_model(ctx: CommandContext) -> None:
     """显示或切换模型。"""
-    arg = ctx.args.strip()
     if ctx.agent:
         profile = getattr(ctx.agent, "profile", None)
         provider = getattr(ctx.agent, "provider", None)
@@ -63,9 +63,8 @@ async def _handle_model(ctx: CommandContext) -> None:
 
 async def _handle_cancel(ctx: CommandContext) -> None:
     """请求取消当前任务。"""
-    if ctx.agent:
-        if hasattr(ctx.agent, "_agent_task") and ctx.agent._agent_task:
-            ctx.agent._agent_task.cancel()
+    if ctx.agent and hasattr(ctx.agent, "_agent_task") and ctx.agent._agent_task:
+        ctx.agent._agent_task.cancel()
     ctx.ui.add_system_message("已请求取消当前任务")
 
 
@@ -98,7 +97,8 @@ async def _handle_verbose(ctx: CommandContext) -> None:
 # ---------------------------------------------------------------------------
 
 EXIT_CMD = Command(
-    name="exit", aliases=["quit", "q"],
+    name="exit",
+    aliases=["quit", "q"],
     description="退出 XHX-Agent",
     usage="/exit",
     handler=_handle_exit,
@@ -157,6 +157,7 @@ VERBOSE_CMD = Command(
 # ---------------------------------------------------------------------------
 # 注册入口
 # ---------------------------------------------------------------------------
+
 
 def register_default_commands(registry: Any) -> None:
     """注册所有默认命令（新式 Command 对象）。"""

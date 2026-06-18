@@ -1,4 +1,5 @@
 """SendMessage 工具 — 团队内部消息。"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel

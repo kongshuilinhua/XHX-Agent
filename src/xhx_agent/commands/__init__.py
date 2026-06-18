@@ -1,6 +1,8 @@
 """命令系统。"""
+
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from xhx_agent.commands.parser import parse_command
 from xhx_agent.commands.registry import CommandInfo, CommandRegistry
@@ -16,6 +18,7 @@ class UIController(Protocol):
 @dataclass
 class CommandContext:
     """命令执行上下文。"""
+
     args: str = ""
     agent: Any = None
     conversation: Any = None
@@ -30,6 +33,7 @@ class CommandContext:
 @dataclass
 class Command:
     """命令定义。"""
+
     name: str
     description: str
     type: str = "LOCAL"
@@ -74,11 +78,10 @@ def complete(prefix: str, registry: Any) -> list[tuple[str, str]]:
 
     # 旧式 matching（兼容）
     if not results and hasattr(registry, "matching"):
-        for name, desc, hint in registry.matching(prefix):
+        for name, _desc, hint in registry.matching(prefix):
             display = f"/{name}"
             if hint:
                 display += f"  ({hint})"
             results.append((display, name))
 
     return results
-

@@ -2,6 +2,7 @@
 
 独立于运行时引擎，供 `xhx init` 与测试直接调用，不依赖 RuntimeApp。
 """
+
 from __future__ import annotations
 
 from pathlib import Path

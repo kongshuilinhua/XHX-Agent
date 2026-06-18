@@ -23,6 +23,7 @@ from xhx_agent.memory.store import (
 
 class Session:
     """会话句柄（占位）。"""
+
     def __init__(self, session_id: str = "", **kwargs: object) -> None:
         self.session_id = session_id or "session-0"
 
@@ -35,11 +36,13 @@ class Session:
 
 class SessionManager:
     """会话管理器（占位）。"""
+
     def __init__(self, work_dir: str = "") -> None:
         self._work_dir = work_dir
 
     def create(self) -> Session:
         import uuid
+
         return Session(session_id=uuid.uuid4().hex[:12])
 
     def cleanup(self) -> None:
@@ -57,6 +60,7 @@ def generate_session_summary(messages: list, model: str = "") -> str:
 def load_instructions(work_dir: str) -> str:
     """加载项目指令。"""
     from pathlib import Path
+
     p = Path(work_dir) / "XHX.md"
     if p.exists():
         return p.read_text(encoding="utf-8")

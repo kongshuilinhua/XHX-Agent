@@ -1,5 +1,4 @@
-"""Hook 数据模型：Hook 定义、上下文、动作、结果。
-"""
+"""Hook 数据模型：Hook 定义、上下文、动作、结果。"""
 
 from __future__ import annotations
 
@@ -12,7 +11,8 @@ from xhx_agent.hooks.conditions import ConditionGroup
 @dataclass
 class Action:
     """Hook 触发的动作定义。"""
-    type: str                                    # command / prompt / http / agent
+
+    type: str  # command / prompt / http / agent
     command: str = ""
     message: str = ""
     url: str = ""
@@ -26,6 +26,7 @@ class Action:
 @dataclass
 class ActionResult:
     """动作执行结果。"""
+
     output: str = ""
     success: bool = True
 
@@ -33,13 +34,14 @@ class ActionResult:
 @dataclass
 class Hook:
     """单条 Hook 定义。"""
+
     id: str
     event: str
     action: Action
     condition: ConditionGroup | None = None
-    reject: bool = False       # 拒绝工具执行（仅 pre_tool_use）
-    once: bool = False         # 一次性 hook
-    async_exec: bool = False   # 异步执行（不能与 pre_tool_use 同时使用）
+    reject: bool = False  # 拒绝工具执行（仅 pre_tool_use）
+    once: bool = False  # 一次性 hook
+    async_exec: bool = False  # 异步执行（不能与 pre_tool_use 同时使用）
     executed: bool = False
 
     def should_run(self) -> bool:
@@ -54,6 +56,7 @@ class Hook:
 @dataclass
 class HookContext:
     """Hook 执行时的上下文信息，支持模板展开。"""
+
     event_name: str = ""
     tool_name: str = ""
     tool_args: dict[str, Any] = field(default_factory=dict)

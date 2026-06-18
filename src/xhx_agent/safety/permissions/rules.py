@@ -101,11 +101,13 @@ def extract_content(tool_name: str, arguments: dict[str, Any]) -> str:
             patch_str = str(patch_arg)
             try:
                 from xhx_agent.tools.patch import _parse_patch
+
                 paths = [op.path for op in _parse_patch(patch_str)]
                 return " ".join(paths) if paths else ""
             except Exception:
                 # 回退：尝试从信封格式提取路径（*** Update File: <path>）
                 import re
+
                 envelope_paths = re.findall(r"\*{3}\s*Update\s*File:\s*(\S+)", patch_str)
                 if envelope_paths:
                     return " ".join(envelope_paths)
@@ -222,10 +224,7 @@ class RuleEngine:
         self._local_path.parent.mkdir(parents=True, exist_ok=True)
         existing = _load_rules_file(self._local_path)
         existing.append(rule)
-        entries = [
-            {"rule": f"{r.tool_name}({r.pattern})", "effect": r.effect}
-            for r in existing
-        ]
+        entries = [{"rule": f"{r.tool_name}({r.pattern})", "effect": r.effect} for r in existing]
         # 按原扩展名写入
         suffix = self._local_path.suffix.lower()
         if suffix in (".yaml", ".yml"):

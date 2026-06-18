@@ -19,7 +19,6 @@ class MailboxMessage:
     timestamp: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -34,7 +33,6 @@ class Mailbox:
 
     def _agent_dir(self, agent_id: str) -> Path:
         return self._base_dir / agent_id
-
 
     def write(self, agent_id: str, message: MailboxMessage) -> None:
         d = self._agent_dir(agent_id)
@@ -86,7 +84,6 @@ class Mailbox:
             if agent_id == exclude:
                 continue
             self.write(agent_id, message)
-
 
     def cleanup(self, agent_id: str) -> None:
         d = self._agent_dir(agent_id)

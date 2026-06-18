@@ -32,7 +32,7 @@ class TaskUpdateTool(Tool):
     category = "command"
     is_concurrency_safe = True
 
-    def __init__(self, team_manager: "TeamManager", team_name: str) -> None:
+    def __init__(self, team_manager: TeamManager, team_name: str) -> None:
         self._team_manager = team_manager
         self._team_name = team_name
 
@@ -41,8 +41,7 @@ class TaskUpdateTool(Tool):
 
         if p.status and p.status not in VALID_STATUSES:
             return ToolResult(
-                output=f"Invalid status '{p.status}'. "
-                f"Must be one of: {', '.join(sorted(VALID_STATUSES))}",
+                output=f"Invalid status '{p.status}'. Must be one of: {', '.join(sorted(VALID_STATUSES))}",
                 is_error=True,
             )
 
@@ -63,9 +62,7 @@ class TaskUpdateTool(Tool):
         )
 
         if task is None:
-            return ToolResult(
-                output=f"Task '{p.task_id}' not found", is_error=True
-            )
+            return ToolResult(output=f"Task '{p.task_id}' not found", is_error=True)
 
         changes: list[str] = []
         if p.status:
@@ -79,6 +76,4 @@ class TaskUpdateTool(Tool):
         if p.add_blocked_by:
             changes.append(f"blocked_by += {', '.join(p.add_blocked_by)}")
 
-        return ToolResult(
-            output=f"Task {task.id} updated: {'; '.join(changes) if changes else 'no changes'}"
-        )
+        return ToolResult(output=f"Task {task.id} updated: {'; '.join(changes) if changes else 'no changes'}")

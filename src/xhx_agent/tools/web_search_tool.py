@@ -44,9 +44,7 @@ class WebSearchTool(Tool):
         try:
             from xhx_agent.tools.web import web_search
 
-            results = web_search(
-                params.query, self._api_key, max_results=self._max_results
-            )
+            results = web_search(params.query, self._api_key, max_results=self._max_results)
 
             lines = []
             for idx, item in enumerate(results, 1):
@@ -57,6 +55,4 @@ class WebSearchTool(Tool):
 
             return ToolResult(output=summary)
         except Exception as e:
-            return ToolResult(
-                output=f"Web search failed: {e}", is_error=True
-            )
+            return ToolResult(output=f"Web search failed: {e}", is_error=True)

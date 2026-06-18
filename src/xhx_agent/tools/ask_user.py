@@ -1,4 +1,5 @@
 """AskUser 工具 — 交互式用户询问。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

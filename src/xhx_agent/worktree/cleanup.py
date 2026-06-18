@@ -17,6 +17,7 @@ async def start_stale_cleanup_task(
     **kwargs: Any,
 ) -> None:
     """启动后台任务，定期清理 stale worktree。"""
+
     async def _loop() -> None:
         while True:
             await asyncio.sleep(interval)

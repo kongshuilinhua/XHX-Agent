@@ -4,8 +4,9 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xhx_agent.agent import Agent
@@ -36,13 +37,10 @@ class BackgroundTask:
 
 
 class TaskManager:
-
-
     def __init__(self) -> None:
         self._tasks: dict[str, BackgroundTask] = {}
         self._notify_queue: asyncio.Queue[str] = asyncio.Queue()
         self._async_tasks: dict[str, asyncio.Task[None]] = {}
-
 
     def launch(
         self,
@@ -60,18 +58,13 @@ class TaskManager:
         )
         self._tasks[task_id] = bg
 
-        async_task = asyncio.create_task(
-            self._run_background(task_id, fork_conversation)
-        )
+        async_task = asyncio.create_task(self._run_background(task_id, fork_conversation))
         self._async_tasks[task_id] = async_task
 
         bg.cancel = async_task.cancel
         return task_id
 
-
-    async def _run_background(
-        self, task_id: str, fork_conversation: Any = None
-    ) -> None:
+    async def _run_background(self, task_id: str, fork_conversation: Any = None) -> None:
         bg = self._tasks.get(task_id)
         if bg is None:
             return
@@ -88,6 +81,7 @@ class TaskManager:
                 mailbox = bg.agent._team_manager.get_mailbox(bg.agent.team_name)
                 if mailbox:
                     from xhx_agent.teams.mailbox import create_message
+
                     msg = create_message(
                         from_agent=bg.name,
                         to_agent="lead",
@@ -101,9 +95,7 @@ class TaskManager:
                         msgs = mailbox.consume(bg.agent.agent_id)
                         if not msgs:
                             continue
-                        prompt = "\n\n".join(
-                            f"[Message from {m.from_agent}] {m.content}" for m in msgs
-                        )
+                        prompt = "\n\n".join(f"[Message from {m.from_agent}] {m.content}" for m in msgs)
                         result = await bg.agent.run_to_completion(prompt)
                         bg.result = result
                         msg = create_message(
@@ -128,7 +120,6 @@ class TaskManager:
             self._async_tasks.pop(task_id, None)
             await self._notify_queue.put(task_id)
 
-
     def adopt_running(
         self,
         agent: Agent,
@@ -150,7 +141,6 @@ class TaskManager:
         self._async_tasks[task_id] = async_task
         bg.cancel = async_task.cancel
         return task_id
-
 
     async def _continue_background(self, task_id: str) -> None:
         bg = self._tasks.get(task_id)

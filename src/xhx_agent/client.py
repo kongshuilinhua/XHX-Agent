@@ -51,11 +51,13 @@ def _mark_last_user_tail_for_cache(messages: list[dict[str, Any]]) -> None:
         content = msg.get("content")
         if isinstance(content, str):
             # 把字符串 content 升级为 block 形式，以便附加 cache_control。
-            msg["content"] = [{
-                "type": "text",
-                "text": content,
-                "cache_control": _EPHEMERAL,
-            }]
+            msg["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": _EPHEMERAL,
+                }
+            ]
         elif isinstance(content, list) and content:
             last = content[-1]
             if isinstance(last, dict):
@@ -88,8 +90,6 @@ class AuthenticationError(LLMError):
 
 
 class RateLimitError(LLMError):
-
-
     def __init__(self, message: str, retry_after: float | None = None):
         super().__init__(message)
         self.retry_after = retry_after
@@ -116,7 +116,7 @@ class LLMClient(ABC):
 def _supports_adaptive_thinking(model: str) -> bool:
     for family in ("claude-opus-4-", "claude-sonnet-4-"):
         if model.startswith(family):
-            rest = model[len(family):]
+            rest = model[len(family) :]
             if rest and rest[0].isdigit() and int(rest[0]) >= 6:
                 return True
     return False
@@ -129,10 +129,7 @@ class AnthropicClient(LLMClient):
         self.max_output_tokens = config.get_max_output_tokens()
         api_key = config.resolve_api_key()
         if not api_key:
-            raise AuthenticationError(
-                "Anthropic API key not found. "
-                "Set it via ANTHROPIC_API_KEY env var."
-            )
+            raise AuthenticationError("Anthropic API key not found. Set it via ANTHROPIC_API_KEY env var.")
         self._client = AsyncAnthropic(api_key=api_key, base_url=config.base_url)
 
     def set_max_output_tokens(self, tokens: int) -> None:
@@ -148,9 +145,7 @@ class AnthropicClient(LLMClient):
         向外传播异常，因此在启动时调用是安全的。
         """
         try:
-            info = await self._client.models.retrieve(
-                self.model, timeout=ANTHROPIC_MODEL_FETCH_TIMEOUT
-            )
+            info = await self._client.models.retrieve(self.model, timeout=ANTHROPIC_MODEL_FETCH_TIMEOUT)
             window = getattr(info, "max_input_tokens", None)
             if isinstance(window, int) and window > 0:
                 return window
@@ -180,11 +175,13 @@ class AnthropicClient(LLMClient):
             "messages": messages,
         }
         if system:
-            kwargs["system"] = [{
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }]
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
         if tools:
             kwargs["tools"] = _mark_last_tool_for_cache(tools)
 
@@ -263,9 +260,7 @@ class AnthropicClient(LLMClient):
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cache_read=getattr(usage, "cache_read_input_tokens", 0) or 0,
-                    cache_creation=getattr(
-                        usage, "cache_creation_input_tokens", 0
-                    ) or 0,
+                    cache_creation=getattr(usage, "cache_creation_input_tokens", 0) or 0,
                 )
 
         except _anthropic.AuthenticationError as e:
@@ -289,8 +284,7 @@ class OpenAIClient(LLMClient):
         api_key = config.resolve_api_key()
         if not api_key:
             raise AuthenticationError(
-                "OpenAI API key not found. "
-                "Set it in .xhx/config.yaml or via OPENAI_API_KEY env var."
+                "OpenAI API key not found. Set it in .xhx/config.yaml or via OPENAI_API_KEY env var."
             )
         self._client = AsyncOpenAI(api_key=api_key, base_url=config.base_url)
 
@@ -412,8 +406,7 @@ class OpenAICompatClient(LLMClient):
         api_key = config.resolve_api_key()
         if not api_key:
             raise AuthenticationError(
-                "OpenAI-compatible API key not found. "
-                "Set it in .xhx/config.yaml or via OPENAI_API_KEY env var."
+                "OpenAI-compatible API key not found. Set it in .xhx/config.yaml or via OPENAI_API_KEY env var."
             )
         self._client = AsyncOpenAI(api_key=api_key, base_url=config.base_url)
 
@@ -437,14 +430,16 @@ class OpenAICompatClient(LLMClient):
         """
         converted: list[dict[str, Any]] = []
         for t in tools:
-            converted.append({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t.get("parameters", t.get("input_schema", {})),
-                },
-            })
+            converted.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("parameters", t.get("input_schema", {})),
+                    },
+                }
+            )
         return converted
 
     async def stream(
@@ -485,9 +480,7 @@ class OpenAICompatClient(LLMClient):
                         # 上报 cache 命中数，大多数不上报（cache_read 保持 0）。
                         # prompt_tokens 包含了缓存 token，需要减去以保持
                         # input + cache_read 可加性。没有 provider 上报 creation 计数。
-                        details = getattr(
-                            chunk.usage, "prompt_tokens_details", None
-                        )
+                        details = getattr(chunk.usage, "prompt_tokens_details", None)
                         cache_read = getattr(details, "cached_tokens", 0) or 0
                         prompt_tokens = chunk.usage.prompt_tokens or 0
                         yield StreamEnd(

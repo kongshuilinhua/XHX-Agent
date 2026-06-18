@@ -1,5 +1,4 @@
-"""Agent 加载器：三层加载（项目 > 用户 > 内置）+ 热重载。
-"""
+"""Agent 加载器：三层加载（项目 > 用户 > 内置）+ 热重载。"""
 
 from __future__ import annotations
 
@@ -7,7 +6,7 @@ import importlib.resources
 import logging
 from pathlib import Path
 
-from xhx_agent.agents.parser import AgentDef, AgentParseError, parse_agent_file, parse_frontmatter, _validate_agent_meta
+from xhx_agent.agents.parser import AgentDef, AgentParseError, _validate_agent_meta, parse_agent_file, parse_frontmatter
 
 log = logging.getLogger(__name__)
 

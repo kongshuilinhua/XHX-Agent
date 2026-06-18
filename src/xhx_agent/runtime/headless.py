@@ -3,6 +3,7 @@
 供 ``xhx run`` 等命令行入口复用，与交互式 TUI 共享同一套 Agent / 工具 / 权限 / 记忆，
 避免出现"交互一套、headless 另一套"的双引擎分裂。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -116,8 +117,12 @@ async def run_headless_task_async(
     mode = PermissionMode.DONT_ASK if assume_yes else PermissionMode.DEFAULT
     try:
         agent = build_headless_agent(
-            workspace, profile, permission_mode=mode, max_iterations=max_iterations,
-            client=client, verify=verify,
+            workspace,
+            profile,
+            permission_mode=mode,
+            max_iterations=max_iterations,
+            client=client,
+            verify=verify,
         )
     except Exception as exc:  # 配置/构造期失败：直接返回 error，不抛给 CLI
         return HeadlessResult(status="error", summary="", error=str(exc))

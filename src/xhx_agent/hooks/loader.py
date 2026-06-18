@@ -1,5 +1,4 @@
-"""Hook 配置加载器：从 dict 列表解析 Hook 定义。
-"""
+"""Hook 配置加载器：从 dict 列表解析 Hook 定义。"""
 
 from __future__ import annotations
 
@@ -20,6 +19,7 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
 
 class HookConfigError(Exception):
     """Hook 配置错误。"""
+
     pass
 
 
@@ -66,8 +66,7 @@ def load_hooks(raw_hooks: list[dict] | None) -> list[Hook]:
             raise HookConfigError(f"{label}: missing 'event' field")
         if event not in _VALID_EVENTS:
             raise HookConfigError(
-                f"{label}: invalid event '{event}', "
-                f"must be one of: {', '.join(sorted(_VALID_EVENTS))}"
+                f"{label}: invalid event '{event}', must be one of: {', '.join(sorted(_VALID_EVENTS))}"
             )
 
         # ── action ──
@@ -85,23 +84,17 @@ def load_hooks(raw_hooks: list[dict] | None) -> list[Hook]:
         required = _REQUIRED_FIELDS[action_type]
         for field_name in required:
             if not raw_action.get(field_name):
-                raise HookConfigError(
-                    f"{label}: action type '{action_type}' requires '{field_name}' field"
-                )
+                raise HookConfigError(f"{label}: action type '{action_type}' requires '{field_name}' field")
 
         # ── reject（仅 pre_tool_use） ──
         reject = bool(entry.get("reject", False))
         if reject and event != "pre_tool_use":
-            raise HookConfigError(
-                f"{label}: 'reject' can only be used with 'pre_tool_use' event"
-            )
+            raise HookConfigError(f"{label}: 'reject' can only be used with 'pre_tool_use' event")
 
         # ── async（不能与 pre_tool_use 同时使用） ──
         async_exec = bool(entry.get("async", False))
         if async_exec and event == "pre_tool_use":
-            raise HookConfigError(
-                f"{label}: 'async' cannot be used with 'pre_tool_use' event"
-            )
+            raise HookConfigError(f"{label}: 'async' cannot be used with 'pre_tool_use' event")
 
         # ── condition ──
         condition = None

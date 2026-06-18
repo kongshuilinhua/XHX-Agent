@@ -1,5 +1,4 @@
-"""队友进度树形展示 Widget。
-"""
+"""队友进度树形展示 Widget。"""
 
 from __future__ import annotations
 
@@ -57,8 +56,7 @@ class TeammateTree(Widget):
                 lines.append(f"{p.activity_summary}", style="dim")
 
             lines.append(
-                f" · {p.tool_use_count} tools"
-                f" · {p.format_tokens(p.token_count)} tokens",
+                f" · {p.tool_use_count} tools · {p.format_tokens(p.token_count)} tokens",
                 style="dim",
             )
             if not is_last:

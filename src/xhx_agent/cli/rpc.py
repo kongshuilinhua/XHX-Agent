@@ -2,6 +2,7 @@
 
 不再依赖 RuntimeApp；init / repo-index / run 各自使用独立函数或 headless 驱动。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -123,15 +124,18 @@ def start_rpc_loop() -> None:
                         event_callback=_make_rpc_event_callback(),
                     )
                 )
-                send_rpc_response(req_id, {
-                    "status": run_res.status,
-                    "summary": run_res.summary,
-                    "input_tokens": run_res.input_tokens,
-                    "output_tokens": run_res.output_tokens,
-                    "turns": run_res.turns,
-                    "verification": run_res.verification,
-                    "changed_files": run_res.changed_files or [],
-                })
+                send_rpc_response(
+                    req_id,
+                    {
+                        "status": run_res.status,
+                        "summary": run_res.summary,
+                        "input_tokens": run_res.input_tokens,
+                        "output_tokens": run_res.output_tokens,
+                        "turns": run_res.turns,
+                        "verification": run_res.verification,
+                        "changed_files": run_res.changed_files or [],
+                    },
+                )
             except Exception as e:
                 send_rpc_error(req_id, -32603, f"Internal error during run: {e}")
             continue

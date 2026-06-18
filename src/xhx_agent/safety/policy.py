@@ -13,7 +13,6 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from xhx_agent.safety.permissions.checker import Decision, PermissionChecker
-from xhx_agent.safety.permissions.modes import PermissionMode
 from xhx_agent.safety.risk import RiskLevel, classify_command
 
 
@@ -144,4 +143,3 @@ def decide_with_checker(
         risk=RiskLevel.DENY,
         reason=checker_decision.reason,
     )
-

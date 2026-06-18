@@ -115,7 +115,7 @@ def resolve_with_auto(
         3. 内置模型名子串映射表
         4. 默认 128k
     """
-    from xhx_agent.runtime.profiles import context_window_for_model, resolve_context_window
+    from xhx_agent.runtime.profiles import context_window_for_model
 
     # Layer 1: 显式值
     explicit = getattr(profile, "context_window", 0) if profile is not None else 0

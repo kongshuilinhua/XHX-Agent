@@ -1,13 +1,13 @@
-"""目录型 Skill：通过 tool.json + references/*.py 定义自定义工具。
-"""
+"""目录型 Skill：通过 tool.json + references/*.py 定义自定义工具。"""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +34,7 @@ def parse_tool_json(path: Path) -> list[dict[str, Any]]:
     return raw
 
 
-def load_tool_implementation(
-    references_dir: Path, tool_name: str
-) -> Callable[..., Any] | None:
+def load_tool_implementation(references_dir: Path, tool_name: str) -> Callable[..., Any] | None:
     """从 references/{tool_name}.py 动态加载 execute 函数。"""
     script = references_dir / f"{tool_name}.py"
     if not script.is_file():

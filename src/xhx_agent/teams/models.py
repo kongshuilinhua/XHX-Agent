@@ -1,5 +1,4 @@
-"""Agent Teams 数据模型。
-"""
+"""Agent Teams 数据模型。"""
 
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ class BackendType(StrEnum):
 @dataclass
 class TeammateInfo:
     """队友信息。"""
+
     name: str
     agent_id: str
     agent_type: str
@@ -57,6 +57,7 @@ class TeammateInfo:
 @dataclass
 class AgentTeam:
     """Agent 团队。"""
+
     name: str
     lead_agent_id: str
     members: list[TeammateInfo] = field(default_factory=list)
@@ -139,6 +140,7 @@ class AgentTeam:
 
 def _sanitize_name(name: str) -> str:
     import re
+
     name = name.lower()
     name = re.sub(r"[^a-z0-9_-]", "-", name)
     name = re.sub(r"-+", "-", name).strip("-")

@@ -34,8 +34,7 @@ class RepoQueryTool(Tool):
             index = load_repo_intel_index(Path(self._workspace))
         except Exception as e:
             return ToolResult(
-                output=f"Failed to load repository index: {e}. "
-                "Try running 'xhx init' first.",
+                output=f"Failed to load repository index: {e}. Try running 'xhx init' first.",
                 is_error=True,
             )
 
@@ -43,17 +42,11 @@ class RepoQueryTool(Tool):
             symbols = search_symbols(index.symbol_index, params.query, limit=params.limit)
             if not symbols:
                 return ToolResult(output="No matching symbols found.")
-            text = "\n".join(
-                f"{s.path}:{s.line}  {s.name} ({s.kind})" for s in symbols
-            )
+            text = "\n".join(f"{s.path}:{s.line}  {s.name} ({s.kind})" for s in symbols)
             return ToolResult(output=text)
         else:
-            references = search_references(
-                index.reference_index, params.query, limit=params.limit
-            )
+            references = search_references(index.reference_index, params.query, limit=params.limit)
             if not references:
                 return ToolResult(output="No matching references found.")
-            text = "\n".join(
-                f"{r.path}:{r.line}  {r.name}: {r.excerpt}" for r in references
-            )
+            text = "\n".join(f"{r.path}:{r.line}  {r.name}: {r.excerpt}" for r in references)
             return ToolResult(output=text)

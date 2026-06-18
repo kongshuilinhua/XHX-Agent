@@ -1,5 +1,4 @@
-"""Agent 定义系统：Markdown + YAML frontmatter 格式的 Agent 定义 + 三层加载。
-"""
+"""Agent 定义系统：Markdown + YAML frontmatter 格式的 Agent 定义 + 三层加载。"""
 
 from xhx_agent.agents.loader import AgentLoader
 from xhx_agent.agents.parser import AgentDef, AgentParseError, parse_agent_file, parse_frontmatter

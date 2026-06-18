@@ -17,7 +17,6 @@ class SharedTask:
     blocked_by: list[str] = field(default_factory=list)
     created_by: str = ""
 
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -27,8 +26,6 @@ class SharedTask:
 
 
 class SharedTaskStore:
-
-
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._next_id = 1
@@ -80,7 +77,6 @@ class SharedTaskStore:
         self._load()
         return self._tasks.get(task_id)
 
-
     def list_tasks(
         self,
         status: str | None = None,
@@ -93,7 +89,6 @@ class SharedTaskStore:
         if assignee:
             result = [t for t in result if t.assignee == assignee]
         return result
-
 
     def update(
         self,

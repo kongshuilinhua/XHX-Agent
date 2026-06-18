@@ -1,4 +1,5 @@
 """状态显示命令。"""
+
 from __future__ import annotations
 
 import os
@@ -14,7 +15,11 @@ async def handle_status(ctx: CommandContext) -> None:
 
     # 权限模式
     if ctx.agent:
-        mode = ctx.agent.permission_mode.value if hasattr(ctx.agent.permission_mode, "value") else str(ctx.agent.permission_mode)
+        mode = (
+            ctx.agent.permission_mode.value
+            if hasattr(ctx.agent.permission_mode, "value")
+            else str(ctx.agent.permission_mode)
+        )
         lines.append(f"模式: {mode}")
     else:
         lines.append("模式: 未知")
@@ -40,7 +45,7 @@ async def handle_status(ctx: CommandContext) -> None:
     # 记忆
     if ctx.memory_manager:
         content = ctx.memory_manager.load()
-        mem_lines = [l for l in content.split("\n") if l.strip().startswith("- ")]
+        mem_lines = [line for line in content.split("\n") if line.strip().startswith("- ")]
         lines.append(f"记忆: {len(mem_lines)} 条")
 
     # 工作目录

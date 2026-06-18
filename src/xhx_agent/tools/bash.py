@@ -35,13 +35,9 @@ class Bash(Tool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            return ToolResult(
-                output=f"Error: command timed out after {timeout}s", is_error=True
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            return ToolResult(output=f"Error: command timed out after {timeout}s", is_error=True)
         except asyncio.CancelledError:
             cancelled = True
             reason = cancel_reason.get("")
@@ -52,30 +48,23 @@ class Bash(Tool):
                     if proc and proc.stdout:
                         try:
                             while True:
-                                line = await asyncio.wait_for(
-                                    proc.stdout.readline(), timeout=0.3
-                                )
+                                line = await asyncio.wait_for(proc.stdout.readline(), timeout=0.3)
                                 if not line:
                                     break
                                 stdout_lines.append(line.decode(errors="replace"))
-                        except (asyncio.TimeoutError, Exception):
+                        except (TimeoutError, Exception):
                             pass
                     if proc and proc.stderr:
                         try:
                             while True:
-                                line = await asyncio.wait_for(
-                                    proc.stderr.readline(), timeout=0.3
-                                )
+                                line = await asyncio.wait_for(proc.stderr.readline(), timeout=0.3)
                                 if not line:
                                     break
                                 stderr_lines.append(line.decode(errors="replace"))
-                        except (asyncio.TimeoutError, Exception):
+                        except (TimeoutError, Exception):
                             pass
                     prefix = "(process running in background - use ps/tasklist to check)\n\n"
-                    stdout = prefix.encode() if not stdout_lines else (
-                        prefix.encode()
-                        + "".join(stdout_lines).encode()
-                    )
+                    stdout = prefix.encode() if not stdout_lines else (prefix.encode() + "".join(stdout_lines).encode())
                     stderr = "".join(stderr_lines).encode() if stderr_lines else b""
                 except Exception:
                     stdout = b"(process running in background)\n"

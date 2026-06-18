@@ -2,6 +2,7 @@
 
 同时兼容旧式 CommandInfo（同步 handler）和新式 Command（异步 handler + 别名）。
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -85,7 +86,7 @@ class CommandRegistry:
 
     def list_commands(self) -> list[Any]:
         """返回所有已注册的新式 Command 对象（不含隐藏命令）。"""
-        return [c for c in self._commands_new.values()]
+        return list(self._commands_new.values())
 
     def find(self, name: str) -> Any | None:
         """按名称或别名查找 Command。"""
@@ -126,10 +127,7 @@ class CommandRegistry:
 
     def list_all(self) -> list[tuple[str, str, str]]:
         """返回 [(name, description, arg_hint), ...] 供补全和帮助。"""
-        return [
-            (info.name, info.description, info.arg_hint)
-            for info in self._commands.values()
-        ]
+        return [(info.name, info.description, info.arg_hint) for info in self._commands.values()]
 
     def matching(self, prefix: str) -> list[tuple[str, str, str]]:
         """返回匹配 *prefix* 的命令列表（Tab 补全用）。"""

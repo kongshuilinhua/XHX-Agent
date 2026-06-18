@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from xhx_agent.evidence.store import EvidenceStore
 from xhx_agent.models.types import ToolStep
 from xhx_agent.safety.kernel import SafeExecutionKernel
@@ -12,6 +10,7 @@ from xhx_agent.tools.registry import (
     ToolRegistry,
     default_tool_registry,
 )
+
 
 def _registry_with_mcp_tool(read_only: bool = False) -> ToolRegistry:
     reg = ToolRegistry()
@@ -29,6 +28,7 @@ def _registry_with_mcp_tool(read_only: bool = False) -> ToolRegistry:
         )
     )
     return reg
+
 
 def test_kernel_records_policy_and_executes_tool(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
@@ -52,6 +52,7 @@ def test_kernel_records_policy_and_executes_tool(tmp_path: Path) -> None:
     assert "tool_result" in trace_text
     assert "tool:read_file" in evidence_text
 
+
 def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -72,6 +73,7 @@ def test_kernel_blocks_denied_tool(tmp_path: Path) -> None:
     assert "policy_decision" in trace_text
     assert "tool_call" not in trace_text
 
+
 def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -82,6 +84,7 @@ def test_run_command_tool_safe_runs(tmp_path: Path) -> None:
     # really executes; a non-git dir may fail but must not raise.
     assert result.status in ("success", "failed")
 
+
 def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, default_tool_registry())
@@ -89,6 +92,7 @@ def test_run_command_tool_deny_blocked(tmp_path: Path) -> None:
     result = kernel.run_command_tool("rm -rf x", evidence_kind="command", assume_yes=False, confirm_callback=None)
 
     assert result.status == "deny"
+
 
 def test_run_command_tool_confirm_declined(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
@@ -99,6 +103,7 @@ def test_run_command_tool_confirm_declined(tmp_path: Path) -> None:
     )
 
     assert result.status == "confirm"
+
 
 def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None:
     evidence = EvidenceStore(tmp_path, "run-test")
@@ -135,6 +140,7 @@ def test_kernel_read_only_phase_blocks_write_and_command(tmp_path: Path) -> None
     assert result_verify.status == "deny"
     assert result_verify.command == "pytest"
 
+
 def _exec_mcp(tmp_path: Path, *, read_only=False, permission_mode="default", confirm=None, assume_yes=False):
     evidence = EvidenceStore(tmp_path, "run-test")
     kernel = SafeExecutionKernel(tmp_path, "run-test", evidence, _registry_with_mcp_tool(read_only=read_only))
@@ -146,22 +152,26 @@ def _exec_mcp(tmp_path: Path, *, read_only=False, permission_mode="default", con
         assume_yes=assume_yes,
     )
 
+
 def test_mcp_tool_confirm_approved(tmp_path: Path) -> None:
     calls = []
     result, _trace, policy = _exec_mcp(tmp_path, confirm=lambda p, d: calls.append(p) or True)
     assert calls  # 弹框被触发
     assert result is not None and result.status == "success"
 
+
 def test_mcp_tool_confirm_declined(tmp_path: Path) -> None:
     result, _trace, policy = _exec_mcp(tmp_path, confirm=lambda p, d: False)
     assert result is not None and result.status == "denied"
     assert policy.decision == "deny"
+
 
 def test_mcp_tool_assume_yes_skips_confirm(tmp_path: Path) -> None:
     calls = []
     result, _trace, _policy = _exec_mcp(tmp_path, confirm=lambda p, d: calls.append(p) or True, assume_yes=True)
     assert not calls  # 预批 → 不弹框
     assert result is not None and result.status == "success"
+
 
 def test_mcp_tool_bypass_skips_confirm(tmp_path: Path) -> None:
     calls = []
@@ -171,11 +181,13 @@ def test_mcp_tool_bypass_skips_confirm(tmp_path: Path) -> None:
     assert not calls
     assert result is not None and result.status == "success"
 
+
 def test_mcp_tool_unattended_default_denies(tmp_path: Path) -> None:
     # 无回调、default 模式、未预批 → 安全默认拒绝
     result, _trace, policy = _exec_mcp(tmp_path, confirm=None, assume_yes=False)
     assert result is not None and result.status == "denied"
     assert policy.decision == "deny"
+
 
 def test_mcp_readonly_tool_no_confirm(tmp_path: Path) -> None:
     calls = []

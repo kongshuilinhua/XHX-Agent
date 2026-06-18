@@ -29,7 +29,7 @@ class ToolSearchTool(Tool):
 
     def __init__(
         self,
-        registry: "ToolRegistry",
+        registry: ToolRegistry,
         protocol: str = "openai-compat",
     ) -> None:
         self._registry = registry
@@ -53,17 +53,12 @@ class ToolSearchTool(Tool):
             names = [n.strip() for n in query[7:].split(",")]
             schemas = self._registry.find_deferred_by_names(names, self._protocol)
         else:
-            schemas = self._registry.search_deferred(
-                query, max_results, self._protocol
-            )
+            schemas = self._registry.search_deferred(query, max_results, self._protocol)
 
         if not schemas:
             deferred_names = self._registry.get_deferred_tool_names()
             return ToolResult(
-                output=(
-                    f'No matching deferred tools for "{query}". '
-                    f'Available: {", ".join(deferred_names)}'
-                )
+                output=(f'No matching deferred tools for "{query}". Available: {", ".join(deferred_names)}')
             )
 
         for s in schemas:

@@ -1,4 +1,5 @@
 """LoadSkill 工具 — 动态加载技能。"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel
@@ -32,7 +33,5 @@ class LoadSkill(Tool):
             skill = self._loader.get(params.skill)
             if skill:
                 return ToolResult(output=f"Loaded skill: {params.skill}")
-            return ToolResult(
-                output=f"Skill not found: {params.skill}", is_error=True
-            )
+            return ToolResult(output=f"Skill not found: {params.skill}", is_error=True)
         return ToolResult(output="Skill loader not configured.", is_error=True)

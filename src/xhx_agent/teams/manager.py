@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from xhx_agent.teams.mailbox import Mailbox, MailboxMessage, create_message
-from xhx_agent.teams.models import AgentTeam, TeammateInfo, BackendType, unique_team_name, resolve_team_dir
+from xhx_agent.teams.models import AgentTeam, TeammateInfo, resolve_team_dir, unique_team_name
 from xhx_agent.teams.progress import TeammateProgress
 from xhx_agent.teams.registry import AgentNameRegistry
 from xhx_agent.teams.shared_task import SharedTaskStore
@@ -28,7 +28,9 @@ class TeamManager:
     # ------------------------------------------------------------------
 
     def create_team(
-        self, name: str, lead_agent_id: str,
+        self,
+        name: str,
+        lead_agent_id: str,
         description: str = "",
     ) -> AgentTeam:
         team_name = unique_team_name(name)
@@ -71,7 +73,7 @@ class TeamManager:
         for member in team.members:
             registry.unregister(member.name)
             handle = self._inprocess_handles.pop(member.agent_id, None)
-            if handle and hasattr(handle, 'cancel'):
+            if handle and hasattr(handle, "cancel"):
                 handle.cancel()
             if member.worktree_path:
                 wt = Path(member.worktree_path)
@@ -112,7 +114,8 @@ class TeamManager:
         mailbox = self._mailboxes.get(team_name)
         if mailbox:
             msg = create_message(
-                from_agent="system", to_agent=team.lead_agent_id,
+                from_agent="system",
+                to_agent=team.lead_agent_id,
                 content=f"Teammate '{member_name}' is now idle and available for new tasks.",
                 message_type="text",
             )

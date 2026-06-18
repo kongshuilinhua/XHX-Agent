@@ -1,4 +1,5 @@
 """PermissionChecker integration tests — replaces old path-scope tests."""
+
 from pathlib import Path
 
 from xhx_agent.evidence.store import EvidenceStore
@@ -72,9 +73,9 @@ def test_permission_checker_blocks_destructive_out_of_scope(tmp_path: Path) -> N
     evidence = EvidenceStore(workspace, "run-test")
     kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
     context = ToolContext(workspace=workspace, permission_mode="default")
-    step = ToolStep(tool="apply_patch", arguments={
-        "patch": f"*** Begin Patch\n*** Add File: {ext_file}\n+hello\n*** End Patch\n"
-    })
+    step = ToolStep(
+        tool="apply_patch", arguments={"patch": f"*** Begin Patch\n*** Add File: {ext_file}\n+hello\n*** End Patch\n"}
+    )
 
     result, _trace, policy = kernel.execute_tool(context, step, turn=1)
     assert policy.decision == "deny"

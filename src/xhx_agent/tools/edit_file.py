@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 class Params(BaseModel):
     file_path: str = Field(description="Path to the file to edit")
-    old_string: str = Field(
-        description="The exact string to find and replace (must be unique in file)"
-    )
+    old_string: str = Field(description="The exact string to find and replace (must be unique in file)")
     new_string: str = Field(description="The replacement string")
 
 
@@ -32,7 +30,7 @@ class EditFile(Tool):
         self,
         file_cache: Any = None,
         file_history: Any = None,
-        file_state_cache: "FileStateCache | None" = None,
+        file_state_cache: FileStateCache | None = None,
     ) -> None:
         self._cache = file_cache
         self.file_history = file_history
@@ -44,9 +42,7 @@ class EditFile(Tool):
 
         path = Path(params.file_path)
         if not path.exists():
-            return ToolResult(
-                output=f"Error: file not found: {params.file_path}", is_error=True
-            )
+            return ToolResult(output=f"Error: file not found: {params.file_path}", is_error=True)
 
         if self._state_cache:
             resolved = str(path.resolve())
@@ -61,9 +57,7 @@ class EditFile(Tool):
 
         count = content.count(params.old_string)
         if count == 0:
-            return ToolResult(
-                output="Error: old_string not found in file", is_error=True
-            )
+            return ToolResult(output="Error: old_string not found in file", is_error=True)
         if count > 1:
             return ToolResult(
                 output=f"Error: old_string found {count} times, must be unique",

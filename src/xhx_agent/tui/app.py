@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import re
 import time as _time
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
+from textual.theme import Theme
 from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -21,7 +24,6 @@ from xhx_agent.agent import (
     HookEvent,
     LoopComplete,
     PermissionRequest,
-    PermissionResponse,
     RetryEvent,
     StreamText,
     ThinkingText,
@@ -30,6 +32,11 @@ from xhx_agent.agent import (
     TurnComplete,
     UsageEvent,
 )
+from xhx_agent.agents.loader import AgentLoader
+from xhx_agent.agents.notification import inject_task_notifications
+from xhx_agent.agents.task_manager import TaskManager
+from xhx_agent.agents.trace import TraceManager
+from xhx_agent.cache import FileCache
 from xhx_agent.client import (
     AuthenticationError,
     LLMClient,
@@ -45,9 +52,12 @@ from xhx_agent.commands import (
 )
 from xhx_agent.commands.completion import CompletionPopup
 from xhx_agent.commands.handlers import register_all_commands
+from xhx_agent.commands.handlers.skill_register import register_skill_commands
+from xhx_agent.commands.handlers.tasks import create_tasks_command
+from xhx_agent.commands.handlers.worktree import create_worktree_command
 from xhx_agent.config import MCPServerConfig, ProviderConfig
-from xhx_agent.hooks import HookContext, HookEngine, load_hooks
 from xhx_agent.conversation import ConversationManager, Message
+from xhx_agent.hooks import HookContext, HookEngine
 from xhx_agent.mcp import MCPManager
 from xhx_agent.memory import (
     MemoryManager,
@@ -66,17 +76,9 @@ from xhx_agent.permissions import (
     PermissionMode,
     RuleEngine,
 )
-from xhx_agent.agents.loader import AgentLoader
-from xhx_agent.agents.task_manager import TaskManager
-from xhx_agent.agents.trace import TraceManager
-from xhx_agent.agents.notification import inject_task_notifications
-from xhx_agent.commands.handlers.tasks import create_tasks_command
 from xhx_agent.skills.executor import SkillExecutor
 from xhx_agent.skills.loader import SkillLoader
-from xhx_agent.commands.handlers.skill_register import register_skill_commands
-from rich.text import Text as RichText
-from textual.theme import Theme
-from xhx_agent.cache import FileCache
+from xhx_agent.teammate_tree import TeammateTree
 from xhx_agent.tools import ToolRegistry, create_default_registry
 from xhx_agent.tools.agent_tool import AgentTool
 from xhx_agent.tools.ask_user import AskUserEvent, AskUserTool
@@ -84,10 +86,6 @@ from xhx_agent.tools.impl.tool_search import ToolSearchTool
 from xhx_agent.tools.load_skill import LoadSkill
 from xhx_agent.worktree.cleanup import start_stale_cleanup_task
 from xhx_agent.worktree.manager import WorktreeManager
-from xhx_agent.commands.handlers.worktree import create_worktree_command
-from xhx_agent.teammate_tree import TeammateTree
-
-import re
 
 MAX_TRUNCATED_LINES = 20
 MAX_AT_REF_BYTES = 10240
@@ -130,6 +128,7 @@ def expand_at_refs(text: str, work_dir: str) -> str:
             return f"[File: {rel_path}]\n```\n{content}\n```"
         except Exception:
             return m.group(0)
+
     return _AT_REF_RE.sub(_replace, text)
 
 
@@ -289,7 +288,7 @@ class ChatInput(TextArea):
         at_idx = text.rfind("@")
         if at_idx < 0:
             return
-        after = text[at_idx + 1:]
+        after = text[at_idx + 1 :]
         if " " in after or "\n" in after:
             return
         if after:
@@ -353,7 +352,6 @@ def _format_detail(tool_name: str, arguments: dict[str, Any], output: str) -> st
 
 
 class ToolCallBlock(Static, can_focus=True):
-
     def __init__(self, tool_name: str, arguments: dict[str, Any], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.tool_name = tool_name
@@ -435,33 +433,114 @@ def _to_past_tense(verb: str) -> str:
 
 
 THINKING_VERBS = [
-    "Accomplishing", "Architecting", "Baking", "Beboppin'", "Befuddling",
-    "Bloviating", "Boogieing", "Boondoggling", "Bootstrapping", "Brewing",
-    "Calculating", "Canoodling", "Caramelizing", "Cascading", "Cerebrating",
-    "Choreographing", "Churning", "Coalescing", "Cogitating", "Combobulating",
-    "Composing", "Computing", "Concocting", "Considering", "Contemplating",
-    "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing",
-    "Cultivating", "Deciphering", "Deliberating", "Dilly-dallying",
-    "Discombobulating", "Doodling", "Elucidating", "Enchanting", "Envisioning",
-    "Fermenting", "Finagling", "Flambéing", "Flibbertigibbeting", "Flummoxing",
-    "Forging", "Frolicking", "Gallivanting", "Garnishing", "Generating",
-    "Germinating", "Grooving", "Harmonizing", "Hatching", "Honking",
-    "Hullaballooing", "Ideating", "Imagining", "Improvising", "Incubating",
-    "Inferring", "Infusing", "Kneading", "Lollygagging", "Manifesting",
-    "Marinating", "Meandering", "Metamorphosing", "Mewing", "Moonwalking",
-    "Moseying", "Mulling", "Musing", "Noodling", "Orbiting",
-    "Orchestrating", "Percolating", "Philosophising", "Pondering",
-    "Pontificating", "Pouncing", "Purring", "Puzzling", "Razzle-dazzling",
-    "Ruminating", "Scampering", "Simmering", "Sketching", "Spelunking",
-    "Spinning", "Sprouting", "Synthesizing", "Thinking", "Tinkering",
-    "Transfiguring", "Transmuting", "Undulating", "Unfurling", "Unravelling",
-    "Vibing", "Wandering", "Whisking", "Working", "Wrangling", "Zigzagging",
+    "Accomplishing",
+    "Architecting",
+    "Baking",
+    "Beboppin'",
+    "Befuddling",
+    "Bloviating",
+    "Boogieing",
+    "Boondoggling",
+    "Bootstrapping",
+    "Brewing",
+    "Calculating",
+    "Canoodling",
+    "Caramelizing",
+    "Cascading",
+    "Cerebrating",
+    "Choreographing",
+    "Churning",
+    "Coalescing",
+    "Cogitating",
+    "Combobulating",
+    "Composing",
+    "Computing",
+    "Concocting",
+    "Considering",
+    "Contemplating",
+    "Cooking",
+    "Crafting",
+    "Creating",
+    "Crunching",
+    "Crystallizing",
+    "Cultivating",
+    "Deciphering",
+    "Deliberating",
+    "Dilly-dallying",
+    "Discombobulating",
+    "Doodling",
+    "Elucidating",
+    "Enchanting",
+    "Envisioning",
+    "Fermenting",
+    "Finagling",
+    "Flambéing",
+    "Flibbertigibbeting",
+    "Flummoxing",
+    "Forging",
+    "Frolicking",
+    "Gallivanting",
+    "Garnishing",
+    "Generating",
+    "Germinating",
+    "Grooving",
+    "Harmonizing",
+    "Hatching",
+    "Honking",
+    "Hullaballooing",
+    "Ideating",
+    "Imagining",
+    "Improvising",
+    "Incubating",
+    "Inferring",
+    "Infusing",
+    "Kneading",
+    "Lollygagging",
+    "Manifesting",
+    "Marinating",
+    "Meandering",
+    "Metamorphosing",
+    "Mewing",
+    "Moonwalking",
+    "Moseying",
+    "Mulling",
+    "Musing",
+    "Noodling",
+    "Orbiting",
+    "Orchestrating",
+    "Percolating",
+    "Philosophising",
+    "Pondering",
+    "Pontificating",
+    "Pouncing",
+    "Purring",
+    "Puzzling",
+    "Razzle-dazzling",
+    "Ruminating",
+    "Scampering",
+    "Simmering",
+    "Sketching",
+    "Spelunking",
+    "Spinning",
+    "Sprouting",
+    "Synthesizing",
+    "Thinking",
+    "Tinkering",
+    "Transfiguring",
+    "Transmuting",
+    "Undulating",
+    "Unfurling",
+    "Unravelling",
+    "Vibing",
+    "Wandering",
+    "Whisking",
+    "Working",
+    "Wrangling",
+    "Zigzagging",
 ]  # 共 105 个动词，与 Go 版 internal/tui/verbs.go 完全一致
 
 
 class ToolGroupSummary(Static, can_focus=True):
-
-
     def __init__(self, count: int, total_elapsed: float, **kwargs: Any) -> None:
         label = f"● Done ({count} tool uses · {total_elapsed:.1f}s)  (ctrl+o to expand)"
         super().__init__(label, **kwargs)
@@ -473,22 +552,17 @@ class ToolGroupSummary(Static, can_focus=True):
         if self._expanded:
             self.update(f"▼ Done ({self._count} tool uses · {self._total:.1f}s)")
         else:
-            self.update(
-                f"● Done ({self._count} tool uses · {self._total:.1f}s)"
-                "  (ctrl+o to expand)"
-            )
+            self.update(f"● Done ({self._count} tool uses · {self._total:.1f}s)  (ctrl+o to expand)")
 
     def toggle(self) -> None:
         self._expanded = not self._expanded
         self._refresh_display()
-
 
     def on_click(self) -> None:
         self.toggle()
 
 
 class SubAgentBlock(Static, can_focus=True):
-
     def __init__(self, agent_type: str, description: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._agent_type = agent_type or "agent"
@@ -515,6 +589,7 @@ class SubAgentBlock(Static, can_focus=True):
 
     def _parse_stats(self, output: str) -> None:
         import re
+
         m = re.search(r"(\d+)\s+tool", output[:200])
         if m:
             self._tool_count = int(m.group(1))
@@ -524,14 +599,11 @@ class SubAgentBlock(Static, can_focus=True):
         tool_info = f"{self._tool_count} tool uses · " if self._tool_count else ""
         if self._collapsed:
             self.update(
-                f"● {self._agent_type}{desc}\n"
-                f"    ⎿  Done ({tool_info}{self._elapsed:.1f}s)  (ctrl+o to expand)"
+                f"● {self._agent_type}{desc}\n    ⎿  Done ({tool_info}{self._elapsed:.1f}s)  (ctrl+o to expand)"
             )
         else:
             self.update(
-                f"● {self._agent_type}{desc}\n"
-                f"    ⎿  Done ({tool_info}{self._elapsed:.1f}s)\n"
-                f"  {self._result_preview}"
+                f"● {self._agent_type}{desc}\n    ⎿  Done ({tool_info}{self._elapsed:.1f}s)\n  {self._result_preview}"
             )
 
     def on_click(self) -> None:
@@ -562,7 +634,6 @@ class XHXApp(App):
         Binding("shift+tab", "cycle_mode", "Cycle mode", priority=True),
         Binding("ctrl+o", "toggle_tool_blocks", "Toggle tools", priority=True),
     ]
-
 
     def __init__(
         self,
@@ -658,10 +729,7 @@ class XHXApp(App):
             with Vertical(id="provider-select"):
                 yield Static("Select a Provider", id="select-label")
                 yield OptionList(
-                    *[
-                        Option(f"{p.name}  [{p.model}]", id=p.name)
-                        for p in self.providers
-                    ],
+                    *[Option(f"{p.name}  [{p.model}]", id=p.name) for p in self.providers],
                     id="provider-list",
                 )
         yield VerticalScroll(id="chat-area")
@@ -713,6 +781,7 @@ class XHXApp(App):
         self.session = self.session_manager.create()
 
         from xhx_agent.filehistory import FileHistory
+
         self.file_history = FileHistory(work_dir, self.session.session_id)
         for tool in self.registry.list_tools():
             if hasattr(tool, "file_history"):
@@ -722,12 +791,11 @@ class XHXApp(App):
         self.registry.register(load_skill_tool)
         self._load_skill_tool = load_skill_tool
 
-        self.registry.register(
-            ToolSearchTool(self.registry, protocol=provider.protocol)
-        )
+        self.registry.register(ToolSearchTool(self.registry, protocol=provider.protocol))
         self.registry.register(AskUserTool())
 
         from xhx_agent.tools.exit_plan_mode import ExitPlanModeTool
+
         self._exit_plan_tool = ExitPlanModeTool()
         self.registry.register(self._exit_plan_tool)
 
@@ -751,9 +819,7 @@ class XHXApp(App):
         # Layer 2: 在后台异步拉取模型的 context window，不阻塞启动流程。
         # agent 已经有一个同步解析的窗口值（来自配置 / 映射表 / 默认值）；
         # 如果异步拉取成功，就原地升级为更准确的值。
-        self.run_worker(
-            self._resolve_context_window(provider), exclusive=False
-        )
+        self.run_worker(self._resolve_context_window(provider), exclusive=False)
 
         self.skill_loader = SkillLoader(work_dir)
         self.skill_loader.load_all()
@@ -776,17 +842,14 @@ class XHXApp(App):
             for name, desc in catalog:
                 lines.append(f"- {name}: {desc}")
             lines.append("")
-            lines.append(
-                "If the user's request matches a Skill, call LoadSkill to activate it."
-            )
+            lines.append("If the user's request matches a Skill, call LoadSkill to activate it.")
             self.agent.set_skill_catalog("\n".join(lines))
 
-        register_skill_commands(
-            self.command_registry, self.skill_loader, self.skill_executor
-        )
+        register_skill_commands(self.command_registry, self.skill_loader, self.skill_executor)
 
         # --- Worktree 系统初始化 ---
         from xhx_agent.config import WorktreeConfig
+
         wt_cfg = self._worktree_config or WorktreeConfig()
         self.worktree_manager = WorktreeManager(
             repo_root=work_dir,
@@ -801,6 +864,7 @@ class XHXApp(App):
 
         from xhx_agent.tools.enter_worktree import EnterWorktreeTool
         from xhx_agent.tools.exit_worktree import ExitWorktreeTool
+
         self.registry.register(EnterWorktreeTool(worktree_manager=self.worktree_manager))
         self.registry.register(ExitWorktreeTool(worktree_manager=self.worktree_manager))
 
@@ -813,9 +877,7 @@ class XHXApp(App):
         )
 
         # --- 子 agent 系统初始化 ---
-        self.agent_loader = AgentLoader(
-            work_dir, enable_verification=self._enable_verification_agent
-        )
+        self.agent_loader = AgentLoader(work_dir, enable_verification=self._enable_verification_agent)
         self.agent_loader.load_all()
 
         # --- Agent 团队系统初始化 ---
@@ -865,8 +927,7 @@ class XHXApp(App):
             if self._enable_fork:
                 lines.append("")
                 lines.append(
-                    "Leave subagent_type empty to fork the current conversation "
-                    "(inherits full dialog history)."
+                    "Leave subagent_type empty to fork the current conversation (inherits full dialog history)."
                 )
             lines.append("")
             lines.append(
@@ -882,6 +943,7 @@ class XHXApp(App):
         self.command_registry.register_sync(tasks_cmd)
 
         from xhx_agent.commands.handlers.trace import create_trace_command
+
         trace_cmd = create_trace_command(self.trace_manager, self.agent.agent_id)
         self.command_registry.register_sync(trace_cmd)
 
@@ -892,20 +954,14 @@ class XHXApp(App):
         self.agent._team_manager = self.team_manager
 
         if self.hook_engine:
-            asyncio.ensure_future(
-                self.hook_engine.run_hooks(
-                    "startup", HookContext(event_name="startup")
-                )
-            )
+            asyncio.ensure_future(self.hook_engine.run_hooks("startup", HookContext(event_name="startup")))
 
         if self._mcp_server_configs:
             self._mcp_init_task = asyncio.create_task(self._init_mcp())
 
         self.query_one("#model-label", Static).update(provider.model)
         work_dir = os.getcwd()
-        self.query_one("#title-bar", Static).update(
-            self._make_banner(provider.model, work_dir)
-        )
+        self.query_one("#title-bar", Static).update(self._make_banner(provider.model, work_dir))
         self._update_mode_label()
 
         select = self.query("#provider-select")
@@ -918,9 +974,7 @@ class XHXApp(App):
         chat_input.load_history(work_dir)
         chat_input.focus()
 
-        self._notification_check_task = asyncio.create_task(
-            self._start_notification_polling()
-        )
+        self._notification_check_task = asyncio.create_task(self._start_notification_polling())
 
     async def _resolve_context_window(self, provider: ProviderConfig) -> None:
         """Layer 2 后台 worker：异步拉取模型的 context window，
@@ -972,7 +1026,6 @@ class XHXApp(App):
     # -----------------------------------------------------------------
     # 命令分发
     # -----------------------------------------------------------------
-
 
     def _build_command_context(self, args: str) -> CommandContext:
         return CommandContext(
@@ -1068,6 +1121,7 @@ class XHXApp(App):
                 # 设置取消原因为 'interrupt'，让工具层（Bash 等）知道
                 # 是用户主动中断，不应杀子进程。
                 from xhx_agent.agent import cancel_reason
+
                 cancel_reason.set("interrupt")
                 self._agent_task.cancel()
                 try:
@@ -1167,13 +1221,13 @@ class XHXApp(App):
             return
         if self._agent_task and not self._agent_task.done():
             if self._subagent_task and not self._subagent_task.done():
-                task_id = self.task_manager.adopt_running(
-                    self._subagent_task, "background task"
-                ) if hasattr(self.task_manager, 'adopt_running') else None
+                task_id = (
+                    self.task_manager.adopt_running(self._subagent_task, "background task")
+                    if hasattr(self.task_manager, "adopt_running")
+                    else None
+                )
                 if task_id:
-                    self._show_system_message(
-                        f"Task moved to background (id: {task_id})"
-                    )
+                    self._show_system_message(f"Task moved to background (id: {task_id})")
                     return
             self._agent_task.cancel()
 
@@ -1218,7 +1272,7 @@ class XHXApp(App):
                 timeout=8.0,
             )
             return render_reminder(results)
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             return ""
 
     async def _send_message(self, text: str, is_notification: bool = False) -> None:
@@ -1236,14 +1290,13 @@ class XHXApp(App):
             text = expand_at_refs(text, self.agent.work_dir)
 
         # Start memory recall prefetch before UI work.
-        prefetch_task = asyncio.create_task(
-            self._prefetch_relevant_memories(text)
-        ) if text else None
+        prefetch_task = asyncio.create_task(self._prefetch_relevant_memories(text)) if text else None
 
         if text:
             user_row = Vertical(classes="user-row")
             await chat.mount(user_row)
             from rich.text import Text as RichText
+
             user_rich = RichText()
             user_rich.append("❯ ", style="bold color(80)")
             user_rich.append(text, style="bold color(255)")
@@ -1266,7 +1319,7 @@ class XHXApp(App):
                 reminder = await asyncio.wait_for(prefetch_task, timeout=3.0)
                 if reminder:
                     self.conversation.add_system_reminder(reminder)
-            except (asyncio.TimeoutError, Exception):
+            except (TimeoutError, Exception):
                 pass
 
         history_cursor = len(self.conversation.history)
@@ -1313,6 +1366,7 @@ class XHXApp(App):
                         await ai_row.mount(streaming_label)
                     accumulated_text += event.text
                     from rich.text import Text as RichText
+
                     t = RichText()
                     t.append("● ", style="bold color(99)")
                     t.append(accumulated_text)
@@ -1327,6 +1381,7 @@ class XHXApp(App):
                         if streaming_label is not None:
                             await streaming_label.remove()
                         from rich.text import Text as RichText
+
                         prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
                         await ai_row.mount(prefix)
                         md = Markdown(accumulated_text, classes="message ai-message")
@@ -1346,9 +1401,7 @@ class XHXApp(App):
                             classes="tool-block subagent-block",
                         )
                     else:
-                        block = ToolCallBlock(
-                            event.tool_name, event.arguments, classes="tool-block"
-                        )
+                        block = ToolCallBlock(event.tool_name, event.arguments, classes="tool-block")
                     await ai_row.mount(block)
                     tool_blocks[event.tool_id] = block
                     self.call_after_refresh(chat.scroll_end, animate=False)
@@ -1376,15 +1429,15 @@ class XHXApp(App):
                         history_cursor = len(self.conversation.history)
 
                     collapsible = [
-                        (tid, blk) for tid, blk in tool_blocks.items()
-                        if isinstance(blk, ToolCallBlock)
-                        and blk.tool_name in COLLAPSIBLE_TOOLS
-                        and not blk._loading
+                        (tid, blk)
+                        for tid, blk in tool_blocks.items()
+                        if isinstance(blk, ToolCallBlock) and blk.tool_name in COLLAPSIBLE_TOOLS and not blk._loading
                     ]
                     if len(collapsible) >= 2:
                         total_elapsed = sum(b._elapsed for _, b in collapsible)
                         summary = ToolGroupSummary(
-                            len(collapsible), total_elapsed,
+                            len(collapsible),
+                            total_elapsed,
                             classes="tool-block tool-group-summary",
                         )
                         for _, blk in collapsible:
@@ -1411,9 +1464,7 @@ class XHXApp(App):
 
                 elif isinstance(event, HookEvent):
                     status = "✓" if event.success else "✗"
-                    self._show_system_message(
-                        f"Hook [{event.hook_id}] {status} {event.output}"
-                    )
+                    self._show_system_message(f"Hook [{event.hook_id}] {status} {event.output}")
 
                 elif isinstance(event, CompactNotification):
                     self._show_system_message(event.message)
@@ -1437,17 +1488,10 @@ class XHXApp(App):
                             self.session.append(msg)
                         self._session_saved_count = len(self.conversation.history)
                         history_cursor = len(self.conversation.history)
-                        self.session.meta.total_tokens = (
-                            self.agent.total_input_tokens
-                            + self.agent.total_output_tokens
-                        )
-                        asyncio.ensure_future(
-                            self._update_session_summary()
-                        )
+                        self.session.meta.total_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
+                        asyncio.ensure_future(self._update_session_summary())
                     if self.agent.plan_mode:
-                        asyncio.ensure_future(
-                            self._show_plan_approval()
-                        )
+                        asyncio.ensure_future(self._show_plan_approval())
 
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
@@ -1476,7 +1520,7 @@ class XHXApp(App):
             # finally 保证即使是取消、异常、中断，已写入 conversation 的消息都会落盘。
             if self.session:
                 try:
-                    unsaved = self.conversation.history[self._session_saved_count:]
+                    unsaved = self.conversation.history[self._session_saved_count :]
                     for msg in unsaved:
                         self.session.append(msg)
                     self._session_saved_count = len(self.conversation.history)
@@ -1496,16 +1540,12 @@ class XHXApp(App):
 
         for task in completed:
             status_icon = "✓" if task.status == "completed" else "✗"
-            self._show_system_message(
-                f"{status_icon} 后台任务完成: [{task.id}] {task.name} — {task.status}"
-            )
+            self._show_system_message(f"{status_icon} 后台任务完成: [{task.id}] {task.name} — {task.status}")
 
-            if hasattr(self, 'team_manager'):
+            if hasattr(self, "team_manager"):
                 self.team_manager.on_teammate_completed(task.agent.agent_id)
 
-        self._agent_task = asyncio.create_task(
-            self._send_message("", is_notification=True)
-        )
+        self._agent_task = asyncio.create_task(self._send_message("", is_notification=True))
 
     async def _start_notification_polling(self) -> None:
         while True:
@@ -1524,9 +1564,7 @@ class XHXApp(App):
             return
         for note in notes:
             self.conversation.add_system_reminder(note)
-        self._agent_task = asyncio.create_task(
-            self._send_message("", is_notification=True)
-        )
+        self._agent_task = asyncio.create_task(self._send_message("", is_notification=True))
 
     async def _show_plan_approval(self) -> None:
         from xhx_agent.plan_dialog import InlinePlanWidget
@@ -1540,9 +1578,7 @@ class XHXApp(App):
         except Exception:
             pass
 
-    def on_inline_plan_widget_responded(
-        self, event: "InlinePlanWidget.Responded"
-    ) -> None:
+    def on_inline_plan_widget_responded(self, event: InlinePlanWidget.Responded) -> None:
         from xhx_agent.plan_dialog import InlinePlanWidget, PlanChoice
 
         try:
@@ -1598,9 +1634,7 @@ class XHXApp(App):
         except Exception:
             pass
 
-    def on_inline_ask_user_widget_responded(
-        self, event: "InlineAskUserWidget.Responded"
-    ) -> None:
+    def on_inline_ask_user_widget_responded(self, event: InlineAskUserWidget.Responded) -> None:
         from xhx_agent.askuser_dialog import InlineAskUserWidget
 
         req = getattr(self, "_pending_askuser_event", None)
@@ -1648,9 +1682,7 @@ class XHXApp(App):
         frame = SPINNER_FRAMES[self._spinner_idx % len(SPINNER_FRAMES)]
         elapsed = _time.monotonic() - self._thinking_start
         if self._spinner_label is not None:
-            self._spinner_label.update(
-                f"  {frame} {self._thinking_verb}…  ({elapsed:.0f}s)"
-            )
+            self._spinner_label.update(f"  {frame} {self._thinking_verb}…  ({elapsed:.0f}s)")
             if self._spinner_idx % 5 == 0:
                 try:
                     self.query_one("#chat-area", VerticalScroll).scroll_end(animate=False)
@@ -1688,9 +1720,7 @@ class XHXApp(App):
 
         # Update leader tokens from main agent
         if self.agent:
-            self._teammate_tree.leader_tokens = (
-                self.agent.total_input_tokens + self.agent.total_output_tokens
-            )
+            self._teammate_tree.leader_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
 
         self._teammate_tree.display = True
         active_count = sum(1 for p in progress_list if p.status == "running")
@@ -1721,9 +1751,7 @@ class XHXApp(App):
         except Exception:
             pass
 
-    def on_inline_permission_widget_responded(
-        self, event: "InlinePermissionWidget.Responded"
-    ) -> None:
+    def on_inline_permission_widget_responded(self, event: InlinePermissionWidget.Responded) -> None:
         from xhx_agent.permission_dialog import InlinePermissionWidget
 
         req = getattr(self, "_pending_perm_request", None)
@@ -1778,14 +1806,10 @@ class XHXApp(App):
         if not self.session or not self.client or not self.agent:
             return
         try:
-            summary = await generate_session_summary(
-                self.client, self.conversation, self.agent.protocol
-            )
+            summary = await generate_session_summary(self.client, self.conversation, self.agent.protocol)
             if summary:
                 self.session.meta.summary = summary
-                self.session.meta.save(
-                    self.session._sessions_dir / f"{self.session.session_id}.meta"
-                )
+                self.session.meta.save(self.session._sessions_dir / f"{self.session.session_id}.meta")
         except Exception:
             pass
 
@@ -1809,17 +1833,12 @@ class XHXApp(App):
         mcp_tools = tools_after - tools_before
         server_count = len(manager._clients)
         if server_count > 0:
-            self._mcp_server_info = (
-                f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
-            )
+            self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             parts = []
             for cfg in self._mcp_server_configs:
-                srv_name = cfg.name if hasattr(cfg, 'name') else str(cfg)
-                tool_names = [
-                    t.name for t in self.registry.list_tools()
-                    if t.name.startswith(f"mcp__{srv_name}__")
-                ]
+                srv_name = cfg.name if hasattr(cfg, "name") else str(cfg)
+                tool_names = [t.name for t in self.registry.list_tools() if t.name.startswith(f"mcp__{srv_name}__")]
                 section = f"## {srv_name}\n"
                 if tool_names:
                     section += "Available tools: " + ", ".join(tool_names)
@@ -1827,8 +1846,7 @@ class XHXApp(App):
             self._mcp_instructions = (
                 "# MCP Server Instructions\n\n"
                 "The following MCP servers are connected. "
-                "Use their tools when the user asks.\n\n"
-                + "\n\n".join(parts)
+                "Use their tools when the user asks.\n\n" + "\n\n".join(parts)
             )
 
     async def _shutdown_mcp(self) -> None:
@@ -1870,15 +1888,11 @@ class XHXApp(App):
             tasks: list[asyncio.Task] = []
 
             if self.agent and self.agent.memory_manager:
-                tasks.append(asyncio.create_task(
-                    self.agent._extract_memories(self.conversation)
-                ))
+                tasks.append(asyncio.create_task(self.agent._extract_memories(self.conversation)))
             if self.hook_engine:
-                tasks.append(asyncio.create_task(
-                    self.hook_engine.run_hooks(
-                        "shutdown", HookContext(event_name="shutdown")
-                    )
-                ))
+                tasks.append(
+                    asyncio.create_task(self.hook_engine.run_hooks("shutdown", HookContext(event_name="shutdown")))
+                )
             tasks.append(asyncio.create_task(self._shutdown_mcp()))
 
             if tasks:
@@ -1890,7 +1904,7 @@ class XHXApp(App):
             if self._stale_cleanup_task and not self._stale_cleanup_task.done():
                 self._stale_cleanup_task.cancel()
 
-            if hasattr(self, 'team_manager'):
+            if hasattr(self, "team_manager"):
                 for name in list(self.team_manager._teams):
                     try:
                         team = self.team_manager._teams[name]
@@ -1902,7 +1916,7 @@ class XHXApp(App):
 
             if self.session:
                 # 刷盘所有尚未保存的对话消息（中断退出时尤其重要）
-                unsaved = self.conversation.history[self._session_saved_count:]
+                unsaved = self.conversation.history[self._session_saved_count :]
                 for msg in unsaved:
                     self.session.append(msg)
                 self._session_saved_count = len(self.conversation.history)
@@ -1913,6 +1927,7 @@ class XHXApp(App):
         except Exception as e:
             # 不要静默吞错——至少写 debug 日志
             import logging
+
             logging.getLogger("XHX").warning("Cleanup error: %s", e, exc_info=True)
         self.exit()
 
@@ -1968,12 +1983,12 @@ class XHXApp(App):
         parts = []
         if self._xhx_tokens_total > 0:
             from xhx_agent.tui.format import human_tokens
+
             parts.append(f"tokens:{human_tokens(self._xhx_tokens_total)}")
         if self._xhx_context_budget > 0:
             from xhx_agent.tui.format import context_meter
-            label, pct, level = context_meter(
-                self._xhx_context_used, self._xhx_context_budget
-            )
+
+            label, pct, level = context_meter(self._xhx_context_used, self._xhx_context_budget)
             color = {"ok": "green", "warn": "yellow", "crit": "red", "none": ""}.get(level, "")
             parts.append(f"[{color}]{label}[/{color}]" if color else label)
         if self._xhx_compaction_count > 0:
@@ -1983,7 +1998,7 @@ class XHXApp(App):
         if self._xhx_last_model:
             parts.append(self._xhx_last_model)
         if self._xhx_last_duration_ms > 0:
-            parts.append(f"{self._xhx_last_duration_ms/1000:.1f}s")
+            parts.append(f"{self._xhx_last_duration_ms / 1000:.1f}s")
 
         status.update("  " + " · ".join(parts) if parts else "")
 

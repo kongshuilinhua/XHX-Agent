@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
@@ -31,14 +31,12 @@ class ExitPlanModeTool(Tool):
     async def execute(self, params: ExitPlanModeParams) -> ToolResult:
         if self._is_plan_mode is not None and not self._is_plan_mode():
             return ToolResult(
-                output="You are not in plan mode. "
-                "This tool is only for exiting plan mode after writing a plan.",
+                output="You are not in plan mode. This tool is only for exiting plan mode after writing a plan.",
                 is_error=True,
             )
         if self._plan_exists is not None and not self._plan_exists():
             return ToolResult(
-                output="No plan file found. "
-                "Please write your plan to the plan file before calling ExitPlanMode.",
+                output="No plan file found. Please write your plan to the plan file before calling ExitPlanMode.",
                 is_error=True,
             )
         return ToolResult(

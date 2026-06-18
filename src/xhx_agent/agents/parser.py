@@ -1,5 +1,4 @@
-"""Agent 定义解析器：Markdown + YAML frontmatter → AgentDef。
-"""
+"""Agent 定义解析器：Markdown + YAML frontmatter → AgentDef。"""
 
 from __future__ import annotations
 
@@ -25,6 +24,7 @@ VALID_ISOLATION_MODES = {"", "worktree"}
 
 class AgentParseError(Exception):
     """Agent 定义文件解析错误。"""
+
     pass
 
 
@@ -49,6 +49,7 @@ class AgentDef:
 
         (Markdown 正文 = system prompt)
     """
+
     agent_type: str
     when_to_use: str
     system_prompt: str = ""
@@ -58,9 +59,9 @@ class AgentDef:
     max_turns: int = 50
     permission_mode: str = "default"
     background: bool = False
-    isolation: str = ""           # "" | "worktree"
+    isolation: str = ""  # "" | "worktree"
     file_path: Path | None = None
-    source: str = "builtin"       # "builtin" | "user" | "project"
+    source: str = "builtin"  # "builtin" | "user" | "project"
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +71,8 @@ class AgentDef:
 
 def parse_frontmatter(raw: str) -> tuple[dict, str]:
     """解析 YAML frontmatter + Markdown body。委托给共享工具。"""
-    from xhx_agent.utils.frontmatter import FrontmatterParseError, parse_frontmatter as _parse
+    from xhx_agent.utils.frontmatter import FrontmatterParseError
+    from xhx_agent.utils.frontmatter import parse_frontmatter as _parse
 
     try:
         return _parse(raw)
@@ -89,30 +91,20 @@ def _validate_agent_meta(meta: dict, source: str = "") -> None:
 
     model = str(meta.get("model", "inherit"))
     if model not in VALID_MODELS:
-        raise AgentParseError(
-            f"Invalid model '{model}'{ctx}: must be one of {VALID_MODELS - {''}}"
-        )
+        raise AgentParseError(f"Invalid model '{model}'{ctx}: must be one of {VALID_MODELS - {''}}")
 
     pm = str(meta.get("permissionMode", "default"))
     if pm not in VALID_PERMISSION_MODES:
-        raise AgentParseError(
-            f"Invalid permissionMode '{pm}'{ctx}: "
-            f"must be one of {VALID_PERMISSION_MODES - {''}}"
-        )
+        raise AgentParseError(f"Invalid permissionMode '{pm}'{ctx}: must be one of {VALID_PERMISSION_MODES - {''}}")
 
     max_turns = meta.get("maxTurns")
     if max_turns is not None:
         if not isinstance(max_turns, int) or max_turns <= 0:
-            raise AgentParseError(
-                f"Invalid maxTurns '{max_turns}'{ctx}: must be a positive integer"
-            )
+            raise AgentParseError(f"Invalid maxTurns '{max_turns}'{ctx}: must be a positive integer")
 
     isolation = str(meta.get("isolation", ""))
     if isolation not in VALID_ISOLATION_MODES:
-        raise AgentParseError(
-            f"Invalid isolation '{isolation}'{ctx}: "
-            f"must be one of {VALID_ISOLATION_MODES - {''}}"
-        )
+        raise AgentParseError(f"Invalid isolation '{isolation}'{ctx}: must be one of {VALID_ISOLATION_MODES - {''}}")
 
 
 def parse_agent_file(path: Path) -> AgentDef:

@@ -1,5 +1,4 @@
-"""Hook 动作执行器：command / prompt / http / agent。
-"""
+"""Hook 动作执行器：command / prompt / http / agent。"""
 
 from __future__ import annotations
 
@@ -29,9 +28,7 @@ async def execute_command(action: Action, ctx: HookContext) -> ActionResult:
             stderr=asyncio.subprocess.STDOUT,
         )
         try:
-            stdout, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=action.timeout
-            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=action.timeout)
         except TimeoutError:
             proc.kill()
             await proc.wait()

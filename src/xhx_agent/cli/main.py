@@ -211,9 +211,7 @@ def run(
             help="Orchestrator paradigm: loop | plan | graph (linear = auto-classify fallback; default: auto-classified).",
         ),
     ] = None,
-    verify: Annotated[
-        bool, typer.Option("--verify", help="Run change-targeted tests after the agent stops.")
-    ] = False,
+    verify: Annotated[bool, typer.Option("--verify", help="Run change-targeted tests after the agent stops.")] = False,
 ) -> None:
     workspace = Path.cwd()
     # --mode / --auto-repair 是旧编排器/修复循环的概念，统一 Agent 循环下不再适用，仅作兼容接受。
@@ -363,7 +361,9 @@ def benchmark(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
     modes: Annotated[
         str | None,
-        typer.Option("--modes", help="Comma-separated list of modes to benchmark: loop,plan,team (default: loop,plan,team)."),
+        typer.Option(
+            "--modes", help="Comma-separated list of modes to benchmark: loop,plan,team (default: loop,plan,team)."
+        ),
     ] = None,
 ) -> None:
     from xhx_agent.evals.benchmark import BenchmarkRunner

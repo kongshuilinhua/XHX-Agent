@@ -19,7 +19,7 @@ class ApplyPatchTool(Tool):
         "--- a/src/utils.py\n"
         "+++ b/src/utils.py\n"
         "@@ -10,6 +10,6 @@\n"
-        ' def add(a, b):\n'
+        " def add(a, b):\n"
         "-    return a - b\n"
         "+    return a + b\n"
     )
@@ -36,7 +36,5 @@ class ApplyPatchTool(Tool):
         result = apply_patch(workspace, params.patch)
 
         if result.status == "success":
-            return ToolResult(
-                output=f"Successfully applied patch. Changed files: {', '.join(result.changed_files)}"
-            )
+            return ToolResult(output=f"Successfully applied patch. Changed files: {', '.join(result.changed_files)}")
         return ToolResult(output=result.stderr, is_error=True)

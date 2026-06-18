@@ -41,9 +41,7 @@ class SyntheticOutputTool(Tool):
         if isinstance(p.output, str):
             return ToolResult(output=p.output)
 
-        return ToolResult(
-            output=json.dumps(p.output, ensure_ascii=False, indent=2)
-        )
+        return ToolResult(output=json.dumps(p.output, ensure_ascii=False, indent=2))
 
     def _validate_schema(self, data: Any) -> str | None:
         schema = self._json_schema

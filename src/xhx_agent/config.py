@@ -72,6 +72,7 @@ class ProviderConfig:
 @dataclass
 class MCPServerConfig:
     """MCP server 配置。"""
+
     name: str = ""
     transport: str = "stdio"
     command: str = ""
@@ -86,6 +87,7 @@ class MCPServerConfig:
 @dataclass
 class WorktreeConfig:
     """Worktree 配置。"""
+
     enabled: bool = True
     auto_cleanup: bool = True
     symlink_dirs: list[str] = field(default_factory=list)

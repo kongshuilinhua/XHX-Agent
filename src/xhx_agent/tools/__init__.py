@@ -49,14 +49,10 @@ class ToolRegistry:
         return [
             name
             for name, tool in self._tools.items()
-            if getattr(tool, "should_defer", False)
-            and name not in self._discovered
-            and name not in self._disabled
+            if getattr(tool, "should_defer", False) and name not in self._discovered and name not in self._disabled
         ]
 
-    def search_deferred(
-        self, query: str, max_results: int, protocol: str = "anthropic"
-    ) -> list[dict[str, Any]]:
+    def search_deferred(self, query: str, max_results: int, protocol: str = "anthropic") -> list[dict[str, Any]]:
         query_lower = query.lower()
         scored: list[tuple[int, str, Tool]] = []
         for name, tool in self._tools.items():
@@ -83,21 +79,21 @@ class ToolRegistry:
         for _, _name, tool in scored[:max_results]:
             base = tool.get_schema()
             if protocol in ("openai", "openai-compat"):
-                results.append({
-                    "type": "function",
-                    "function": {
-                        "name": base["name"],
-                        "description": base["description"],
-                        "parameters": base["input_schema"],
-                    },
-                })
+                results.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": base["name"],
+                            "description": base["description"],
+                            "parameters": base["input_schema"],
+                        },
+                    }
+                )
             else:
                 results.append(base)
         return results
 
-    def find_deferred_by_names(
-        self, names: list[str], protocol: str = "anthropic"
-    ) -> list[dict[str, Any]]:
+    def find_deferred_by_names(self, names: list[str], protocol: str = "anthropic") -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for name in names:
             tool = self._tools.get(name)
@@ -107,14 +103,16 @@ class ToolRegistry:
                 continue
             base = tool.get_schema()
             if protocol in ("openai", "openai-compat"):
-                results.append({
-                    "type": "function",
-                    "function": {
-                        "name": base["name"],
-                        "description": base["description"],
-                        "parameters": base["input_schema"],
-                    },
-                })
+                results.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": base["name"],
+                            "description": base["description"],
+                            "parameters": base["input_schema"],
+                        },
+                    }
+                )
             else:
                 results.append(base)
         return results
@@ -131,14 +129,16 @@ class ToolRegistry:
                 continue
             base = tool.get_schema()
             if protocol in ("openai", "openai-compat"):
-                schemas.append({
-                    "type": "function",
-                    "function": {
-                        "name": base["name"],
-                        "description": base["description"],
-                        "parameters": base["input_schema"],
-                    },
-                })
+                schemas.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": base["name"],
+                            "description": base["description"],
+                            "parameters": base["input_schema"],
+                        },
+                    }
+                )
             else:
                 schemas.append(base)
         return schemas

@@ -30,7 +30,7 @@ class WriteFile(Tool):
         self,
         file_cache: Any = None,
         file_history: Any = None,
-        file_state_cache: "FileStateCache | None" = None,
+        file_state_cache: FileStateCache | None = None,
     ) -> None:
         self._cache = file_cache
         self.file_history = file_history

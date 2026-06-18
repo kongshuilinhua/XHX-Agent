@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from xhx_agent.teams.models import BackendType, TeammateInfo
+from xhx_agent.teams.models import BackendType
 from xhx_agent.teams.progress import TeammateProgress
 
 
@@ -21,6 +21,7 @@ def detect_backend(teammate_mode: str | None = None, is_interactive: bool = True
 @dataclass
 class InProcessTeammateHandle:
     """In-process 队友的运行句柄。"""
+
     name: str = ""
     progress: TeammateProgress | None = None
     _task: asyncio.Task[str] | None = None

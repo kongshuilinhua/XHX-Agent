@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -33,9 +32,7 @@ class FileHistory:
     """
 
     def __init__(self, base_dir: str, session_id: str) -> None:
-        self._session_dir = (
-            Path(base_dir) / ".xhx" / "file-history" / session_id
-        )
+        self._session_dir = Path(base_dir) / ".xhx" / "file-history" / session_id
         self._session_dir.mkdir(parents=True, exist_ok=True)
         self._tracked: dict[str, int] = {}
         self._snapshots: list[Snapshot] = []

@@ -36,6 +36,4 @@ class WebFetchTool(Tool):
             )
             return ToolResult(output=result_str)
         except Exception as e:
-            return ToolResult(
-                output=f"Failed to fetch {params.url}: {e}", is_error=True
-            )
+            return ToolResult(output=f"Failed to fetch {params.url}: {e}", is_error=True)

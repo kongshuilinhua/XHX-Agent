@@ -16,14 +16,12 @@ class TaskGetParams(BaseModel):
 
 class TaskGetTool(Tool):
     name = "TaskGet"
-    description = (
-        "Get details of a shared task by ID, including dependency information."
-    )
+    description = "Get details of a shared task by ID, including dependency information."
     params_model = TaskGetParams
     category = "read"
     is_concurrency_safe = True
 
-    def __init__(self, team_manager: "TeamManager", team_name: str) -> None:
+    def __init__(self, team_manager: TeamManager, team_name: str) -> None:
         self._team_manager = team_manager
         self._team_name = team_name
 
@@ -39,9 +37,7 @@ class TaskGetTool(Tool):
 
         task = store.get(p.task_id)
         if task is None:
-            return ToolResult(
-                output=f"Task '{p.task_id}' not found", is_error=True
-            )
+            return ToolResult(output=f"Task '{p.task_id}' not found", is_error=True)
 
         lines = [
             f"Task {task.id}:",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from pathlib import Path
 
@@ -23,16 +22,14 @@ class WorktreeManager:
         self.project_root = Path(root).resolve()
         self.worktrees_dir = self.project_root / ".xhx" / "worktrees"
         self.symlink_directories = symlink_directories or []
-        self._active: dict[str, "WorktreeHandle"] = {}
+        self._active: dict[str, WorktreeHandle] = {}
 
-    async def create(
-        self, name: str, base_ref: str = "HEAD"
-    ) -> "WorktreeHandle":
+    async def create(self, name: str, base_ref: str = "HEAD") -> WorktreeHandle:
         """创建新 worktree。"""
         import secrets
 
         from xhx_agent.worktree.integration import generate_worktree_name
-        from xhx_agent.worktree.slug import flatten_slug, validate_slug
+        from xhx_agent.worktree.slug import flatten_slug
 
         slug = flatten_slug(name) if name else generate_worktree_name()
         branch = f"xhx-wt-{slug}-{secrets.token_hex(4)}"
@@ -61,20 +58,16 @@ class WorktreeManager:
         self._active[slug] = handle
         return handle
 
-    async def enter(self, name: str) -> "WorktreeHandle":
+    async def enter(self, name: str) -> WorktreeHandle:
         """进入已有 worktree。"""
         wt_dir = self.worktrees_dir / name
         if not wt_dir.exists():
             raise FileNotFoundError(f"Worktree not found: {name}")
-        handle = WorktreeHandle(
-            path=wt_dir, branch="", name=name, head_commit=self._head_sha(wt_dir)
-        )
+        handle = WorktreeHandle(path=wt_dir, branch="", name=name, head_commit=self._head_sha(wt_dir))
         self._active[name] = handle
         return handle
 
-    async def exit(
-        self, name: str, action: str = "keep", discard_changes: bool = False
-    ) -> None:
+    async def exit(self, name: str, action: str = "keep", discard_changes: bool = False) -> None:
         """退出 worktree。"""
         if name not in self._active:
             return
@@ -99,7 +92,7 @@ class WorktreeManager:
             except Exception:
                 pass
 
-    async def auto_cleanup(self, name: str, head_commit: str) -> "CleanupResult":
+    async def auto_cleanup(self, name: str, head_commit: str) -> CleanupResult:
         """自动清理无变更的 worktree。"""
         from xhx_agent.worktree.changes import CleanupResult, has_worktree_changes
 
@@ -108,9 +101,7 @@ class WorktreeManager:
             if not has_worktree_changes(str(handle.path), head_commit):
                 await self.exit(name, action="remove")
                 return CleanupResult(kept=False)
-            return CleanupResult(
-                kept=True, path=str(handle.path), branch=handle.branch
-            )
+            return CleanupResult(kept=True, path=str(handle.path), branch=handle.branch)
         return CleanupResult(kept=False)
 
     def _head_sha(self, wt_path: Path) -> str:
@@ -122,18 +113,16 @@ class WorktreeManager:
             pass
         return ""
 
-    def list_worktrees(self) -> list["WorktreeHandle"]:
+    def list_worktrees(self) -> list[WorktreeHandle]:
         return list(self._active.values())
 
-    def restore_session(self) -> "WorktreeHandle | None":
+    def restore_session(self) -> WorktreeHandle | None:
         """恢复上次会话的 worktree。"""
         return None
 
 
 class WorktreeHandle:
-    def __init__(
-        self, path: Path, branch: str, name: str, head_commit: str
-    ) -> None:
+    def __init__(self, path: Path, branch: str, name: str, head_commit: str) -> None:
         self.path = path
         self.worktree_path = str(path)
         self.branch = branch

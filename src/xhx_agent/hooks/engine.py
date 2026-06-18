@@ -1,5 +1,4 @@
-"""Hook 引擎：事件匹配 + 批量执行 + 通知收集。
-"""
+"""Hook 引擎：事件匹配 + 批量执行 + 通知收集。"""
 
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class HookNotification:
     """Hook 执行后的通知记录。"""
+
     hook_id: str
     event: str
     output: str
@@ -69,6 +69,7 @@ class HookEngine:
             loop = asyncio.get_running_loop()
             # 已有运行中的事件循环 → 在新线程跑
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(asyncio.run, self.run_hooks(event, ctx))
                 future.result(timeout=60)

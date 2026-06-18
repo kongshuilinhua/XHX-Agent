@@ -26,7 +26,7 @@ class TaskListTool(Tool):
     category = "read"
     is_concurrency_safe = True
 
-    def __init__(self, team_manager: "TeamManager", team_name: str) -> None:
+    def __init__(self, team_manager: TeamManager, team_name: str) -> None:
         self._team_manager = team_manager
         self._team_name = team_name
 

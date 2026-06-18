@@ -1,5 +1,4 @@
-"""Skill 定义解析器：Markdown + YAML frontmatter → SkillDef。
-"""
+"""Skill 定义解析器：Markdown + YAML frontmatter → SkillDef。"""
 
 from __future__ import annotations
 
@@ -18,6 +17,7 @@ VALID_CONTEXTS = {"full", "recent", "none"}
 
 class SkillParseError(Exception):
     """Skill 定义文件解析错误。"""
+
     pass
 
 
@@ -36,6 +36,7 @@ class SkillDef:
 
         (Markdown 正文 = 注入的提示词)
     """
+
     name: str
     description: str
     prompt_body: str = ""
@@ -57,7 +58,8 @@ class SkillDef:
 
 def parse_frontmatter(raw: str) -> tuple[dict, str]:
     """解析 YAML frontmatter + Markdown body。委托给共享工具。"""
-    from xhx_agent.utils.frontmatter import FrontmatterParseError, parse_frontmatter as _parse
+    from xhx_agent.utils.frontmatter import FrontmatterParseError
+    from xhx_agent.utils.frontmatter import parse_frontmatter as _parse
 
     try:
         return _parse(raw)
@@ -76,8 +78,7 @@ def _validate_meta(meta: dict, source: str = "") -> None:
     name = meta["name"]
     if not isinstance(name, str) or not VALID_NAME_RE.match(name):
         raise SkillParseError(
-            f"Invalid skill name '{name}'{ctx}: "
-            "must be lowercase letters, digits, and hyphens, starting with a letter"
+            f"Invalid skill name '{name}'{ctx}: must be lowercase letters, digits, and hyphens, starting with a letter"
         )
 
     mode = meta.get("mode", "inline")

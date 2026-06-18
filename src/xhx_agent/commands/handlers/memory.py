@@ -1,4 +1,5 @@
 """会话记忆管理命令。"""
+
 from __future__ import annotations
 
 from xhx_agent.commands import Command, CommandContext
@@ -17,7 +18,7 @@ async def handle_memory(ctx: CommandContext) -> None:
         if not content or not content.strip():
             ctx.ui.add_system_message("暂无记忆")
             return
-        mem_lines = [l for l in content.split("\n") if l.strip().startswith("- ")]
+        mem_lines = [line for line in content.split("\n") if line.strip().startswith("- ")]
         if not mem_lines:
             ctx.ui.add_system_message("暂无结构化记忆条目")
             return

@@ -199,6 +199,7 @@ class SkillLoader:
         """解析 YAML frontmatter（回退兼容——失败返回 {} 而非抛异常）。"""
         try:
             from xhx_agent.utils.frontmatter import parse_frontmatter
+
             return parse_frontmatter(content)[0]
         except Exception as e:
             logger.warning("Failed to parse YAML frontmatter: %s", e)

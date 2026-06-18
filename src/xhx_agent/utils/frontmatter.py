@@ -7,6 +7,7 @@ import yaml
 
 class FrontmatterParseError(Exception):
     """Frontmatter 解析错误。"""
+
     pass
 
 
@@ -28,7 +29,7 @@ def parse_frontmatter(raw: str) -> tuple[dict, str]:
         raise FrontmatterParseError("Unclosed YAML frontmatter (missing closing ---)")
 
     yaml_block = stripped[3:end]
-    body = stripped[end + 3:].lstrip("\n")
+    body = stripped[end + 3 :].lstrip("\n")
 
     try:
         meta = yaml.safe_load(yaml_block)

@@ -58,9 +58,7 @@ class BenchmarkRunner:
             ),
         ]
 
-    def _run_fixture(
-        self, fixture: BenchmarkFixture, profile_name: str, mode: str | None
-    ) -> BenchmarkResult:
+    def _run_fixture(self, fixture: BenchmarkFixture, profile_name: str, mode: str | None) -> BenchmarkResult:
         """跑一个 (fixture, mode)，把 HeadlessResult 折成 BenchmarkResult；任何异常折成 failed 结果。"""
         from xhx_agent.runtime.headless import run_headless_task
 

@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
 from xhx_agent.hooks import hooks_manager
+from xhx_agent.models.types import ModelClientError, ModelPlan, ToolStep
 from xhx_agent.tools.patch import PatchResult, apply_patch
 from xhx_agent.tools.read_file import read_file
 from xhx_agent.tools.search import search
@@ -381,7 +381,11 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             "properties": {
                 "description": {"type": "string", "description": "子任务一句话描述（给人看的）"},
                 "prompt": {"type": "string", "description": "给子 agent 的完整指令"},
-                "agent_type": {"type": "string", "default": "Explore", "description": "Agent 类型名，对应 .md 定义文件中的 name 字段"},
+                "agent_type": {
+                    "type": "string",
+                    "default": "Explore",
+                    "description": "Agent 类型名，对应 .md 定义文件中的 name 字段",
+                },
             },
             "required": ["prompt"],
         },
