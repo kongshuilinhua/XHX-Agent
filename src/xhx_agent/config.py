@@ -44,7 +44,7 @@ class ProviderConfig:
         return os.environ.get(env_var, "")
 
     @classmethod
-    def from_xhx_profile(cls, profile: Any) -> "ProviderConfig":
+    def from_xhx_profile(cls, profile: Any) -> ProviderConfig:
         """从 XHX-Agent 的 ModelProfile 创建 ProviderConfig。"""
         import os
 
@@ -54,9 +54,13 @@ class ProviderConfig:
         if api_key_env:
             api_key = os.environ.get(api_key_env, "")
 
+        # mock provider 走确定性本地客户端，不发网络请求（用于测试 / 离线）。
+        provider_kind = getattr(profile, "provider", "") or ""
+        protocol = "mock" if provider_kind == "mock" or profile.model == "mock" else "openai-compat"
+
         return cls(
             name=profile.name,
-            protocol="openai-compat",
+            protocol=protocol,
             base_url=profile.base_url or "",
             model=profile.model or "",
             api_key=api_key,

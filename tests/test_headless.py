@@ -4,8 +4,9 @@
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from xhx_agent.client import LLMClient
 from xhx_agent.runtime.headless import run_headless_task

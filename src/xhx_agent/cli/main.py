@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ from rich.console import Console
 from xhx_agent.repo_intel.index import diagnose_repo_intel_index, write_repo_intel_index
 from xhx_agent.runtime.app import RuntimeApp
 from xhx_agent.runtime.config import global_config_path, load_config, write_global_config
+from xhx_agent.runtime.headless import run_headless_task
 from xhx_agent.runtime.profiles import global_profiles_path, load_profiles, write_global_profiles
 from xhx_agent.runtime.session import (
     format_follow_up,
@@ -154,6 +156,34 @@ def repo_index(
             console.print(f"  - {path}")
 
 
+def _record_run_session(workspace: Path, task: str, result: object) -> object:
+    """把一次 headless 运行落入会话索引，让 `xhx sessions` / --continue / --resume 仍可用。
+
+    用一个最小的 duck-typed 适配对象对接 record_session，避免依赖旧栈的重型 RunResult。
+    """
+    import uuid
+    from types import SimpleNamespace
+
+    run_id = uuid.uuid4().hex[:12]
+    runs_dir = workspace / ".xhx" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    summary_file = runs_dir / f"{run_id}.md"
+    summary_text = getattr(result, "summary", "") or getattr(result, "error", "") or ""
+    summary_file.write_text(summary_text, encoding="utf-8")
+
+    adapter = SimpleNamespace(
+        run_id=run_id,
+        status=getattr(result, "status", "completed"),
+        verification="",
+        changed_files=[],
+        summary_path=summary_file.relative_to(workspace).as_posix(),
+        transcript_path=None,
+        mode="",
+        messages=None,
+    )
+    return record_session(workspace, task, adapter)
+
+
 @app.command("run")
 def run(
     task: Annotated[str, typer.Argument(help="Task for xhx-agent to run.")],
@@ -182,74 +212,49 @@ def run(
         ),
     ] = None,
 ) -> None:
-    runtime = RuntimeApp()
+    workspace = Path.cwd()
+    # --mode / --auto-repair 是旧编排器/修复循环的概念，统一 Agent 循环下不再适用，仅作兼容接受。
+    _ = (mode, auto_repair)
     if dry_run:
-        preview_result = runtime.preview_plan(task, profile)
-        if json_output:
-            console.print(preview_result.model_dump_json(indent=2))
-            return
-        console.print(f"status: {preview_result.status}")
-        console.print(f"summary: {preview_result.summary}")
-        console.print(f"steps: {preview_result.step_count}")
-        console.print(
-            f"context: {preview_result.context_used_tokens_estimate}/{preview_result.context_budget_tokens} estimated tokens"
-        )
-        console.print(f"trace: {preview_result.trace_path}")
-        if preview_result.risk_summary:
-            console.print("risks:")
-            for risk in preview_result.risk_summary:
-                console.print(f"  - {risk}")
+        console.print("--dry-run 在统一 Agent 循环下已不再支持，已跳过执行。")
         return
+
     effective_task = task
-    prior_messages = None
-    resume_mode = mode
     if cont or resume:
-        previous = load_latest_session(runtime.workspace) if cont else load_session(runtime.workspace, resume or "")
+        previous = load_latest_session(workspace) if cont else load_session(workspace, resume or "")
         if previous is not None:
-            restored = load_transcript_messages(runtime.workspace, previous.transcript_path)
             verb = "Continuing" if cont else "Resuming"
-            if restored:
-                prior_messages = restored
-                resume_mode = mode or (previous.mode or None)
-                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — full transcript restored.")
-            else:
-                effective_task = format_follow_up(previous) + "\n\n" + task
-                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — summary only.")
+            effective_task = format_follow_up(previous) + "\n\n" + task
+            console.print(f"{verb} from run {previous.run_id} ({previous.status}) — summary context injected.")
         else:
             target = "most recent session" if cont else f"session '{resume}'"
             console.print(f"No {target} found; starting fresh.")
+
+    result = run_headless_task(workspace, effective_task, profile=profile, assume_yes=yes)
+    entry = _record_run_session(workspace, task, result)
+
     if json_output:
-        json_result = runtime.run_task(
-            effective_task,
-            profile,
-            assume_yes=yes,
-            auto_repair=auto_repair,
-            mode=resume_mode,
-            prior_messages=prior_messages,
+        console.print(
+            json.dumps(
+                {
+                    "run_id": entry.run_id,
+                    "status": result.status,
+                    "summary": result.summary,
+                    "error": result.error,
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-        record_session(runtime.workspace, task, json_result)
-        console.print(json_result.model_dump_json(indent=2))
         return
-    result = runtime.run_task(
-        effective_task,
-        profile,
-        assume_yes=yes,
-        confirm_callback=_confirm_terminal_command,
-        auto_repair=auto_repair,
-        mode=resume_mode,
-        prior_messages=prior_messages,
-    )
-    record_session(runtime.workspace, task, result)
+
     console.print(f"status: {result.status}")
-    console.print(f"summary: {result.summary_path}")
-    if result.commands:
-        console.print("verification commands:")
-        for command in result.commands:
-            console.print(f"  - {command}")
-    if result.risk_summary:
-        console.print("risks:")
-        for risk in result.risk_summary:
-            console.print(f"  - {risk}")
+    if result.summary:
+        console.print(f"summary: {result.summary}")
+    if result.error:
+        console.print(f"error: {result.error}")
 
 
 @app.command("sessions")

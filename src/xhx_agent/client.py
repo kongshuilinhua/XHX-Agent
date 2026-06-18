@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
@@ -24,7 +25,6 @@ from xhx_agent.tools.base import (
     ToolCallDelta,
     ToolCallStart,
 )
-
 
 # 限制自动拉取模型元数据的超时时间，防止慢响应或挂起的
 # /v1/models 端点拖延启动。超时后降级为 None（即"未知"），
@@ -557,6 +557,25 @@ class OpenAICompatClient(LLMClient):
             raise LLMError(f"API error ({e.status_code}): {e.message}") from e
 
 
+class MockClient(LLMClient):
+    """确定性假客户端：始终直接给出一段最终答复、不调用工具，用于测试与离线冒烟。
+
+    不发任何网络请求，让 ``--profile mock`` 这类场景可在无 API key/无网络下跑通完整循环。
+    """
+
+    def __init__(self, config: ProviderConfig | None = None) -> None:
+        self.config = config
+
+    async def stream(
+        self,
+        conversation: ConversationManager,
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        yield TextDelta("Mock 回复：任务已处理（确定性 mock，未调用真实模型）。")
+        yield StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)
+
+
 def create_client(config: ProviderConfig) -> LLMClient:
     if config.protocol == "anthropic":
         return AnthropicClient(config)
@@ -564,6 +583,8 @@ def create_client(config: ProviderConfig) -> LLMClient:
         return OpenAIClient(config)
     elif config.protocol == "openai-compat":
         return OpenAICompatClient(config)
+    elif config.protocol == "mock":
+        return MockClient(config)
     raise ValueError(f"Unknown protocol: {config.protocol}")
 
 

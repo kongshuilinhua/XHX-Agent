@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from xhx_agent.agents.agent_runner import Agent
 from xhx_agent.client import LLMClient, create_client
