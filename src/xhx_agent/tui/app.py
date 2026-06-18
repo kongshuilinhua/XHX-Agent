@@ -682,8 +682,6 @@ class XHXApp(App):
         self._spinner_label: Static | None = None
         self._mcp_server_info: str = ""
         self._agent_task: asyncio.Task[None] | None = None
-        self._subagent_task: asyncio.Task[None] | None = None
-        self._subagent_start_time: float | None = None
         self.session_manager: SessionManager | None = None
         self.session: Session | None = None
         self._session_saved_count: int = 0
@@ -1216,16 +1214,6 @@ class XHXApp(App):
             self.query_one("#chat-input", ChatInput).focus()
             return
         if self._agent_task and not self._agent_task.done():
-            if self._subagent_task and not self._subagent_task.done():
-                # FIXME: adopt_running 期望 Agent，这里传的是 asyncio.Task；取消时后台收养语义需对齐
-                task_id = (
-                    self.task_manager.adopt_running(self._subagent_task, "background task")  # type: ignore[arg-type]
-                    if hasattr(self.task_manager, "adopt_running")
-                    else None
-                )
-                if task_id:
-                    self._show_system_message(f"Task moved to background (id: {task_id})")
-                    return
             self._agent_task.cancel()
 
     async def _prefetch_relevant_memories(self, query: str) -> str:
