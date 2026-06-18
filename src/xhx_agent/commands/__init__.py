@@ -50,7 +50,35 @@ __all__ = [
 ]
 
 
-def complete(prefix: str, registry: Any) -> list[str]:
-    """命令补全。"""
-    return []
+def complete(prefix: str, registry: Any) -> list[tuple[str, str]]:
+    """命令补全：返回匹配 prefix 的 [(显示文本, 补全值), ...]。
+
+    优先匹配新式 Command（list_commands），回退旧式 matching()。
+    """
+    prefix = prefix.lstrip("/").lower() if prefix else ""
+    results: list[tuple[str, str]] = []
+
+    # 新式 Command
+    if hasattr(registry, "list_commands"):
+        for cmd in registry.list_commands():
+            name = getattr(cmd, "name", "")
+            if name and name.startswith(prefix):
+                display = f"/{name}"
+                if getattr(cmd, "arg_prompt", ""):
+                    display += f"  ({cmd.arg_prompt})"
+                results.append((display, name))
+            # 别名匹配
+            for alias in getattr(cmd, "aliases", []) or []:
+                if alias.startswith(prefix):
+                    results.append((f"/{alias} → /{name}", name))
+
+    # 旧式 matching（兼容）
+    if not results and hasattr(registry, "matching"):
+        for name, desc, hint in registry.matching(prefix):
+            display = f"/{name}"
+            if hint:
+                display += f"  ({hint})"
+            results.append((display, name))
+
+    return results
 

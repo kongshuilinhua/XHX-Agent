@@ -1,0 +1,41 @@
+"""会话记忆管理命令。"""
+from __future__ import annotations
+
+from xhx_agent.commands import Command, CommandContext
+
+
+async def handle_memory(ctx: CommandContext) -> None:
+    """查看或管理长期记忆。"""
+    if not ctx.memory_manager:
+        ctx.ui.add_system_message("记忆管理器未初始化")
+        return
+
+    sub = ctx.args.strip().lower() if ctx.args else "list"
+
+    if sub == "list" or sub == "":
+        content = ctx.memory_manager.load()
+        if not content or not content.strip():
+            ctx.ui.add_system_message("暂无记忆")
+            return
+        mem_lines = [l for l in content.split("\n") if l.strip().startswith("- ")]
+        if not mem_lines:
+            ctx.ui.add_system_message("暂无结构化记忆条目")
+            return
+        ctx.ui.add_system_message("记忆条目：\n" + "\n".join(mem_lines))
+        return
+
+    if sub == "clear":
+        ctx.memory_manager.save("")
+        ctx.ui.add_system_message("记忆已清空")
+        return
+
+    ctx.ui.add_system_message("用法: /memory [list|clear]")
+
+
+MEMORY_COMMAND = Command(
+    name="memory",
+    aliases=["mem"],
+    description="查看或管理长期记忆",
+    usage="/memory [list|clear]",
+    handler=handle_memory,
+)
