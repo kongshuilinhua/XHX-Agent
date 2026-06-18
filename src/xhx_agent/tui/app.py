@@ -753,6 +753,9 @@ class XHXApp(App):
     def on_mount(self) -> None:
         self.register_theme(_XHX_THEME)
         self.theme = "XHX"
+        # AskUser 工具在 execute() 内阻塞 await future，主事件循环此时被挂起，
+        # 无法靠流式分支检测其 _pending_event；用独立 interval 轮询来弹出询问框。
+        self.set_interval(0.15, self._poll_askuser)
         if len(self.providers) == 1:
             self._select_provider(self.providers[0])
         else:
@@ -1377,10 +1380,6 @@ class XHXApp(App):
                         result_block.set_result(event.output, event.is_error, event.elapsed)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
-                    ask_tool = self.registry.get("AskUserQuestion")
-                    if ask_tool and isinstance(ask_tool, AskUserTool) and ask_tool._pending_event:
-                        await self._handle_askuser(ask_tool._pending_event)
-
                 elif isinstance(event, TurnComplete):
                     if self.session:
                         for msg in self.conversation.history[history_cursor:]:
@@ -1588,9 +1587,29 @@ class XHXApp(App):
             else:
                 self._show_system_message("Type your feedback and send.")
 
+    async def _poll_askuser(self) -> None:
+        """轮询 AskUser 工具的待处理事件并弹出询问框。
+
+        工具 execute() 内阻塞 await future，流式主循环此刻被挂起，故无法在事件分支里
+        检测；此处由 set_interval 独立驱动。仅在未在显示、且 future 未完成时弹框。
+        """
+        if self._pending_askuser_event is not None:
+            return
+        registry = getattr(self, "registry", None)
+        if registry is None:
+            return
+        ask_tool = registry.get("AskUserQuestion")
+        if not isinstance(ask_tool, AskUserTool):
+            return
+        ev = ask_tool._pending_event
+        if ev is not None and not ev.future.done():
+            await self._handle_askuser(ev)
+
     async def _handle_askuser(self, event: AskUserEvent) -> None:
         from xhx_agent.askuser_dialog import InlineAskUserWidget
 
+        if self._pending_askuser_event is not None or self.query("#askuser-inline"):
+            return
         chat = self.query_one("#chat-area", VerticalScroll)
         widget = InlineAskUserWidget(event.questions)
         self._pending_askuser_event = event
