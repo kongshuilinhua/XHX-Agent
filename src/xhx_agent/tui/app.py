@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     from xhx_agent.askuser_dialog import InlineAskUserWidget
     from xhx_agent.permission_dialog import InlinePermissionWidget
     from xhx_agent.plan_dialog import InlinePlanWidget
@@ -60,7 +62,7 @@ from xhx_agent.commands.handlers import register_all_commands
 from xhx_agent.commands.handlers.skill_register import register_skill_commands
 from xhx_agent.commands.handlers.tasks import create_tasks_command
 from xhx_agent.commands.handlers.worktree import create_worktree_command
-from xhx_agent.config import MCPServerConfig, ProviderConfig
+from xhx_agent.config import ProviderConfig
 from xhx_agent.conversation import ConversationManager, Message
 from xhx_agent.hooks import HookContext, HookEngine
 from xhx_agent.mcp import MCPManager
@@ -81,6 +83,7 @@ from xhx_agent.permissions import (
     PermissionMode,
     RuleEngine,
 )
+from xhx_agent.runtime.mcp_config import MCPServerConfig
 from xhx_agent.skills.executor import SkillExecutor
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.teammate_tree import TeammateTree
@@ -675,7 +678,7 @@ class XHXApp(App):
         self._thinking_start: float = 0.0
         self._thinking_verb: str = ""
         self._spinner_idx: int = 0
-        self._spinner_timer = None
+        self._spinner_timer: Timer | None = None
         self._spinner_label: Static | None = None
         self._mcp_server_info: str = ""
         self._agent_task: asyncio.Task[None] | None = None
@@ -714,7 +717,9 @@ class XHXApp(App):
         self._mcp_instructions_ok: bool = False
         self._mcp_connecting: bool = False
         self._teammate_tree: TeammateTree | None = None
-        self._teammate_timer = None
+        self._teammate_timer: Timer | None = None
+        self._pending_askuser_event: AskUserEvent | None = None
+        self._pending_perm_request: PermissionRequest | None = None
 
     @staticmethod
     def _make_banner(model: str = "", work_dir: str = "") -> RichText:
@@ -766,7 +771,7 @@ class XHXApp(App):
             self._show_error(str(e))
             return
 
-        work_dir = Path.cwd()
+        work_dir = str(Path.cwd())
         home = Path.home()
         checker = PermissionChecker(
             detector=DangerousCommandDetector(),
@@ -826,7 +831,7 @@ class XHXApp(App):
         # 如果异步拉取成功，就原地升级为更准确的值。
         self.run_worker(self._resolve_context_window(provider), exclusive=False)
 
-        self.skill_loader = SkillLoader(work_dir)
+        self.skill_loader = SkillLoader(Path(work_dir))
         self.skill_loader.load_all()
 
         load_skill_tool.set_loader(self.skill_loader)
@@ -1167,21 +1172,6 @@ class XHXApp(App):
             popup = self.query_one(CompletionPopup)
             popup.show_items([f"@{m}" for m in matches])
 
-    def on_completion_popup_selected(self, event: CompletionPopup.Selected) -> None:
-        input_widget = self.query_one("#chat-input", ChatInput)
-        selected = event.value
-        text = input_widget.text
-        if selected.startswith("@"):
-            at_idx = text.rfind("@")
-            if at_idx >= 0:
-                input_widget.clear()
-                input_widget.insert(text[:at_idx] + selected + " ")
-                input_widget.focus()
-                return
-        input_widget.clear()
-        input_widget.insert(selected + " ")
-        input_widget.focus()
-
     def action_cycle_mode(self) -> None:
         if self.agent is None:
             return
@@ -1212,12 +1202,12 @@ class XHXApp(App):
                     if isinstance(child, ToolCallBlock) and child.tool_name in COLLAPSIBLE_TOOLS:
                         child.display = summary._expanded
 
-        for block in self.query(SubAgentBlock):
-            if not isinstance(block, SubAgentBlock):
+        for sa_block in self.query(SubAgentBlock):
+            if not isinstance(sa_block, SubAgentBlock):
                 continue
-            if block._done:
-                block._collapsed = not block._collapsed
-                block._render_done()
+            if sa_block._done:
+                sa_block._collapsed = not sa_block._collapsed
+                sa_block._render_done()
 
     def action_cancel(self) -> None:
         popup = self.query_one(CompletionPopup)
@@ -1227,8 +1217,9 @@ class XHXApp(App):
             return
         if self._agent_task and not self._agent_task.done():
             if self._subagent_task and not self._subagent_task.done():
+                # FIXME: adopt_running 期望 Agent，这里传的是 asyncio.Task；取消时后台收养语义需对齐
                 task_id = (
-                    self.task_manager.adopt_running(self._subagent_task, "background task")
+                    self.task_manager.adopt_running(self._subagent_task, "background task")  # type: ignore[arg-type]
                     if hasattr(self.task_manager, "adopt_running")
                     else None
                 )
@@ -1305,11 +1296,12 @@ class XHXApp(App):
         # 准备 AI 回复区域
         ai_row = Vertical(classes="ai-row")
         await chat.mount(ai_row)
-        streaming_label = Static("", classes="message ai-message")
-        await ai_row.mount(streaming_label)
+        _initial_label = Static("", classes="message ai-message")
+        await ai_row.mount(_initial_label)
+        streaming_label: Static | None = _initial_label
 
         accumulated_text = ""
-        tool_blocks: dict[str, ToolCallBlock] = {}
+        tool_blocks: dict[str, ToolCallBlock | SubAgentBlock] = {}
 
         # 在聊天区底部启动持续旋转的加载动画
         self._thinking_start = _time.monotonic()
@@ -1338,8 +1330,9 @@ class XHXApp(App):
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
                 elif isinstance(event, StreamText):
-                    if streaming_label is not None and not accumulated_text:
-                        await streaming_label.remove()
+                    if streaming_label is None or not accumulated_text:
+                        if streaming_label is not None:
+                            await streaming_label.remove()
                         streaming_label = Static("", classes="message ai-message")
                         await ai_row.mount(streaming_label)
                     accumulated_text += event.text
@@ -1370,6 +1363,7 @@ class XHXApp(App):
                         await streaming_label.remove()
                         streaming_label = None
 
+                    block: ToolCallBlock | SubAgentBlock
                     if _is_subagent_tool(event.tool_name):
                         agent_type = event.arguments.get("subagent_type", "")
                         desc = event.arguments.get("description", "")
@@ -1390,9 +1384,9 @@ class XHXApp(App):
                 elif isinstance(event, ToolResultEvent):
                     self._xhx_tool_count += 1
                     self.call_later(self._update_xhx_status)
-                    block = tool_blocks.get(event.tool_id)
-                    if block:
-                        block.set_result(event.output, event.is_error, event.elapsed)
+                    result_block = tool_blocks.get(event.tool_id)
+                    if result_block:
+                        result_block.set_result(event.output, event.is_error, event.elapsed)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
                     ask_tool = self.registry.get("AskUserQuestion")
@@ -1548,7 +1542,7 @@ class XHXApp(App):
         if not notes:
             return
         for note in notes:
-            self.conversation.add_system_reminder(note)
+            self.conversation.add_system_reminder(f"[{note.from_agent}] {note.summary or note.content}")
         self._agent_task = asyncio.create_task(self._send_message("", is_notification=True))
 
     async def _show_plan_approval(self) -> None:

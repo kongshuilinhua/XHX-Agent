@@ -11,8 +11,6 @@ from xhx_agent.commands.registry import CommandInfo, CommandRegistry
 class UIController(Protocol):
     """TUI 控制接口。"""
 
-    def request_permission(self, tool_name: str, description: str) -> Any: ...
-    def show_plan(self, plan: str) -> Any: ...
     def add_system_message(self, text: str) -> Any: ...
     def get_token_count(self) -> Any: ...
 
@@ -27,7 +25,9 @@ class CommandContext:
     session: Any = None
     session_manager: Any = None
     memory_manager: Any = None
-    ui: UIController | None = None
+    # 实际仅由 TUI 构造并恒传 ui=self；非交互场景不会派发命令。类型按非 Optional
+    # 处理以避免每个 handler 都要做 None 收窄；默认值 None 保留以兼容 dataclass 字段顺序。
+    ui: UIController = None  # type: ignore[assignment]
     config: Any = None
     work_dir: str = ""
 

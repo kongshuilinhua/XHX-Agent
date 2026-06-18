@@ -201,7 +201,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
             self._q_idx -= 1
             self._refresh()
 
-    def action_toggle(self) -> None:
+    def action_toggle(self) -> None:  # type: ignore[override]
         if self._on_submit:
             return
         q = self._questions[self._q_idx]

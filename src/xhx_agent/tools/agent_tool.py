@@ -108,7 +108,7 @@ class AgentTool(Tool):
         from xhx_agent.agent import Agent as AgentClass
         from xhx_agent.agents.fork import ForkError, build_forked_messages
         from xhx_agent.agents.parser import AgentDef
-        from xhx_agent.agents.tool_filter import resolve_agent_tools
+        from xhx_agent.agents.tool_filter import build_filtered_registry
         from xhx_agent.conversation import ConversationManager
         from xhx_agent.permissions import (
             DangerousCommandDetector,
@@ -170,7 +170,7 @@ class AgentTool(Tool):
 
         # 过滤工具（coordinator 模式可能缩减了注册表，这里用完整注册表）
         _base_registry = getattr(self._parent_agent, "_full_registry", None) or self._parent_agent.registry
-        filtered_registry = resolve_agent_tools(_base_registry, definition, is_background)
+        filtered_registry = build_filtered_registry(_base_registry, definition, is_background)
 
         # 为子 agent 创建权限检查器
         pm_str = definition.permission_mode
@@ -221,7 +221,7 @@ class AgentTool(Tool):
 
         if is_background:
             if is_fork:
-                sub_agent._fork_conversation = conversation
+                sub_agent._fork_conversation = conversation  # type: ignore[attr-defined]
             task_id = self._task_manager.launch(
                 agent=sub_agent,
                 task="" if is_fork else p.prompt,
@@ -364,7 +364,7 @@ class AgentTool(Tool):
         teammate_registry = build_teammate_tools(
             parent_registry=full_registry,
             team_manager=self._team_manager,
-            team_name=p.team_name,
+            team_name=p.team_name or "",
             agent_id=agent_id,
             agent_name=teammate_name,
             backend_type=backend.value,
@@ -397,7 +397,7 @@ class AgentTool(Tool):
         sub_agent.parent_id = self._parent_agent.agent_id
         sub_agent.trace_id = self._parent_agent.trace_id or self._parent_agent.agent_id
         sub_agent.agent_id = agent_id
-        sub_agent.team_name = p.team_name
+        sub_agent.team_name = p.team_name or ""
         sub_agent._team_manager = self._team_manager
 
         # 7. 注册名称和成员信息
@@ -457,7 +457,7 @@ class AgentTool(Tool):
 
         from xhx_agent.agent import Agent as AgentClass
         from xhx_agent.agents.parser import AgentDef
-        from xhx_agent.agents.tool_filter import resolve_agent_tools
+        from xhx_agent.agents.tool_filter import build_filtered_registry
         from xhx_agent.permissions import (
             DangerousCommandDetector,
             PathSandbox,
@@ -506,7 +506,7 @@ class AgentTool(Tool):
         client = self._select_llm(p, definition)
 
         _base_registry = getattr(self._parent_agent, "_full_registry", None) or self._parent_agent.registry
-        filtered_registry = resolve_agent_tools(_base_registry, definition, False)
+        filtered_registry = build_filtered_registry(_base_registry, definition, False)
 
         pm_str = definition.permission_mode
         pm_enum = getattr(

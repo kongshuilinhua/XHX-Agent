@@ -278,7 +278,7 @@ class StreamingExecutor:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out: list[_ToolExecResult] = []
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 out.append(
                     _ToolExecResult(
                         tool_id="",
@@ -457,10 +457,11 @@ class Agent:
             self._agent_catalog_list = catalog_list
 
     def _build_hook_context(self, event: str, **kwargs: str | dict) -> HookContext:
+        _ta = kwargs.get("tool_args", {})
         return HookContext(
             event_name=event,
             tool_name=str(kwargs.get("tool_name", "")),
-            tool_args=kwargs.get("tool_args", {}),
+            tool_args=_ta if isinstance(_ta, dict) else {},
             file_path=str(kwargs.get("file_path", "")),
             message=str(kwargs.get("message", "")),
             error=str(kwargs.get("error", "")),
@@ -579,8 +580,10 @@ class Agent:
                 conversation.add_system_reminder(plan_reminder)
 
             if self.hook_engine:
-                for note in self.hook_engine.drain_notifications():
-                    conversation.add_system_reminder(f"Hook [{note.hook_id}] {note.event}: {note.output}")
+                for hook_note in self.hook_engine.drain_notifications():
+                    conversation.add_system_reminder(
+                        f"Hook [{hook_note.hook_id}] {hook_note.event}: {hook_note.output}"
+                    )
 
             deferred_names = self.registry.get_deferred_tool_names()
             if deferred_names:
@@ -882,7 +885,9 @@ class Agent:
         tasks = [self._execute_single_tool_direct(tc) for tc in calls]
         return list(await asyncio.gather(*tasks))
 
-    async def _execute_tool(self, tc: ToolCallComplete) -> AsyncIterator[tuple[ToolResult, float, bool]]:
+    async def _execute_tool(
+        self, tc: ToolCallComplete
+    ) -> AsyncIterator[tuple[ToolResult, float, bool] | PermissionRequest]:
         tool = self.registry.get(tc.tool_name)
         start = time.monotonic()
         is_unknown = False
@@ -905,7 +910,7 @@ class Agent:
 
         # 权限检查
         if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
+            decision = self.permission_checker.check(tool.name, tc.arguments, tool_category=tool.category)
 
             if decision.effect == "deny":
                 result = ToolResult(
@@ -980,7 +985,24 @@ class Agent:
             return
         self._extracting = True
         try:
-            await self.memory_manager.extract(self.client, conversation, self.protocol)
+            from xhx_agent.conversation import Message as _Msg
+
+            messages = [
+                {"role": m.role, "content": m.content}
+                for m in conversation.history
+                if m.role in ("user", "assistant") and m.content
+            ]
+
+            async def summarize_fn(prompt: str) -> str:
+                mini = ConversationManager()
+                mini.history = [_Msg(role="user", content=prompt)]
+                collected = ""
+                async for event in self.client.stream(mini):
+                    if isinstance(event, TextDelta):
+                        collected += event.text
+                return collected.strip()
+
+            await self.memory_manager.extract(messages, summarize_fn)
         except Exception as e:
             log.debug("Memory extraction failed: %s", e)
         finally:
@@ -1222,7 +1244,7 @@ class Agent:
                 )
 
         if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
+            decision = self.permission_checker.check(tool.name, tc.arguments, tool_category=tool.category)
             if decision.effect == "deny":
                 return ToolResult(
                     output=f"Permission denied: {decision.reason}",

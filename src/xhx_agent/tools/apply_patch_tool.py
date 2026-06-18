@@ -30,7 +30,7 @@ class ApplyPatchTool(Tool):
     def __init__(self, workspace: Path | None = None, **kwargs: Any) -> None:
         self._workspace = workspace
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         from xhx_agent.tools.patch import apply_patch
 
         workspace = self._workspace or Path.cwd()

@@ -46,13 +46,13 @@ class AskUserTool(Tool):
         "select, and checkbox (multi select) question types."
     )
     params_model = AskUserParams
-    category: str = "read"
+    category = "read"
     is_system_tool = True
 
     def __init__(self, **kwargs: Any) -> None:
         self._pending_event: AskUserEvent | None = None
 
-    async def execute(self, params: AskUserParams) -> ToolResult:
+    async def execute(self, params: AskUserParams) -> ToolResult:  # type: ignore[override]
         questions_data = [q.model_dump() for q in params.questions]
 
         loop = asyncio.get_running_loop()

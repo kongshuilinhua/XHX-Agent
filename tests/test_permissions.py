@@ -2,27 +2,31 @@
 
 from pathlib import Path
 
-from xhx_agent.evidence.store import EvidenceStore
-from xhx_agent.models.types import ToolStep
-from xhx_agent.safety.kernel import SafeExecutionKernel
-from xhx_agent.tools.registry import ToolContext, default_tool_registry
+from xhx_agent.permissions import (
+    DangerousCommandDetector,
+    PathSandbox,
+    PermissionChecker,
+    PermissionMode,
+    RuleEngine,
+)
 
 
 def test_path_sandbox_denies_out_of_scope(tmp_path: Path) -> None:
     """PermissionChecker Layer 2 blocks paths outside workspace."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    # Use a path outside temp dir (tempfile.gettempdir is auto-allowed by PathSandbox)
     ext_file = Path("C:/outside/workspace/README.md")
 
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-    context = ToolContext(workspace=workspace, permission_mode="default")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
+    sandbox = PathSandbox(workspace)
+    checker = PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=sandbox,
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.DEFAULT,
+    )
 
-    result, _trace, policy = kernel.execute_tool(context, step, turn=1)
-    assert policy.decision == "deny"
-    assert result is None
+    decision = checker.check("read_file", {"path": str(ext_file)})
+    assert decision.effect == "deny"
 
 
 def test_path_sandbox_allows_in_scope(tmp_path: Path) -> None:
@@ -32,36 +36,35 @@ def test_path_sandbox_allows_in_scope(tmp_path: Path) -> None:
     in_file = workspace / "in.md"
     in_file.write_text("content\n", encoding="utf-8")
 
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-    context = ToolContext(workspace=workspace, permission_mode="default")
-    step = ToolStep(tool="read_file", arguments={"path": str(in_file)})
+    sandbox = PathSandbox(workspace)
+    checker = PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=sandbox,
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.DEFAULT,
+    )
 
-    result, _trace, policy = kernel.execute_tool(context, step, turn=1)
-    assert policy.decision == "allow"
-    assert result is not None
-    assert result.status == "success"
+    decision = checker.check("read_file", {"path": str(in_file)})
+    # 只读工具在默认模式下应放行
+    assert decision.effect == "allow"
 
 
 def test_path_sandbox_bypass_allows_out_of_scope(tmp_path: Path) -> None:
     """Bypass permission mode grants out-of-scope access."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    # Create the file to avoid FileNotFoundError after policy passes
-    ext_dir = tmp_path.parent / "outside_workspace"
-    ext_dir.mkdir(exist_ok=True)
-    ext_file = ext_dir / "README.md"
-    ext_file.write_text("bypass test\n", encoding="utf-8")
+    ext_file = Path("C:/outside/workspace/README.md")
 
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-    context = ToolContext(workspace=workspace, permission_mode="bypass")
-    step = ToolStep(tool="read_file", arguments={"path": str(ext_file)})
+    sandbox = PathSandbox(workspace)
+    checker = PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=sandbox,
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.BYPASS,
+    )
 
-    result, _trace, policy = kernel.execute_tool(context, step, turn=1)
-    assert policy.decision == "allow"
-    assert result is not None
-    assert result.status == "success"
+    decision = checker.check("read_file", {"path": str(ext_file)})
+    assert decision.effect == "allow"
 
 
 def test_permission_checker_blocks_destructive_out_of_scope(tmp_path: Path) -> None:
@@ -70,13 +73,17 @@ def test_permission_checker_blocks_destructive_out_of_scope(tmp_path: Path) -> N
     workspace.mkdir()
     ext_file = Path("C:/outside/workspace/config.yaml")
 
-    evidence = EvidenceStore(workspace, "run-test")
-    kernel = SafeExecutionKernel(workspace, "run-test", evidence, default_tool_registry())
-    context = ToolContext(workspace=workspace, permission_mode="default")
-    step = ToolStep(
-        tool="apply_patch", arguments={"patch": f"*** Begin Patch\n*** Add File: {ext_file}\n+hello\n*** End Patch\n"}
+    sandbox = PathSandbox(workspace)
+    checker = PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=sandbox,
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.DEFAULT,
     )
 
-    result, _trace, policy = kernel.execute_tool(context, step, turn=1)
-    assert policy.decision == "deny"
-    assert result is None
+    decision = checker.check(
+        "apply_patch",
+        {"patch": f"*** Begin Patch\n*** Add File: {ext_file}\n+hello\n*** End Patch\n"},
+        tool_category="write",
+    )
+    assert decision.effect == "deny"

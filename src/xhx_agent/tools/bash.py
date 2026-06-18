@@ -23,7 +23,7 @@ class Bash(Tool):
     # 用户中断时不杀进程
     interrupt_behavior: str = "cancel"
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         from xhx_agent.agent import cancel_reason
 
         timeout = min(params.timeout, MAX_TIMEOUT)
@@ -87,4 +87,6 @@ class Bash(Tool):
             parts.append("(no output)")
 
         output = "\n".join(parts)
+        # 能走到这里 proc 必已创建（创建失败会在上面的 except 提前返回）
+        assert proc is not None
         return ToolResult(output=output, is_error=proc.returncode != 0)

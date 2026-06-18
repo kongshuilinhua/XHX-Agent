@@ -61,7 +61,7 @@ def load_tool_implementation(references_dir: Path, tool_name: str) -> Callable[.
     return execute_fn
 
 
-def register_skill_tools(skill_dir: Path, registry: object) -> int:
+def register_skill_tools(skill_dir: Path, registry: Any) -> int:
     """从 skill 目录注册自定义工具到 ToolRegistry。
 
     Returns:

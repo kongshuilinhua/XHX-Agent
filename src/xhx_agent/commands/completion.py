@@ -1,12 +1,14 @@
 """命令补全系统。"""
 
+from typing import Any
+
 from textual.widgets import Static
 
 
 class CompletionPopup(Static):
     """补全弹出框。"""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__("", id="completion-popup", **kwargs)
         self._items: list[str] = []
         self._selected_idx: int = -1

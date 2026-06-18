@@ -28,7 +28,7 @@ class ExitPlanModeTool(Tool):
         self._is_plan_mode = is_plan_mode
         self._plan_exists = plan_exists
 
-    async def execute(self, params: ExitPlanModeParams) -> ToolResult:
+    async def execute(self, params: ExitPlanModeParams) -> ToolResult:  # type: ignore[override]
         if self._is_plan_mode is not None and not self._is_plan_mode():
             return ToolResult(
                 output="You are not in plan mode. This tool is only for exiting plan mode after writing a plan.",

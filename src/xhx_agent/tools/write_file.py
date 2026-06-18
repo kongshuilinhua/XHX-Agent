@@ -36,7 +36,7 @@ class WriteFile(Tool):
         self.file_history = file_history
         self._state_cache = file_state_cache
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         if self.file_history is not None:
             self.file_history.track_edit(params.file_path)
 

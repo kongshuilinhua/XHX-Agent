@@ -19,7 +19,7 @@ class PresentPlanTool(Tool):
     params_model = Params
     category = "read"
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         return ToolResult(
             output=f"实现计划已成功呈报，等待用户核准...\n\n计划涉及文件: {', '.join(params.files_to_change) if params.files_to_change else '(无)'}"
         )

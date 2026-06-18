@@ -23,7 +23,7 @@ class EnterWorktreeTool(Tool):
     def __init__(self, manager: Any = None, worktree_manager: Any = None, **kwargs: Any) -> None:
         self._manager = manager or worktree_manager
 
-    async def execute(self, params: EnterWorktreeParams) -> ToolResult:
+    async def execute(self, params: EnterWorktreeParams) -> ToolResult:  # type: ignore[override]
         if self._manager:
             try:
                 wt = await self._manager.create(params.name or params.path)

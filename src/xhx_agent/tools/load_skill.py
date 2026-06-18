@@ -30,7 +30,7 @@ class LoadSkill(Tool):
     def set_agent(self, agent: Any) -> None:
         self._agent = agent
 
-    async def execute(self, params: LoadSkillParams) -> ToolResult:
+    async def execute(self, params: LoadSkillParams) -> ToolResult:  # type: ignore[override]
         if self._loader:
             skill = self._loader.get(params.skill)
             if skill:

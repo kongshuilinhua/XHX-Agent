@@ -22,5 +22,5 @@ class ExitWorktreeTool(Tool):
     def __init__(self, manager: Any = None, worktree_manager: Any = None, **kwargs: Any) -> None:
         self._manager = manager or worktree_manager
 
-    async def execute(self, params: ExitWorktreeParams) -> ToolResult:
+    async def execute(self, params: ExitWorktreeParams) -> ToolResult:  # type: ignore[override]
         return ToolResult(output="Exited worktree.")

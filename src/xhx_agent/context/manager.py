@@ -554,7 +554,7 @@ def _first_line(s: str) -> str:
 
 def build_recovery_attachment(
     state: RecoveryState | None,
-    tool_schemas: list[Mapping[str, Any]] | None,
+    tool_schemas: list[dict[str, Any]] | None,
 ) -> str:
     """渲染压缩后附件的四个小节。
 
@@ -738,7 +738,7 @@ async def auto_compact(
     manual: bool = False,
     breaker: CompactCircuitBreaker | None = None,
     recovery: RecoveryState | None = None,
-    tool_schemas: list[Mapping[str, Any]] | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
     transcript_path: str = "",
 ) -> CompactEvent | str | None:
     threshold = compute_compact_threshold(context_window, manual=manual)

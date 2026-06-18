@@ -333,7 +333,7 @@ def load_instructions(work_dir: str) -> str:
     return ""
 
 
-def make_compact_boundary(summary: str, keep_tail: list[object] | None = None, **kwargs: object) -> dict[str, Any]:
+def make_compact_boundary(summary: str, keep_tail: list[Any] | None = None, **kwargs: object) -> dict[str, Any]:
     """创建压缩边界记录（可被 session.append_record 落盘，resume 时识别）。
 
     返回带 ``type: "compact_boundary"`` 的 dict，内含 summary 与保留的尾部消息列表。

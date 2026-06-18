@@ -15,7 +15,6 @@ def test_package_exports() -> None:
     assert xhx_agent.EvidenceStore is not None
     assert xhx_agent.EvidenceEntry is not None
     assert xhx_agent.RawTraceEntry is not None
-    assert xhx_agent.SafeExecutionKernel is not None
     assert xhx_agent.SkillLoader is not None
     assert xhx_agent.HooksManager is not None
     assert xhx_agent.hooks_manager is not None
@@ -35,7 +34,6 @@ def test_package_all_attribute() -> None:
         "EvidenceStore",
         "EvidenceEntry",
         "RawTraceEntry",
-        "SafeExecutionKernel",
         "SkillLoader",
         "HooksManager",
         "hooks_manager",

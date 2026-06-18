@@ -18,12 +18,14 @@ from xhx_agent.commands import Command, CommandContext
 async def _handle_exit(ctx: CommandContext) -> None:
     """退出 TUI。"""
     if ctx.ui is not None:
-        ctx.ui._exit_requested = True
+        object.__setattr__(ctx.ui, "_exit_requested", True)
         ctx.ui.add_system_message("正在退出...")
 
 
 async def _handle_new(ctx: CommandContext) -> None:
     """新建会话。"""
+    if ctx.ui is None:
+        return
     clear_chat = ctx.config.get("clear_chat")
     set_session = ctx.config.get("set_session")
     set_conversation = ctx.config.get("set_conversation")
@@ -38,16 +40,22 @@ async def _handle_new(ctx: CommandContext) -> None:
 
 async def _handle_allow(ctx: CommandContext) -> None:
     """批准待处理的权限确认。"""
+    if ctx.ui is None:
+        return
     ctx.ui.add_system_message("已批准下一次权限请求")
 
 
 async def _handle_deny(ctx: CommandContext) -> None:
     """拒绝待处理的权限确认。"""
+    if ctx.ui is None:
+        return
     ctx.ui.add_system_message("已拒绝下一次权限请求")
 
 
 async def _handle_model(ctx: CommandContext) -> None:
     """显示或切换模型。"""
+    if ctx.ui is None:
+        return
     if ctx.agent:
         profile = getattr(ctx.agent, "profile", None)
         provider = getattr(ctx.agent, "provider", None)
@@ -63,6 +71,8 @@ async def _handle_model(ctx: CommandContext) -> None:
 
 async def _handle_cancel(ctx: CommandContext) -> None:
     """请求取消当前任务。"""
+    if ctx.ui is None:
+        return
     if ctx.agent and hasattr(ctx.agent, "_agent_task") and ctx.agent._agent_task:
         ctx.agent._agent_task.cancel()
     ctx.ui.add_system_message("已请求取消当前任务")
@@ -70,6 +80,8 @@ async def _handle_cancel(ctx: CommandContext) -> None:
 
 async def _handle_tools(ctx: CommandContext) -> None:
     """列出已注册的工具。"""
+    if ctx.ui is None:
+        return
     if ctx.agent is None:
         ctx.ui.add_system_message("Agent 未初始化")
         return
@@ -87,8 +99,8 @@ async def _handle_verbose(ctx: CommandContext) -> None:
     if ctx.ui is None:
         return
     current = getattr(ctx.ui, "verbose", False)
-    ctx.ui.verbose = not current
-    state = "ON" if ctx.ui.verbose else "OFF"
+    setattr(ctx.ui, "verbose", not current)  # noqa: B010  UIController 为 Protocol，verbose 是 TUI 动态属性
+    state = "ON" if getattr(ctx.ui, "verbose", False) else "OFF"
     ctx.ui.add_system_message(f"Verbose: {state}")
 
 

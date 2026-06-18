@@ -23,6 +23,12 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
 
+    def unregister(self, name: str) -> None:
+        """移除一个已注册工具。MCP server 关闭时用，避免共享 registry 残留陈旧定义。"""
+        self._tools.pop(name, None)
+        self._disabled.discard(name)
+        self._discovered.discard(name)
+
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 

@@ -24,5 +24,5 @@ class TeamCreateTool(Tool):
     def __init__(self, manager: Any = None, **kwargs: Any) -> None:
         self._manager = manager
 
-    async def execute(self, params: TeamCreateParams) -> ToolResult:
+    async def execute(self, params: TeamCreateParams) -> ToolResult:  # type: ignore[override]
         return ToolResult(output=f"Team '{params.name}' created.")

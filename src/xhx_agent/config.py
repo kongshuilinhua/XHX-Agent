@@ -22,11 +22,18 @@ class ProviderConfig:
     # 来自 XHX-Agent 的旧式配置
     _legacy: dict[str, Any] = field(default_factory=dict)
 
+    # 运行时从模型端点拉取到的上下文窗口缓存（0=未拉取）。见 client.fetch_and_cache_context_window。
+    _fetched_context_window: int = 0
+
     def get_max_output_tokens(self) -> int:
         return self.max_output_tokens
 
     def get_context_window(self) -> int:
-        return self.context_window
+        return self.context_window or self._fetched_context_window
+
+    def set_fetched_context_window(self, window: int) -> None:
+        """缓存从端点拉取到的上下文窗口，供后续调用复用，避免重复网络请求。"""
+        self._fetched_context_window = window
 
     def resolve_api_key(self) -> str:
         """解析 API key：优先使用配置值，其次环境变量。"""

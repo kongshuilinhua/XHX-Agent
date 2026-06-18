@@ -35,7 +35,7 @@ class WebSearchTool(Tool):
             self._api_key = os.environ.get("TAVILY_API_KEY", "")
             self._max_results = 5
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         if not self._api_key:
             return ToolResult(
                 output="未配置 Tavily API key。请在 .xhx/config.json 中设置 web_search.tavily_api_key。",
