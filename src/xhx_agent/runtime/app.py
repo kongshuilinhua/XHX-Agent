@@ -23,6 +23,7 @@ from xhx_agent.context.pack import ContextPack
 from xhx_agent.evals.metrics import RunMetrics
 from xhx_agent.evidence.report import write_report
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore
+from xhx_agent.runtime.result import PlanPreview, RunResult  # 从独立模块导入，A3 后仍保留
 from xhx_agent.hooks import hooks_manager
 from xhx_agent.models.mock import MockModelClient
 from xhx_agent.models.openai_compatible import OpenAICompatibleClient
@@ -54,35 +55,7 @@ from xhx_agent.tools.terminal import TerminalResult
 from xhx_agent.verification.router import infer_verification
 
 
-class RunResult(BaseModel):
-    run_id: str
-    status: str
-    turns: int = 0
-    changed_files: list[str]
-    commands: list[str]
-    verification: str
-    verification_results: list[TerminalResult] = []
-    checkpoint_path: str | None = None
-    restore_plan_path: str | None = None
-    repair: RepairDecision | None = None
-    repair_attempts: int = 0
-    summary_path: str
-    risk_summary: list[str]
-    metrics: RunMetrics | None = None
-    mode: str = ""
-    answer: str | None = None
-    transcript_path: str | None = None
-
-
-class PlanPreview(BaseModel):
-    run_id: str
-    status: str
-    summary: str
-    step_count: int
-    context_budget_tokens: int
-    context_used_tokens_estimate: int
-    trace_path: str
-    risk_summary: list[str]
+# RunResult / PlanPreview 已移至 runtime.result，此处仅重导出以保持兼容
 
 
 ConfirmationCallback = Callable[[str, PolicyDecision], bool]

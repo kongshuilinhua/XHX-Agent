@@ -37,6 +37,8 @@ class HeadlessResult:
     output_tokens: int = 0
     error: str = ""
     verification: str = ""  # 启用 verify 时的验证结论（空=未启用/无可验证项）
+    turns: int = 0
+    changed_files: list[str] | None = None
 
 
 def _build_permission_checker(work_dir: Path, mode: PermissionMode) -> PermissionChecker:
@@ -143,6 +145,8 @@ async def run_headless_task_async(
         input_tokens=agent.total_input_tokens,
         output_tokens=agent.total_output_tokens,
         verification=verification,
+        turns=agent.turn_count,
+        changed_files=list(agent.changed_files),
     )
 
 

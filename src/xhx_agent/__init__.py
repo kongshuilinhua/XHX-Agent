@@ -4,7 +4,8 @@ from xhx_agent.cli.rpc import start_rpc_loop
 from xhx_agent.evals.benchmark import BenchmarkRunner
 from xhx_agent.evals.replay import TrailReplayer
 from xhx_agent.evidence.store import EvidenceEntry, EvidenceStore, RawTraceEntry
-from xhx_agent.runtime.app import RunResult, RuntimeApp
+from xhx_agent.runtime.app import RuntimeApp
+from xhx_agent.runtime.result import RunResult
 from xhx_agent.safety.kernel import SafeExecutionKernel
 from xhx_agent.hooks import HooksManager, hooks_manager
 from xhx_agent.skills.loader import SkillLoader

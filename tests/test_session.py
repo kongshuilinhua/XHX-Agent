@@ -312,7 +312,7 @@ def test_prune_legacy_sessions(tmp_path) -> None:
 
     # Record 3 sessions with view_path, and 2 sessions without view_path
     # (use dict/fake-like result, or minimal result object)
-    from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.result import RunResult
 
     res = RunResult(
         run_id="run-1",

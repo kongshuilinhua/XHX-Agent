@@ -58,12 +58,23 @@ class BenchmarkRunner:
             ),
         ]
 
-    def _run_fixture(self, app, fixture: BenchmarkFixture, profile_name: str, mode: str | None) -> BenchmarkResult:
-        """跑一个 (fixture, mode)，把 RunResult 折成 BenchmarkResult；任何异常折成 failed 结果（基准不应崩）。"""
+    def _run_fixture(
+        self, fixture: BenchmarkFixture, profile_name: str, mode: str | None
+    ) -> BenchmarkResult:
+        """跑一个 (fixture, mode)，把 HeadlessResult 折成 BenchmarkResult；任何异常折成 failed 结果。"""
+        from xhx_agent.runtime.headless import run_headless_task
+
         start_time = time.time()
         try:
-            res = app.run_task(fixture.task, profile_name=profile_name, assume_yes=True, mode=mode)
-            metrics = res.metrics
+            res = run_headless_task(
+                self.workspace,
+                fixture.task,
+                profile=profile_name,
+                assume_yes=True,
+                verify=True,
+            )
+            tokens_estimate = res.input_tokens + res.output_tokens
+            files_changed = len(res.changed_files) if res.changed_files else 0
             return BenchmarkResult(
                 fixture_id=fixture.id,
                 name=fixture.name,
@@ -71,11 +82,11 @@ class BenchmarkRunner:
                 mode=mode or "",
                 status=res.status,
                 turns=res.turns,
-                duration_seconds=metrics.duration_seconds if metrics else round(time.time() - start_time, 2),
-                tokens_estimate=metrics.tokens_estimate if metrics else 0,
-                files_changed=len(res.changed_files),
-                repair_attempts=metrics.repair_attempts if metrics else 0,
-                success=(res.status == "success"),
+                duration_seconds=round(time.time() - start_time, 2),
+                tokens_estimate=tokens_estimate,
+                files_changed=files_changed,
+                repair_attempts=0,
+                success=(res.status == "completed"),
             )
         except Exception:
             return BenchmarkResult(
@@ -94,21 +105,15 @@ class BenchmarkRunner:
 
     def run_benchmark(self, profile_name: str) -> list[BenchmarkResult]:
         """单 profile、默认编排（向后兼容的原行为）。"""
-        from xhx_agent.runtime.app import RuntimeApp
-
-        app = RuntimeApp(workspace=self.workspace)
-        return [self._run_fixture(app, fixture, profile_name, None) for fixture in self.fixtures]
+        return [self._run_fixture(fixture, profile_name, None) for fixture in self.fixtures]
 
     def run_matrix(self, profile_name: str, modes: list[str] | None = None) -> list[BenchmarkResult]:
         """范式矩阵：每个 fixture 分别用 modes 里的每种范式跑一遍。"""
-        from xhx_agent.runtime.app import RuntimeApp
-
         modes = modes or DEFAULT_BENCHMARK_MODES
-        app = RuntimeApp(workspace=self.workspace)
         results: list[BenchmarkResult] = []
         for fixture in self.fixtures:
             for mode in modes:
-                results.append(self._run_fixture(app, fixture, profile_name, mode))
+                results.append(self._run_fixture(fixture, profile_name, mode))
         return results
 
 

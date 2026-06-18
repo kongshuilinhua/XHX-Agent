@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from xhx_agent.runtime.paths import ensure_xhx_dirs, xhx_dir
 
 if TYPE_CHECKING:
-    from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.result import RunResult
 
 
 class SessionEntry(BaseModel):

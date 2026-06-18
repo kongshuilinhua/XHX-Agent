@@ -367,6 +367,16 @@ class Agent:
     def plan_mode(self) -> bool:
         return self.permission_mode == PermissionMode.PLAN
 
+    @property
+    def turn_count(self) -> int:
+        """已执行的对话轮数（公开只读）。"""
+        return self._loop_count
+
+    @property
+    def changed_files(self) -> list[str]:
+        """本轮累计被改动的文件列表（公开只读）。"""
+        return list(self._changed_files)
+
     _plan_path_cache: Path | None = None
 
     def _get_plan_path(self) -> Path:
@@ -1144,6 +1154,7 @@ class Agent:
 
             if not response.tool_calls:
                 conversation.add_assistant_message(response.text)
+                self._loop_count += 1
                 if self.file_history is not None:
                     summary = response.text[:60] + "..." if len(response.text) > 60 else response.text
                     self.file_history.make_snapshot(len(conversation.history), summary)

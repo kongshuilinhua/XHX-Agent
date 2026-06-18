@@ -12,7 +12,7 @@ from xhx_agent.safety.risk import RiskLevel
 from xhx_agent.tools.terminal import TerminalResult
 
 if TYPE_CHECKING:
-    from xhx_agent.runtime.app import RunResult
+    from xhx_agent.runtime.result import RunResult
 
 
 class TrailReplayer:
@@ -20,7 +20,7 @@ class TrailReplayer:
         self.workspace = workspace
 
     def replay(self, run_id: str) -> RunResult:
-        from xhx_agent.runtime.app import RunResult
+        from xhx_agent.runtime.result import RunResult
 
         store = EvidenceStore(self.workspace, run_id)
         traces = store.list_traces()

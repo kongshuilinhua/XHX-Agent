@@ -1,4 +1,4 @@
-from xhx_agent.runtime.app import RunResult
+from xhx_agent.runtime.result import RunResult
 
 
 def _base(**kw):
