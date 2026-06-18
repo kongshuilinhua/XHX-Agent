@@ -80,6 +80,16 @@ class MemoryManager:
     def project_path(self) -> Path:
         return self._project_path
 
+    @property
+    def user_mem_dir(self) -> Path:
+        """用户级记忆记录目录（``~/.xhx/memory/``），供确定性召回读取。"""
+        return self._user_path.parent / "memory"
+
+    @property
+    def project_mem_dir(self) -> Path:
+        """项目级记忆记录目录（``<project>/.xhx/memory/``），供确定性召回读取。"""
+        return self._project_path.parent / "memory"
+
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------

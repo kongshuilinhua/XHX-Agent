@@ -1415,7 +1415,7 @@ class XHXApp(App):
 
                 elif isinstance(event, ToolResultEvent):
                     self._xhx_tool_count += 1
-                    self.call_ui(self._update_xhx_status)
+                    self.call_later(self._update_xhx_status)
                     block = tool_blocks.get(event.tool_id)
                     if block:
                         block.set_result(event.output, event.is_error, event.elapsed)
@@ -1464,7 +1464,7 @@ class XHXApp(App):
                     if self._selected_provider:
                         self._xhx_last_model = self._selected_provider.model
                         self._xhx_context_budget = self._selected_provider.context_window
-                    self.call_ui(self._update_xhx_status)
+                    self.call_later(self._update_xhx_status)
 
                 elif isinstance(event, HookEvent):
                     status = "✓" if event.success else "✗"
@@ -1473,7 +1473,7 @@ class XHXApp(App):
                 elif isinstance(event, CompactNotification):
                     self._show_system_message(event.message)
                     self._xhx_compaction_count += 1
-                    self.call_ui(self._update_xhx_status)
+                    self.call_later(self._update_xhx_status)
                     self._persist_compact_boundary(event)
                     history_cursor = len(self.conversation.history)
 

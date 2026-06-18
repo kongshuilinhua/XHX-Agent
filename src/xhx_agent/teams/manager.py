@@ -121,11 +121,17 @@ class TeamManager:
             )
             mailbox.write(team.lead_agent_id, msg)
 
-    def drain_lead_mailbox(self, team_name: str) -> list[MailboxMessage]:
+    def drain_lead_mailbox(self, team_name: str | None = None) -> list[MailboxMessage]:
         """排空 lead agent 邮箱中的所有待处理消息。
 
-        Lead agent 每轮调用此方法收取队友通知。
+        传 ``team_name`` 只排空该团队；省略则聚合排空所有团队的 lead 邮箱
+        （供 TUI 全局轮询队友通知）。
         """
+        if team_name is None:
+            messages: list[MailboxMessage] = []
+            for name in list(self._teams):
+                messages.extend(self.drain_lead_mailbox(name))
+            return messages
         team = self.get_team(team_name)
         if team is None:
             return []
@@ -133,6 +139,22 @@ class TeamManager:
         if mailbox is None:
             return []
         return mailbox.consume(team.lead_agent_id)
+
+    def on_teammate_completed(self, agent_id: str) -> None:
+        """队友（子 agent）完成回调：定位其所属团队并将该成员标记为 idle。
+
+        无对应团队/成员时安全跳过，供 TUI 在后台任务完成时调用。
+        """
+        team_name = self.get_team_for_teammate(agent_id)
+        if not team_name:
+            return
+        team = self.get_team(team_name)
+        if team is None:
+            return
+        for member in team.members:
+            if member.agent_id == agent_id:
+                self.set_member_idle(team_name, member.name)
+                break
 
     # ------------------------------------------------------------------
     # queries
