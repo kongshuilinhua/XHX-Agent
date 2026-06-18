@@ -139,6 +139,10 @@ class MemoryManager:
                 lines.append(f"**{role}**: {content}")
         return "\n\n".join(lines)
 
+    def load(self) -> str:
+        """加载现有长期记忆内容（公开接口，供 Agent 启动时注入对话）。"""
+        return self._load_existing()
+
     def _load_existing(self) -> str:
         """加载现有 memory 文件（优先项目级，回退用户级）。"""
         for p in (self._project_path, self._user_path):

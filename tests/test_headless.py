@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from xhx_agent.client import LLMClient
-from xhx_agent.runtime.headless import run_headless_task
+from xhx_agent.conversation import ConversationManager
+from xhx_agent.runtime.headless import build_headless_agent, run_headless_task
 from xhx_agent.tools.base import StreamEnd, StreamEvent, TextDelta, ToolCallComplete
 
 
@@ -63,6 +65,25 @@ def test_headless_executes_tool_and_returns_summary(tmp_path: Path, monkeypatch:
     assert client.calls == 2  # 一轮工具 + 一轮收尾
 
 
+def test_headless_with_instructions_injects_memory(tmp_path: Path, monkeypatch: Any) -> None:
+    # 项目有 XHX.md（instructions）时会走「注入长期记忆」分支，曾因 MemoryManager 缺 load() 崩溃。
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "XHX.md").write_text("# 项目说明\n测试项目。\n", encoding="utf-8")
+    client = FakeLLMClient(
+        [
+            [
+                TextDelta("你好"),
+                StreamEnd(stop_reason="end_turn", input_tokens=2, output_tokens=2),
+            ],
+        ]
+    )
+
+    result = run_headless_task(tmp_path, "打个招呼", client=client)
+
+    assert result.status == "completed"
+    assert result.summary == "你好"
+
+
 def test_headless_returns_text_without_tools(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.chdir(tmp_path)
     # 模型首轮就直接给出答复、无工具调用 → 循环立即终止。
@@ -80,6 +101,39 @@ def test_headless_returns_text_without_tools(tmp_path: Path, monkeypatch: Any) -
     assert result.status == "completed"
     assert result.summary == "the answer is 42"
     assert client.calls == 1
+
+
+def test_interactive_run_streams_reply_with_instructions(tmp_path: Path, monkeypatch: Any) -> None:
+    """交互式 Agent.run()（TUI 走的路径）：带 XHX.md 时发消息应正常流式回复。
+
+    回归保护：曾因 MemoryManager 缺 load() 方法，TUI 一发消息就崩、无任何回复。
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "XHX.md").write_text("# 项目说明\n测试项目。\n", encoding="utf-8")
+    client = FakeLLMClient(
+        [
+            [
+                TextDelta("你好，有什么可以帮你？"),
+                StreamEnd(stop_reason="end_turn", input_tokens=3, output_tokens=4),
+            ],
+        ]
+    )
+    agent = build_headless_agent(tmp_path, client=client)
+    conversation = ConversationManager()
+    conversation.add_user_message("你好")
+
+    async def _drive() -> list[str]:
+        names: list[str] = []
+        async for event in agent.run(conversation):
+            names.append(type(event).__name__)
+            if len(names) > 50:
+                break
+        return names
+
+    event_names = asyncio.run(_drive())
+
+    assert "StreamText" in event_names
+    assert "LoopComplete" in event_names
 
 
 def test_headless_missing_profile_returns_error(tmp_path: Path) -> None:
