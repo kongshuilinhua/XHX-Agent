@@ -1519,6 +1519,13 @@ class XHXApp(App):
             self._show_system_message("Operation cancelled")
         except LLMError as e:
             self._show_error(str(e))
+        except Exception as e:
+            # 兜底：任何未预期异常都要显式呈现，绝不让 agent 静默无反应。
+            import logging
+            import traceback
+
+            logging.getLogger("XHX").error("Agent run failed: %s\n%s", e, traceback.format_exc())
+            self._show_error(f"{type(e).__name__}: {e}")
         finally:
             # 对标 Claude Code：每条消息实时持久化，不依赖 TurnComplete。
             # finally 保证即使是取消、异常、中断，已写入 conversation 的消息都会落盘。
