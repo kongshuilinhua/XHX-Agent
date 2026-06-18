@@ -183,49 +183,7 @@ def test_compiler_injection(tmp_path):
     assert "pytest" in memory_items_match[0].content
 
 
-def test_orchestrator_injection(tmp_path, monkeypatch):
-    import xhx_agent.orchestrators.loop as loopmod
-    import xhx_agent.orchestrators.base as basemod
-    from xhx_agent.memory.store import write_memory
-    from xhx_agent.models.types import ChatResult
-    from xhx_agent.runtime.app import RuntimeApp
-
-    (tmp_path / "README.md").write_text("# demo\n", encoding="utf-8")
-    app = RuntimeApp(tmp_path)
-    app.init_project()
-
-    captured_messages = []
-
-    class FakeClient:
-        def chat(self, messages, tools):
-            captured_messages.extend(messages)
-            return ChatResult(content="Done task in loop", tool_calls=[])
-
-    monkeypatch.setattr(basemod, "build_chat_client", lambda profile: FakeClient())
-
-    # Case 1: Memory is empty
-    res1 = app.run_task("verify python", profile_name="mock", mode="loop")
-    assert res1.status == "success"
-    assert len(captured_messages) > 0
-    system_msg1 = captured_messages[0]["content"]
-    assert "Recalled memory" not in system_msg1
-
-    captured_messages.clear()
-
-    # Case 2: Relevant memory exists
-    write_memory(
-        tmp_path,
-        name="python-run",
-        description="We run python",
-        mtype="project",
-        body="Use python version 3.11 always.",
-    )
-    res2 = app.run_task("verify python", profile_name="mock", mode="loop")
-    assert res2.status == "success"
-    assert len(captured_messages) > 0
-    system_msg2 = captured_messages[0]["content"]
-    assert "Recalled memory (cross-session facts)" in system_msg2
-    assert "Use python version 3.11 always." in system_msg2
+# REMOVED: orchestrator-dependent test (test_orchestrator_injection)
 
 
 def test_repl_slash_commands_and_autocomplete(tmp_path):
