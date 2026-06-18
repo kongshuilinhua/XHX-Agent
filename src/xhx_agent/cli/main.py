@@ -69,12 +69,26 @@ _ensure_utf8_console()
 console = Console()
 
 
-@app.callback()
-def _default_callback() -> None:
-    """无子命令时默认启动交互式 TUI。"""
+@app.callback(invoke_without_command=True)
+def _default_callback(ctx: typer.Context) -> None:
+    """无子命令时默认启动交互式 TUI；有子命令时放行，绝不抢先启动 TUI。"""
+    if ctx.invoked_subcommand is not None:
+        return
     workspace = Path.cwd()
     config = load_config(workspace)
     run_textual_console(workspace=workspace, profile=config.default_profile)
+
+
+@app.command("tui")
+def tui(
+    fullscreen: Annotated[bool, typer.Option("--fullscreen", help="Deprecated: fullscreen is now the default.")] = True,
+    profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
+) -> None:
+    """显式启动交互式 TUI（与无子命令时的默认行为一致）。"""
+    workspace = Path.cwd()
+    config = load_config(workspace)
+    active_profile = profile or config.default_profile
+    run_textual_console(workspace=workspace, profile=active_profile)
 
 
 @app.command("init")
