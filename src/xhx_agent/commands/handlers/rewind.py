@@ -34,6 +34,11 @@ async def handle_rewind(ctx: CommandContext) -> None:
             history.pop()
             removed += 1
 
+    # 重绘聊天区，让界面反映回退后的历史（否则被移除的消息仍显示在屏幕上）。
+    render_restored = ctx.config.get("render_restored") if ctx.config else None
+    if render_restored is not None:
+        await render_restored(list(history))
+
     ctx.ui.add_system_message(f"已回退 {n} 轮（移除 {removed} 条消息）")
 
 
@@ -42,6 +47,5 @@ REWIND_COMMAND = Command(
     aliases=["rw"],
     description="回退对话 N 轮",
     usage="/rewind <轮数>",
-    arg_prompt="要回退的轮数",
     handler=handle_rewind,
 )

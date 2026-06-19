@@ -1105,10 +1105,11 @@ class XHXApp(App):
             },
         )
 
-    def _set_session(self, session: Session) -> None:
+    def _set_session(self, session: Session | None) -> None:
+        # /new 与 /session new 会传 None 以清空会话——不能再去取 None.session_id。
         self.session = session
         if self.agent:
-            self.agent.session_id = session.session_id
+            self.agent.session_id = session.session_id if session is not None else ""
 
     def _persist_compact_boundary(self, notification: CompactNotification) -> None:
         """Layer-2 compact 后写入 compact_boundary 记录。
@@ -1160,6 +1161,10 @@ class XHXApp(App):
 
         if not args and cmd.arg_prompt:
             self._show_system_message(cmd.arg_prompt)
+            return
+
+        if cmd.handler is None:
+            self._show_system_message(f"命令 /{name} 暂未实现")
             return
 
         ctx = self._build_command_context(args)

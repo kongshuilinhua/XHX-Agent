@@ -41,17 +41,23 @@ async def _handle_new(ctx: CommandContext) -> None:
 
 
 async def _handle_allow(ctx: CommandContext) -> None:
-    """批准待处理的权限确认。"""
+    """提示如何批准权限请求。
+
+    权限请求通过内联弹窗确认（弹窗出现时输入框被禁用，无法再输入命令），因此这里只能
+    给出操作指引，而非声称"已批准"——后者是误导。
+    """
     if ctx.ui is None:
         return
-    ctx.ui.add_system_message("已批准下一次权限请求")
+    ctx.ui.add_system_message(
+        "权限请求请在弹出的确认框中用 ↑↓ 选择、回车确认；如需长期放行可用 /permission bypassPermissions"
+    )
 
 
 async def _handle_deny(ctx: CommandContext) -> None:
-    """拒绝待处理的权限确认。"""
+    """提示如何拒绝权限请求。"""
     if ctx.ui is None:
         return
-    ctx.ui.add_system_message("已拒绝下一次权限请求")
+    ctx.ui.add_system_message("权限请求请在弹出的确认框中选择拒绝项并回车")
 
 
 async def _handle_model(ctx: CommandContext) -> None:
@@ -72,12 +78,19 @@ async def _handle_model(ctx: CommandContext) -> None:
 
 
 async def _handle_cancel(ctx: CommandContext) -> None:
-    """请求取消当前任务。"""
+    """请求取消当前任务。
+
+    正在执行的 agent 任务挂在 UI（_agent_task）上，不在 agent 对象上——之前查
+    ctx.agent._agent_task 永远取不到，cancel 形同虚设。
+    """
     if ctx.ui is None:
         return
-    if ctx.agent and hasattr(ctx.agent, "_agent_task") and ctx.agent._agent_task:
-        ctx.agent._agent_task.cancel()
-    ctx.ui.add_system_message("已请求取消当前任务")
+    task = getattr(ctx.ui, "_agent_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+        ctx.ui.add_system_message("已请求取消当前任务")
+    else:
+        ctx.ui.add_system_message("当前没有正在执行的任务")
 
 
 async def _handle_tools(ctx: CommandContext) -> None:
@@ -87,12 +100,13 @@ async def _handle_tools(ctx: CommandContext) -> None:
     if ctx.agent is None:
         ctx.ui.add_system_message("Agent 未初始化")
         return
-    tools = ctx.agent.registry.list_tools()
-    enabled = [t for t in tools if ctx.agent.registry.is_enabled(t)]
-    lines = [f"工具: {len(enabled)} 个已启用 / {len(tools)} 个已注册", ""]
-    for t in tools:
-        flag = "✓" if t in enabled else "✗"
-        lines.append(f"  {flag} {t}")
+    # registry.list_tools() 返回的是 Tool 对象，不是名字字符串；is_enabled 收的是名字。
+    names = [getattr(t, "name", str(t)) for t in ctx.agent.registry.list_tools()]
+    enabled = [n for n in names if ctx.agent.registry.is_enabled(n)]
+    lines = [f"工具: {len(enabled)} 个已启用 / {len(names)} 个已注册", ""]
+    for n in names:
+        flag = "✓" if n in enabled else "✗"
+        lines.append(f"  {flag} {n}")
     ctx.ui.add_system_message("\n".join(lines))
 
 

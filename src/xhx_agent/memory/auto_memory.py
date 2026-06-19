@@ -153,6 +153,16 @@ class MemoryManager:
         """加载现有长期记忆内容（公开接口，供 Agent 启动时注入对话）。"""
         return self._load_existing()
 
+    def clear(self) -> bool:
+        """清空项目级长期记忆文件。返回是否确有文件被清除。"""
+        if self._project_path.is_file():
+            try:
+                self._project_path.write_text("", encoding="utf-8")
+                return True
+            except OSError:
+                return False
+        return False
+
     def _load_existing(self) -> str:
         """加载现有 memory 文件（优先项目级，回退用户级）。"""
         for p in (self._project_path, self._user_path):

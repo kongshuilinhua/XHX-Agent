@@ -13,8 +13,9 @@ async def handle_mcp(ctx: CommandContext) -> None:
         return
 
     registry = ctx.agent.registry
-    tools = registry.list_tools()
-    mcp_tools = [t for t in tools if t.startswith("mcp_")]
+    # list_tools() 返回 Tool 对象，取 .name 再判前缀（直接对对象 .startswith 会 AttributeError）。
+    names = [getattr(t, "name", str(t)) for t in registry.list_tools()]
+    mcp_tools = [n for n in names if n.startswith("mcp_")]
     if not mcp_tools:
         ctx.ui.add_system_message("未检测到 MCP 工具（可能未配置或连接失败）")
         return

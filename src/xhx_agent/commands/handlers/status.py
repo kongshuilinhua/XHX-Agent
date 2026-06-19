@@ -30,17 +30,24 @@ async def handle_status(ctx: CommandContext) -> None:
     else:
         lines.append("会话: 无")
 
-    # Token 用量
+    # Token 用量：优先用对话的当前窗口占用估算（provider 不回传 usage 时 get_token_count 恒 0）。
     input_tokens, output_tokens = ctx.ui.get_token_count()
+    used = input_tokens
+    if ctx.conversation is not None:
+        try:
+            used = max(used, ctx.conversation.current_tokens())
+        except Exception:
+            pass
     context_window = ctx.agent.context_window if ctx.agent else 200_000
-    pct = int(input_tokens / context_window * 100) if context_window else 0
-    lines.append(f"Token: {input_tokens:,} / {context_window:,}（{pct}%）输出 {output_tokens:,}")
+    pct = int(used / context_window * 100) if context_window else 0
+    lines.append(f"Token: {used:,} / {context_window:,}（{pct}%）输出 {output_tokens:,}")
 
     # 工具
     if ctx.agent:
-        tools = ctx.agent.registry.list_tools()
-        enabled = [t for t in tools if ctx.agent.registry.is_enabled(t)]
-        lines.append(f"工具: {len(enabled)} 个已启用 / {len(tools)} 个已注册")
+        # list_tools() 返回 Tool 对象；is_enabled 收名字字符串，需先取 .name。
+        names = [getattr(t, "name", str(t)) for t in ctx.agent.registry.list_tools()]
+        enabled = [n for n in names if ctx.agent.registry.is_enabled(n)]
+        lines.append(f"工具: {len(enabled)} 个已启用 / {len(names)} 个已注册")
 
     # 记忆
     if ctx.memory_manager:
