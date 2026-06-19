@@ -1428,6 +1428,10 @@ class XHXApp(App):
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
                 elif isinstance(event, TurnComplete):
+                    # 每轮都按当前对话本地估算 context 占用——不依赖 API 是否回传 usage
+                    # （deepseek 流末常不带 usage chunk，纯靠 API token 会一直显示 0）。
+                    self._recompute_context_used()
+                    self.call_later(self._update_xhx_status)
                     if self.session:
                         for msg in self.conversation.history[history_cursor:]:
                             self.session.append(msg)
@@ -2048,6 +2052,25 @@ class XHXApp(App):
 
     def _update_token_label(self, input_tokens: int, output_tokens: int) -> None:
         pass  # token 标签已从 UI 中移除
+
+    def _recompute_context_used(self) -> None:
+        """按当前对话本地估算 context 占用（token）。
+
+        与 API 上报的累计 token 不同，这是"当前上下文窗口实际占用"，更贴合 context meter 语义；
+        且不依赖 provider 是否在流末回传 usage（deepseek 常不回传，纯靠 API 会一直 0）。
+        """
+        conv = getattr(self, "conversation", None)
+        if conv is None:
+            return
+        try:
+            from xhx_agent.context.compaction import _estimate_message_tokens
+
+            msgs = [{"role": m.role, "content": m.content} for m in conv.history]
+            est = _estimate_message_tokens(msgs)
+        except Exception:
+            return
+        # 取本地估算与 API 报告值的较大者，避免两边各自偏低。
+        self._xhx_context_used = max(est, self._xhx_context_used)
 
     def _update_xhx_status(self) -> None:
         """更新 XHX 独有状态栏：tokens / context / compaction。"""
