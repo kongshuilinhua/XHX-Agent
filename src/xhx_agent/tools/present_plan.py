@@ -38,20 +38,17 @@ class PresentPlanTool(Tool):
     ) -> None:
         self._is_plan_mode = is_plan_mode
         self._plan_exists = plan_exists
-        # 模型成功调用本工具后置位；TUI 据此决定是否弹审批框。
+        # 模型成功调用本工具后置位；TUI 据此弹审批框。
         self._exit_requested = False
+        # 本工具自带方案正文（审批框直接展示，不依赖 plan 文件）。
+        self._plan_text = ""
+        self._files_to_change: list[str] = []
 
     async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
-        if self._is_plan_mode is not None and not self._is_plan_mode():
-            return ToolResult(
-                output="You are not in plan mode. This tool is only for submitting a plan in plan mode.",
-                is_error=True,
-            )
-        if self._plan_exists is not None and not self._plan_exists():
-            return ToolResult(
-                output="No plan file found. Please write your plan to the plan file before calling present_plan.",
-                is_error=True,
-            )
+        # 任何模式都可提交方案待审批（对标 Claude：模型自行判断任务复杂、主动提方案）。
+        # 不再因"不在 plan 模式 / 无 plan 文件"报错——方案正文随参数带来即可。
+        self._plan_text = params.plan or ""
+        self._files_to_change = list(params.files_to_change or [])
         self._exit_requested = True
         return ToolResult(
             output=(

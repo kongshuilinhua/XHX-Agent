@@ -64,8 +64,13 @@ MAX_OUTPUT_TOKENS_RECOVERIES = 3
 # 会被强制为只读（见 tools/agent_tool.py：父 plan_mode → 子 agent 用 PLAN 模式）。
 _PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete"})
 
-# 模型调用这些工具表示"规划完成、请求退出 plan 模式并弹审批"。
+# 模型调用这些工具表示"规划完成、请求弹出审批对话框"。present_plan 可在任何模式下使用
+# （模型自行判断任务复杂、主动提方案，对标 Claude）；ExitPlanMode 仅用于退出 plan 模式。
 _EXIT_PLAN_TOOLS = frozenset({"ExitPlanMode", "present_plan"})
+
+# 非 plan 模式下不暴露给模型的工具：仅 ExitPlanMode（"退出 plan 模式"在非 plan 模式无意义）。
+# present_plan 不在此列——它是通用的"提交方案待审批"工具，任何模式都可用。
+_NON_PLAN_DISALLOWED_TOOLS = frozenset({"ExitPlanMode"})
 
 
 # ---------------------------------------------------------------------------
@@ -369,11 +374,17 @@ class Agent:
         return self.permission_mode == PermissionMode.PLAN
 
     def _active_tool_schemas(self) -> list[dict[str, Any]]:
-        """当前轮喂给模型的工具 schema；plan 模式下剔除 spawn/team 类工具。"""
-        schemas = self.registry.get_all_schemas(self.protocol)
-        if not self.plan_mode:
-            return schemas
-        return [s for s in schemas if s.get("function", {}).get("name") not in _PLAN_MODE_DISALLOWED_TOOLS]
+        """当前轮喂给模型的工具 schema：按模式裁剪。
+
+        - plan 模式：剔除 team 类工具（团队是并行写代码的执行手段，不属于规划）；
+        - 非 plan 模式：剔除 plan 专属工具（present_plan / ExitPlanMode），否则模型会误调被拒。
+        """
+        disallowed = _PLAN_MODE_DISALLOWED_TOOLS if self.plan_mode else _NON_PLAN_DISALLOWED_TOOLS
+        return [
+            s
+            for s in self.registry.get_all_schemas(self.protocol)
+            if s.get("function", {}).get("name") not in disallowed
+        ]
 
     @property
     def turn_count(self) -> int:

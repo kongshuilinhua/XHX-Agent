@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from xhx_agent.askuser_dialog import InlineAskUserWidget
     from xhx_agent.permission_dialog import InlinePermissionWidget
     from xhx_agent.plan_dialog import InlinePlanWidget
+    from xhx_agent.tools.present_plan import PresentPlanTool
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -685,6 +686,7 @@ class XHXApp(App):
         self._spinner_label: Static | None = None
         self._mcp_server_info: str = ""
         self._plan_pending: bool = False
+        self._present_plan_tool: PresentPlanTool | None = None
         self._agent_task: asyncio.Task[None] | None = None
         self.session_manager: SessionManager | None = None
         self.session: Session | None = None
@@ -1486,14 +1488,14 @@ class XHXApp(App):
                         history_cursor = len(self.conversation.history)
                         self.session.meta.total_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
                         asyncio.ensure_future(self._update_session_summary())
-                    # 仅当模型确实调用了 ExitPlanMode 或 present_plan 才弹审批
-                    # （不是"只要在 plan 模式"）。
-                    # 实际弹出推迟到 _send_message 收尾 input.focus() 之后，避免焦点被抢。
+                    # 模型调用 ExitPlanMode / present_plan 即弹审批——present_plan 任何模式可用，
+                    # 故不再要求"必须在 plan 模式"。实际弹出推迟到 _send_message 收尾 input.focus()
+                    # 之后，避免焦点被抢。
                     exit_requested = getattr(self._exit_plan_tool, "_exit_requested", False)
                     pp_requested = getattr(self, "_present_plan_tool", None) is not None and getattr(
                         self._present_plan_tool, "_exit_requested", False
                     )
-                    if self.agent.plan_mode and (exit_requested or pp_requested):
+                    if exit_requested or pp_requested:
                         self._plan_pending = True
                         self._exit_plan_tool._exit_requested = False
                         if self._present_plan_tool is not None:
@@ -1587,8 +1589,12 @@ class XHXApp(App):
     async def _show_plan_approval(self) -> None:
         from xhx_agent.plan_dialog import InlinePlanWidget
 
+        # 优先用 present_plan 随参数带来的方案正文；否则回退读 plan 文件（ExitPlanMode 路径）。
         plan_text = ""
-        if self.agent is not None:
+        pp = self._present_plan_tool
+        if pp is not None and pp._plan_text:
+            plan_text = pp._plan_text.strip()
+        if not plan_text and self.agent is not None:
             plan_path = self.agent._get_plan_path()
             if plan_path.exists():
                 try:
@@ -1626,13 +1632,18 @@ class XHXApp(App):
 
         choice = event.choice
         feedback = event.feedback
-        plan_path = self.agent._get_plan_path()
+        # 优先用 present_plan 带来的方案正文；否则回退 plan 文件（ExitPlanMode 路径）。
         plan_content = ""
-        if plan_path.exists():
-            try:
-                plan_content = plan_path.read_text(encoding="utf-8")
-            except Exception:
-                pass
+        pp = self._present_plan_tool
+        if pp is not None and pp._plan_text:
+            plan_content = pp._plan_text
+        if not plan_content:
+            plan_path = self.agent._get_plan_path()
+            if plan_path.exists():
+                try:
+                    plan_content = plan_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
 
         pre = getattr(self, "_pre_plan_mode", PermissionMode.DEFAULT)
         if choice == PlanChoice.YOLO:
