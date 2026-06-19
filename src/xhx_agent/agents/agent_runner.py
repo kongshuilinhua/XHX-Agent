@@ -62,7 +62,7 @@ MAX_OUTPUT_TOKENS_RECOVERIES = 3
 # plan 模式下不向模型暴露的工具：规划阶段禁止建团队（团队是并行写代码的执行手段）。
 # 注意：Agent(dispatch) 仍保留——plan 模式需要派只读子 agent 做广泛调研；spawn 出的子 agent
 # 会被强制为只读（见 tools/agent_tool.py：父 plan_mode → 子 agent 用 PLAN 模式）。
-_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete"})
+_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete", "EnterPlanMode"})
 
 # 模型调用这些工具表示"规划完成、请求弹出审批对话框"。present_plan 可在任何模式下使用
 # （模型自行判断任务复杂、主动提方案，对标 Claude）；ExitPlanMode 仅用于退出 plan 模式。

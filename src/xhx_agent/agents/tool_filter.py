@@ -12,7 +12,10 @@ if TYPE_CHECKING:
 ALL_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
     {
         "dispatch",  # 子 agent 不能再派发
+        "Agent",  # 同上：子 agent 不能再 spawn 子 agent
         "present_plan",  # plan 模式专用
+        "ExitPlanMode",  # 进出 plan 模式仅限顶层 agent
+        "EnterPlanMode",
     }
 )
 
@@ -20,7 +23,10 @@ ALL_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
 CUSTOM_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
     {
         "dispatch",
+        "Agent",
         "present_plan",
+        "ExitPlanMode",
+        "EnterPlanMode",
     }
 )
 

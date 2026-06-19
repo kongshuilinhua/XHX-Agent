@@ -24,6 +24,9 @@ from xhx_agent.safety.permissions.sandbox import PathSandbox
 _PLAN_MODE_ALLOWED_TOOLS = frozenset(
     {
         "dispatch",
+        "Agent",  # 派只读调研子 agent（spawn 出的子 agent 被强制只读，故免审批）
+        "AskUserQuestion",
+        "ToolSearch",
         "present_plan",
         "ExitPlanMode",
     }

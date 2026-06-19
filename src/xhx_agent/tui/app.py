@@ -826,11 +826,19 @@ class XHXApp(App):
         self.registry.register(ToolSearchTool(self.registry, protocol=provider.protocol))
         self.registry.register(AskUserTool())
 
+        from xhx_agent.tools.enter_plan_mode import EnterPlanModeTool
         from xhx_agent.tools.exit_plan_mode import ExitPlanModeTool
         from xhx_agent.tools.present_plan import PresentPlanTool
 
         self._exit_plan_tool = ExitPlanModeTool()
         self.registry.register(self._exit_plan_tool)
+
+        # 进入 plan 模式是安全操作（仅收紧为只读）——模型可自主调用，无需审批。
+        self._enter_plan_tool = EnterPlanModeTool(
+            on_enter=lambda: self.set_plan_mode(True),
+            is_plan_mode=lambda: self.agent is not None and self.agent.plan_mode,
+        )
+        self.registry.register(self._enter_plan_tool)
 
         # 找到 default factory 已注册的 PresentPlanTool 并注入回调
         self._present_plan_tool = None
