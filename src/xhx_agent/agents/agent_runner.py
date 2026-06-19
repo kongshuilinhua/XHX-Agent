@@ -59,9 +59,10 @@ MEMORY_EXTRACTION_INTERVAL = 5
 MAX_TOKENS_CEILING = 64000
 MAX_OUTPUT_TOKENS_RECOVERIES = 3
 
-# plan 模式下不向模型暴露的工具：规划阶段应由主 agent 自己探索+写方案，禁止派生子 agent
-# 或建团队（否则模型会用 Agent 工具 spawn 一个"plan"子 agent 来规划，平白多一道审批+兜圈子）。
-_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"Agent", "TeamCreate", "TeamDelete"})
+# plan 模式下不向模型暴露的工具：规划阶段禁止建团队（团队是并行写代码的执行手段）。
+# 注意：Agent(dispatch) 仍保留——plan 模式需要派只读子 agent 做广泛调研；spawn 出的子 agent
+# 会被强制为只读（见 tools/agent_tool.py：父 plan_mode → 子 agent 用 PLAN 模式）。
+_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete"})
 
 
 # ---------------------------------------------------------------------------

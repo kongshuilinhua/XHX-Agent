@@ -179,6 +179,10 @@ class AgentTool(Tool):
             PERMISSION_MODE_MAP.get(pm_str, "DEFAULT"),
             PermissionMode.DEFAULT,
         )
+        # 父 agent 在 plan 模式时，强制子 agent 也只读：可广泛调研（Read/Grep/Glob 等），
+        # 但禁止写改——规划阶段不应落任何改动。
+        if getattr(self._parent_agent, "plan_mode", False):
+            pm_enum = PermissionMode.PLAN
         checker = PermissionChecker(
             detector=DangerousCommandDetector(),
             sandbox=PathSandbox(self._parent_agent.work_dir),
