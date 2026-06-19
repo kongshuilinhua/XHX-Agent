@@ -1,4 +1,12 @@
+"""PresentPlan 工具 —— 模型提交计划并触发审批对话框。
+
+这是 Plan 模式两段式的"闸门"：模型写完 plan file 后调用本工具，
+TUI 据此弹出审批对话框（YOLO / 手动审批 / 反馈修改）。
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
@@ -15,11 +23,39 @@ class Params(BaseModel):
 
 class PresentPlanTool(Tool):
     name = "present_plan"
-    description = "提交最终设计规划给用户进行确认。提交后将进入两段式的执行确认环节。"
+    description = (
+        "Submit your implementation plan for user approval. "
+        "Call this when your plan is complete and written to the plan file. "
+        "The user will see an approval dialog and choose how to proceed."
+    )
     params_model = Params
     category = "read"
 
+    def __init__(
+        self,
+        is_plan_mode: Callable[[], bool] | None = None,
+        plan_exists: Callable[[], bool] | None = None,
+    ) -> None:
+        self._is_plan_mode = is_plan_mode
+        self._plan_exists = plan_exists
+        # 模型成功调用本工具后置位；TUI 据此决定是否弹审批框。
+        self._exit_requested = False
+
     async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
+        if self._is_plan_mode is not None and not self._is_plan_mode():
+            return ToolResult(
+                output="You are not in plan mode. This tool is only for submitting a plan in plan mode.",
+                is_error=True,
+            )
+        if self._plan_exists is not None and not self._plan_exists():
+            return ToolResult(
+                output="No plan file found. Please write your plan to the plan file before calling present_plan.",
+                is_error=True,
+            )
+        self._exit_requested = True
         return ToolResult(
-            output=f"实现计划已成功呈报，等待用户核准...\n\n计划涉及文件: {', '.join(params.files_to_change) if params.files_to_change else '(无)'}"
+            output=(
+                "Plan submitted successfully. The user will now review and approve it. "
+                "Do not call any more tools — end your turn now."
+            )
         )

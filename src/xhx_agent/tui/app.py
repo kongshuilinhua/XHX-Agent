@@ -25,6 +25,7 @@ from textual.theme import Theme
 from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+from xhx_agent import __version__
 from xhx_agent.agent import (
     Agent,
     CompactNotification,
@@ -725,12 +726,27 @@ class XHXApp(App):
     @staticmethod
     def _make_banner(model: str = "", work_dir: str = "") -> RichText:
         t = RichText()
-        t.append(" /\\_/\\    ", style="bold color(99)")
-        t.append("XHX v0.1.0\n", style="color(242)")
-        t.append("( o.o )   ", style="bold color(99)")
-        t.append(f"{model}\n" if model else "\n", style="color(242)")
-        t.append(" > ^ <    ", style="bold color(99)")
-        t.append(work_dir, style="color(242)")
+        # Line 1: stars + version
+        t.append("      ★   ★    ", style="color(220)")
+        t.append(f"XHX v{__version__}\n", style="bold color(99)")
+        # Line 2: head top
+        t.append('     \\_.-"C"-. ', style="bold color(99)")
+        t.append("\n", style="")
+        # Line 3: left ear + model
+        t.append("  .-'        \\", style="bold color(99)")
+        t.append(f"  {model}\n" if model else "\n", style="color(242)")
+        # Line 4: face
+        t.append(" /:::\\ ( ._. )", style="bold color(99)")
+        t.append("\n", style="")
+        # Line 5: body + work_dir
+        t.append("|:::::| | | | |", style="bold color(99)")
+        t.append(f"  {work_dir}\n" if work_dir else "\n", style="color(242)")
+        # Line 6: body lower
+        t.append(" \\:::/  | | | |", style="bold color(99)")
+        t.append("\n", style="")
+        # Line 7: tail
+        t.append('  `"`   |_____|', style="bold color(99)")
+        t.append("\n", style="")
         return t
 
     def compose(self) -> ComposeResult:
@@ -809,9 +825,17 @@ class XHXApp(App):
         self.registry.register(AskUserTool())
 
         from xhx_agent.tools.exit_plan_mode import ExitPlanModeTool
+        from xhx_agent.tools.present_plan import PresentPlanTool
 
         self._exit_plan_tool = ExitPlanModeTool()
         self.registry.register(self._exit_plan_tool)
+
+        # 找到 default factory 已注册的 PresentPlanTool 并注入回调
+        self._present_plan_tool = None
+        for tool in self.registry.list_tools():
+            if isinstance(tool, PresentPlanTool):
+                self._present_plan_tool = tool
+                break
 
         self.agent = Agent(
             client=self.client,
@@ -827,8 +851,18 @@ class XHXApp(App):
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
 
-        self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
-        self._exit_plan_tool._plan_exists = lambda: self.agent._get_plan_path().exists()
+        # 注入回调：两个工具共享同一个 _is_plan_mode / _plan_exists
+        def _is_plan() -> bool:
+            return self.agent is not None and self.agent.plan_mode
+
+        def _exists() -> bool:
+            return self.agent is not None and self.agent._get_plan_path().exists()
+
+        self._exit_plan_tool._is_plan_mode = _is_plan
+        self._exit_plan_tool._plan_exists = _exists
+        if self._present_plan_tool is not None:
+            self._present_plan_tool._is_plan_mode = _is_plan
+            self._present_plan_tool._plan_exists = _exists
 
         # Layer 2: 在后台异步拉取模型的 context window，不阻塞启动流程。
         # agent 已经有一个同步解析的窗口值（来自配置 / 映射表 / 默认值）；
@@ -1452,11 +1486,18 @@ class XHXApp(App):
                         history_cursor = len(self.conversation.history)
                         self.session.meta.total_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
                         asyncio.ensure_future(self._update_session_summary())
-                    # 仅当模型确实调用了 ExitPlanMode 才弹审批（不是"只要在 plan 模式"）。
+                    # 仅当模型确实调用了 ExitPlanMode 或 present_plan 才弹审批
+                    # （不是"只要在 plan 模式"）。
                     # 实际弹出推迟到 _send_message 收尾 input.focus() 之后，避免焦点被抢。
-                    if self.agent.plan_mode and getattr(self._exit_plan_tool, "_exit_requested", False):
+                    exit_requested = getattr(self._exit_plan_tool, "_exit_requested", False)
+                    pp_requested = getattr(self, "_present_plan_tool", None) is not None and getattr(
+                        self._present_plan_tool, "_exit_requested", False
+                    )
+                    if self.agent.plan_mode and (exit_requested or pp_requested):
                         self._plan_pending = True
                         self._exit_plan_tool._exit_requested = False
+                        if self._present_plan_tool is not None:
+                            self._present_plan_tool._exit_requested = False
 
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:

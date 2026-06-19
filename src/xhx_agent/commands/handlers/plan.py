@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from xhx_agent.commands import Command, CommandContext
-from xhx_agent.permissions import PermissionMode
 
 
 async def handle_plan(ctx: CommandContext) -> None:
@@ -13,10 +12,12 @@ async def handle_plan(ctx: CommandContext) -> None:
         return
 
     if ctx.agent.plan_mode:
-        ctx.agent.permission_mode = PermissionMode.DEFAULT
-        ctx.ui.add_system_message("已退出 Plan 模式，当前为 default 模式")
+        # 退出 plan 模式：委托 TUI 的 set_plan_mode(False) 以恢复 _pre_plan_mode
+        ctx.ui.set_plan_mode(False)
+        ctx.ui.add_system_message("已退出 Plan 模式")
     else:
-        ctx.agent.permission_mode = PermissionMode.PLAN
+        # 进入 plan 模式：委托 TUI 的 set_plan_mode(True) 以保存当前模式
+        ctx.ui.set_plan_mode(True)
         ctx.ui.add_system_message("已进入 Plan 模式（计划为只读，须确认后才执行）")
 
 

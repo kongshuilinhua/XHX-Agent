@@ -64,6 +64,9 @@ MAX_OUTPUT_TOKENS_RECOVERIES = 3
 # 会被强制为只读（见 tools/agent_tool.py：父 plan_mode → 子 agent 用 PLAN 模式）。
 _PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete"})
 
+# 模型调用这些工具表示"规划完成、请求退出 plan 模式并弹审批"。
+_EXIT_PLAN_TOOLS = frozenset({"ExitPlanMode", "present_plan"})
+
 
 # ---------------------------------------------------------------------------
 # AgentEvent 事件类型
@@ -815,7 +818,7 @@ class Agent:
                 yield ErrorEvent(message="Agent terminated: too many consecutive unknown tool calls")
                 break
 
-            exit_plan_called = any(tc.tool_name == "ExitPlanMode" for tc in response.tool_calls)
+            exit_plan_called = any(tc.tool_name in _EXIT_PLAN_TOOLS for tc in response.tool_calls)
             conversation.add_tool_results_message(tool_results)
             if exit_plan_called:
                 yield TurnComplete(turn=iteration)
@@ -955,7 +958,7 @@ class Agent:
                     return
 
                 if response == PermissionResponse.ALLOW_ALWAYS:
-                    from xhx_agent.permissions.rules import Rule, extract_content
+                    from xhx_agent.permissions import Rule, extract_content
 
                     content = extract_content(tc.tool_name, tc.arguments)
                     pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"

@@ -190,8 +190,9 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 - Include the paths of critical files to be modified
 - Include a verification section describing how to test the changes
 
-### Phase 5: Call ExitPlanMode
-At the very end of your turn, call ExitPlanMode to indicate that you are done planning."""
+### Phase 5: Call present_plan
+At the very end of your turn, call present_plan with a summary of your plan and
+the list of files to be changed. This will trigger the user approval dialog."""
 
 _PLAN_MODE_SPARSE_REMINDER = (
     "Plan mode still active (see full instructions earlier in conversation). "
@@ -218,8 +219,8 @@ def build_plan_mode_reminder(plan_path: str, plan_exists: bool, iteration: int) 
     if iteration == 1:
         return _PLAN_MODE_FULL_REMINDER.format(plan_file_info=plan_file_info)
 
-    attachment_index = (iteration - 1) // _REMINDER_INTERVAL
-    if attachment_index % _REMINDER_INTERVAL == 0:
+    # 每 _REMINDER_INTERVAL 轮显示一次完整提示（第 1/6/11/16… 轮）
+    if (iteration - 1) % _REMINDER_INTERVAL == 0:
         return _PLAN_MODE_FULL_REMINDER.format(plan_file_info=plan_file_info)
 
     return _PLAN_MODE_SPARSE_REMINDER.format(plan_path=plan_path)
