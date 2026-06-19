@@ -1,3 +1,25 @@
+import re
+
+# 经典 Windows 控制台（conhost）渲染不了彩色 emoji，会显示成方块/问号。剥掉这些高位
+# 码点（仅 SMP emoji 区 + 变体选择符 + ZWJ + 杂项符号），保留 UI 在用的 BMP 符号
+# （✓ U+2713 / ✻ U+273B / ❯ U+276F / • U+2022 / ● ○ / ☑ ☐ / → 等）。
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f000-\U0001faff"  # 表情/图形/交通/补充符号等 SMP emoji（🎮🍎🐍🏆🎨…）
+    "\U00002728"  # ✨ sparkles
+    "\U00002b00-\U00002bff"  # ⭐ 等星形/符号
+    "\U0000fe00-\U0000fe0f"  # 变体选择符（emoji 呈现）
+    "\U0000200d"  # 零宽连接符（ZWJ emoji 序列）
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_emoji(text: str) -> str:
+    """移除终端无法渲染的 emoji（仅用于显示，不改动底层存储/会话文本）。"""
+    return _EMOJI_RE.sub("", text)
+
+
 def human_tokens(n: int) -> str:
     """Format an integer number of tokens to a human-readable string (e.g. 8.8k)."""
     if abs(n) < 1000:

@@ -93,6 +93,7 @@ from xhx_agent.tools.agent_tool import AgentTool
 from xhx_agent.tools.ask_user import AskUserEvent, AskUserTool
 from xhx_agent.tools.impl.tool_search import ToolSearchTool
 from xhx_agent.tools.load_skill import LoadSkill
+from xhx_agent.tui.format import strip_emoji
 from xhx_agent.worktree.cleanup import start_stale_cleanup_task
 from xhx_agent.worktree.manager import WorktreeManager
 
@@ -1333,7 +1334,7 @@ class XHXApp(App):
 
                     t = RichText()
                     t.append("● ", style="bold color(99)")
-                    t.append(accumulated_text)
+                    t.append(strip_emoji(accumulated_text))
                     streaming_label.update(t)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
@@ -1348,7 +1349,7 @@ class XHXApp(App):
 
                         prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
                         await ai_row.mount(prefix)
-                        md = Markdown(accumulated_text, classes="message ai-message")
+                        md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
                         await ai_row.mount(md)
                         streaming_label = None
                         accumulated_text = ""
@@ -1460,7 +1461,7 @@ class XHXApp(App):
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
                 await streaming_label.remove()
-                md = Markdown(accumulated_text, classes="message ai-message")
+                md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
                 await ai_row.mount(md)
             elif streaming_label is not None:
                 await streaming_label.remove()
@@ -1557,7 +1558,7 @@ class XHXApp(App):
         chat = self.query_one("#chat-area", VerticalScroll)
         # 方案正文用 Markdown 控件渲染（标题/表格/代码块/列表都解析），而非 Static 原文。
         if plan_text:
-            await chat.mount(Markdown(plan_text, classes="message ai-message"))
+            await chat.mount(Markdown(strip_emoji(plan_text), classes="message ai-message"))
         widget = InlinePlanWidget()
         await chat.mount(widget)
         self.call_after_refresh(chat.scroll_end, animate=False)
