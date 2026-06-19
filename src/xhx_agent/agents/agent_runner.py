@@ -59,6 +59,10 @@ MEMORY_EXTRACTION_INTERVAL = 5
 MAX_TOKENS_CEILING = 64000
 MAX_OUTPUT_TOKENS_RECOVERIES = 3
 
+# plan 模式下不向模型暴露的工具：规划阶段应由主 agent 自己探索+写方案，禁止派生子 agent
+# 或建团队（否则模型会用 Agent 工具 spawn 一个"plan"子 agent 来规划，平白多一道审批+兜圈子）。
+_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"Agent", "TeamCreate", "TeamDelete"})
+
 
 # ---------------------------------------------------------------------------
 # AgentEvent 事件类型
@@ -360,6 +364,13 @@ class Agent:
     def plan_mode(self) -> bool:
         return self.permission_mode == PermissionMode.PLAN
 
+    def _active_tool_schemas(self) -> list[dict[str, Any]]:
+        """当前轮喂给模型的工具 schema；plan 模式下剔除 spawn/team 类工具。"""
+        schemas = self.registry.get_all_schemas(self.protocol)
+        if not self.plan_mode:
+            return schemas
+        return [s for s in schemas if s.get("function", {}).get("name") not in _PLAN_MODE_DISALLOWED_TOOLS]
+
     @property
     def turn_count(self) -> int:
         """已执行的对话轮数（公开只读）。"""
@@ -594,7 +605,7 @@ class Agent:
                     + "\n".join(deferred_names)
                 )
 
-            tools = self.registry.get_all_schemas(self.protocol)
+            tools = self._active_tool_schemas()
 
             # Layer 1: 在 LLM 调用前应用 tool-result budget，确保 api_conv 反映
             # 本轮迭代中所有已发生的写入（system reminders、hook 通知等）。
@@ -1066,7 +1077,7 @@ class Agent:
             coordinator_mode=self.coordinator_mode,
         )
 
-        tools = self.registry.get_all_schemas(self.protocol)
+        tools = self._active_tool_schemas()
 
         # tool schema 在 openai-compat 协议下是嵌套的（{"function": {"name": ...}}），
         # anthropic 协议下是扁平的（{"name": ...}）；日志要兼容两种形状。
