@@ -1615,6 +1615,8 @@ class XHXApp(App):
                     pass
 
         chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：旧 plan 弹窗 remove() 延迟生效，先 await 移除避免重复 ID 崩溃。
+        await chat.query("#plan-inline").remove()
         # 方案正文用 Markdown 控件渲染（标题/表格/代码块/列表都解析），而非 Static 原文。
         if plan_text:
             await chat.mount(Markdown(strip_emoji(plan_text), classes="message ai-message"))
@@ -1814,6 +1816,9 @@ class XHXApp(App):
         from xhx_agent.permission_dialog import InlinePermissionWidget
 
         chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：上一个权限弹窗的 remove() 是延迟的（Textual 下个刷新才真正移除）；
+        # 连续两个工具都要审批时，旧组件可能还在 DOM 里 → 重复 ID 崩溃。先 await 移除。
+        await chat.query("#perm-inline").remove()
         widget = InlinePermissionWidget(request.tool_name, request.description)
         self._pending_perm_request = request
         await chat.mount(widget)
