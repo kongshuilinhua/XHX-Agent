@@ -16,10 +16,12 @@ from xhx_agent.commands import Command, CommandContext
 
 
 async def _handle_exit(ctx: CommandContext) -> None:
-    """退出 TUI。"""
+    """退出 TUI（走与 ctrl+c 相同的优雅退出：清理 + 落盘 + 真正 exit）。"""
     if ctx.ui is not None:
-        object.__setattr__(ctx.ui, "_exit_requested", True)
         ctx.ui.add_system_message("正在退出...")
+        graceful = getattr(ctx.ui, "graceful_exit", None)
+        if graceful is not None:
+            await graceful()
 
 
 async def _handle_new(ctx: CommandContext) -> None:

@@ -1466,7 +1466,8 @@ class XHXApp(App):
                     self._xhx_tokens_prompt = event.input_tokens
                     self._xhx_tokens_completion = event.output_tokens
                     self._xhx_tokens_total += event.input_tokens + event.output_tokens
-                    self._xhx_context_used = self._xhx_tokens_total
+                    # context 占用由 _recompute_context_used()（current_tokens）统一算，
+                    # 不用累计总量覆盖——后者会无限增长、与"窗口占用"语义不符。
                     if self._selected_provider:
                         self._xhx_last_model = self._selected_provider.model
                         self._xhx_context_budget = self._selected_provider.context_window
@@ -1963,6 +1964,14 @@ class XHXApp(App):
         if getattr(self, "_exit_requested", False):
             self.exit()
             return
+        await self.graceful_exit()
+
+    async def graceful_exit(self) -> None:
+        """优雅退出：清理 MCP/hook/team、落盘会话，然后真正退出应用。
+
+        ctrl+c 与 /exit 命令共用此路径——/exit 之前只设了 _exit_requested 标志却从不
+        调 exit()，导致界面"卡住"（且把标志置真还会让随后的 ctrl+c 跳过清理）。
+        """
         self._exit_requested = True
 
         async def _cleanup() -> None:
@@ -2059,23 +2068,23 @@ class XHXApp(App):
         pass  # token 标签已从 UI 中移除
 
     def _recompute_context_used(self) -> None:
-        """按当前对话本地估算 context 占用（token）。
+        """按当前对话估算 context 窗口占用（token）。
 
-        与 API 上报的累计 token 不同，这是"当前上下文窗口实际占用"，更贴合 context meter 语义；
-        且不依赖 provider 是否在流末回传 usage（deepseek 常不回传，纯靠 API 会一直 0）。
+        用 ConversationManager.current_tokens()——它是规范算法：有真实用量锚点时
+        baseline + 仅对锚点后新增消息做估算；冷启动则对整段历史估算。这能正确算进
+        tool_calls / tool_results，且**不依赖 provider 是否在流末回传 usage**
+        （deepseek 常不回传，纯靠 API 会一直显示 0）。
+
+        注意：这是"当前窗口占用"，与累计消耗的 _xhx_tokens_total（逐轮相加、会无限增长）
+        语义不同，不可混用。
         """
         conv = getattr(self, "conversation", None)
         if conv is None:
             return
         try:
-            from xhx_agent.context.compaction import _estimate_message_tokens
-
-            msgs = [{"role": m.role, "content": m.content} for m in conv.history]
-            est = _estimate_message_tokens(msgs)
+            self._xhx_context_used = conv.current_tokens()
         except Exception:
             return
-        # 取本地估算与 API 报告值的较大者，避免两边各自偏低。
-        self._xhx_context_used = max(est, self._xhx_context_used)
 
     def _update_xhx_status(self) -> None:
         """更新 XHX 独有状态栏：tokens / context / compaction。"""
@@ -2083,6 +2092,10 @@ class XHXApp(App):
             status = self.query_one("#xhx-status", Static)
         except Exception:
             return
+
+        # 每次渲染都按当前对话刷新 context 占用——不依赖某个特定事件是否触发，
+        # 也不依赖 provider 是否回传 usage。
+        self._recompute_context_used()
 
         parts = []
         if self._xhx_tokens_total > 0:
