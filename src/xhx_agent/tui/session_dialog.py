@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -72,7 +73,7 @@ class InlineResumeWidget(Vertical, can_focus=True):
 
         if self._search:
             lines.append(f"┌{'─' * 30}┐")
-            lines.append(f"│⌕ {self._search:<28}│")
+            lines.append(f"│⌕ {escape(self._search):<28}│")
             lines.append(f"└{'─' * 30}┘")
         else:
             lines.append(f"┌{'─' * 30}┐")
@@ -80,10 +81,10 @@ class InlineResumeWidget(Vertical, can_focus=True):
             lines.append(f"└{'─' * 30}┘")
 
         if self._project:
-            lines.append(f"\n  [dim]{self._project}[/]\n")
+            lines.append(f"\n  [dim]{escape(self._project)}[/]\n")
 
         for i, meta in enumerate(self._filtered[:10]):  # 最多显示 10 条
-            title = meta.title or "(empty session)"
+            title = escape(meta.title or "(empty session)")
             if i == self._cursor:
                 lines.append(f"[bold cyan]❯[/] [bold]{title}[/]")
             else:
@@ -91,7 +92,7 @@ class InlineResumeWidget(Vertical, can_focus=True):
 
             parts = [_relative_time(meta)]
             if hasattr(meta, "branch") and meta.branch:
-                parts.append(meta.branch)
+                parts.append(escape(meta.branch))
             if hasattr(meta, "file_size") and meta.file_size:
                 parts.append(_format_size(meta.file_size))
             lines.append(f"  [dim]{'  ·  '.join(parts)}[/]")
