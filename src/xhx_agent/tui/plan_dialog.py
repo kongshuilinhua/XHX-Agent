@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -39,10 +40,11 @@ class InlinePlanWidget(Vertical, can_focus=True):
             self.choice = choice
             self.feedback = feedback
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, plan_text: str = "", **kwargs) -> None:
         super().__init__(id="plan-inline", **kwargs)
         self._cursor = 0
         self._input = ""
+        self._plan_text = plan_text
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_content(), id="plan-content")
@@ -51,10 +53,16 @@ class InlinePlanWidget(Vertical, can_focus=True):
         self.focus()
 
     def _build_content(self) -> str:
-        lines = [
+        lines: list[str] = []
+        if self._plan_text:
+            lines.append(" [bold #875fff]Plan[/bold #875fff]")
+            for ln in self._plan_text.splitlines():
+                lines.append(f"   {escape(ln)}")
+            lines.append("")
+        lines.append(
             "\n [bold #875fff]XHX has written up a plan and is ready to execute. "
             "Would you like to proceed?[/bold #875fff]\n"
-        ]
+        )
         for i, (label, _choice) in enumerate(_OPTIONS):
             if i == self._cursor:
                 lines.append(f" [bold cyan]❯[/bold cyan] {i + 1}. [bold]{label}[/bold]")

@@ -682,6 +682,7 @@ class XHXApp(App):
         self._spinner_timer: Timer | None = None
         self._spinner_label: Static | None = None
         self._mcp_server_info: str = ""
+        self._plan_pending: bool = False
         self._agent_task: asyncio.Task[None] | None = None
         self.session_manager: SessionManager | None = None
         self.session: Session | None = None
@@ -1450,8 +1451,11 @@ class XHXApp(App):
                         history_cursor = len(self.conversation.history)
                         self.session.meta.total_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
                         asyncio.ensure_future(self._update_session_summary())
-                    if self.agent.plan_mode:
-                        asyncio.ensure_future(self._show_plan_approval())
+                    # 仅当模型确实调用了 ExitPlanMode 才弹审批（不是"只要在 plan 模式"）。
+                    # 实际弹出推迟到 _send_message 收尾 input.focus() 之后，避免焦点被抢。
+                    if self.agent.plan_mode and getattr(self._exit_plan_tool, "_exit_requested", False):
+                        self._plan_pending = True
+                        self._exit_plan_tool._exit_requested = False
 
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
@@ -1498,6 +1502,11 @@ class XHXApp(App):
 
             await self._process_task_notifications()
 
+        # 收尾之后再弹 plan 审批：此时 input.focus() 已执行，审批控件能稳拿到焦点。
+        if getattr(self, "_plan_pending", False):
+            self._plan_pending = False
+            await self._show_plan_approval()
+
     async def _process_task_notifications(self) -> None:
         completed = self.task_manager.poll_completed()
         if not completed or self.agent is None:
@@ -1536,8 +1545,17 @@ class XHXApp(App):
     async def _show_plan_approval(self) -> None:
         from xhx_agent.plan_dialog import InlinePlanWidget
 
+        plan_text = ""
+        if self.agent is not None:
+            plan_path = self.agent._get_plan_path()
+            if plan_path.exists():
+                try:
+                    plan_text = plan_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    pass
+
         chat = self.query_one("#chat-area", VerticalScroll)
-        widget = InlinePlanWidget()
+        widget = InlinePlanWidget(plan_text=plan_text)
         await chat.mount(widget)
         self.call_after_refresh(chat.scroll_end, animate=False)
         try:

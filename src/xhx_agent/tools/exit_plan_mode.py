@@ -27,6 +27,8 @@ class ExitPlanModeTool(Tool):
     ) -> None:
         self._is_plan_mode = is_plan_mode
         self._plan_exists = plan_exists
+        # 模型成功调用本工具后置位；TUI 据此（而非"只要在 plan 模式"）决定是否弹审批框。
+        self._exit_requested = False
 
     async def execute(self, params: ExitPlanModeParams) -> ToolResult:  # type: ignore[override]
         if self._is_plan_mode is not None and not self._is_plan_mode():
@@ -39,6 +41,7 @@ class ExitPlanModeTool(Tool):
                 output="No plan file found. Please write your plan to the plan file before calling ExitPlanMode.",
                 is_error=True,
             )
+        self._exit_requested = True
         return ToolResult(
             output=(
                 "Plan mode will be exited after this turn. "
