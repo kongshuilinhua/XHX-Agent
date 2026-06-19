@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -48,8 +49,8 @@ class InlinePermissionWidget(Vertical, can_focus=True):
 
     def _build_content(self) -> str:
         lines = []
-        lines.append(f"\n  [bold yellow]{self._tool_name} command[/bold yellow]\n")
-        lines.append(f"    {self._description}\n")
+        lines.append(f"\n  [bold yellow]{escape(self._tool_name)} command[/bold yellow]\n")
+        lines.append(f"    {escape(self._description)}\n")
         lines.append("  [dim]This command requires approval[/dim]\n")
         lines.append("  Do you want to proceed?\n")
 
