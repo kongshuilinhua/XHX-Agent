@@ -67,7 +67,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
         q = self._questions[self._q_idx]
         header = q.get("question", q.get("message", f"Question {self._q_idx + 1}"))
-        lines.append(f" [bold color(99)]{escape(str(header))}[/]\n")
+        lines.append(f" [bold #875fff]{escape(str(header))}[/]\n")
 
         options = q.get("options", [])
         is_multi = q.get("multiSelect", False)
@@ -121,7 +121,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
         return f" {left} {'|'.join(parts)} {right}"
 
     def _render_submit(self) -> str:
-        lines = ["\n [bold color(99)]Review your answers:[/]\n"]
+        lines = ["\n [bold #875fff]Review your answers:[/]\n"]
         for i, q in enumerate(self._questions):
             header = escape(str(q.get("header", q.get("question", q.get("message", f"Q{i + 1}")))))
             ans = self._answered.get(i, "")
