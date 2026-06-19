@@ -1555,7 +1555,10 @@ class XHXApp(App):
                     pass
 
         chat = self.query_one("#chat-area", VerticalScroll)
-        widget = InlinePlanWidget(plan_text=plan_text)
+        # 方案正文用 Markdown 控件渲染（标题/表格/代码块/列表都解析），而非 Static 原文。
+        if plan_text:
+            await chat.mount(Markdown(plan_text, classes="message ai-message"))
+        widget = InlinePlanWidget()
         await chat.mount(widget)
         self.call_after_refresh(chat.scroll_end, animate=False)
         try:
