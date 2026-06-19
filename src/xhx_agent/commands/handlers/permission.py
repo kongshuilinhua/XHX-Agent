@@ -58,7 +58,6 @@ async def handle_permission(ctx: CommandContext) -> None:
 
 PERMISSION_COMMAND = Command(
     name="permission",
-    aliases=["perm"],
     description="查看或切换权限模式",
     usage="/permission [模式名]",
     handler=handle_permission,

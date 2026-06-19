@@ -26,7 +26,6 @@ async def handle_review(ctx: CommandContext) -> None:
 
 REVIEW_COMMAND = Command(
     name="review",
-    aliases=["rv"],
     description="触发代码审查",
     usage="/review [关注点]",
     handler=handle_review,

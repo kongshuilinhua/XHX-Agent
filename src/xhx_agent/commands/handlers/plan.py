@@ -23,7 +23,6 @@ async def handle_plan(ctx: CommandContext) -> None:
 
 PLAN_COMMAND = Command(
     name="plan",
-    aliases=["p"],
     description="切换 Plan 模式（只读计划 → 确认后执行）",
     usage="/plan",
     handler=handle_plan,

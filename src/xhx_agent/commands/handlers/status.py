@@ -65,7 +65,6 @@ async def handle_status(ctx: CommandContext) -> None:
 
 STATUS_COMMAND = Command(
     name="status",
-    aliases=["s"],
     description="显示当前状态信息",
     usage="/status",
     handler=handle_status,

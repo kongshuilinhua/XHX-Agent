@@ -6,15 +6,23 @@
   <component name="ChangeListManager">
     <list default="true" id="5221d226-d459-4fec-8c7d-504d38f51151" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.gemini/extensions/superpowers" beforeDir="false" afterPath="$PROJECT_DIR$/.gemini/extensions/superpowers" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/xhx_agent/agents/agent_runner.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/agents/agent_runner.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/defaults.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/defaults.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/clear.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/clear.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/compact.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/compact.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/help.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/help.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/memory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/permission.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/permission.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/plan.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/plan.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/xhx_agent/prompts.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/prompts.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/xhx_agent/safety/permissions/checker.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/safety/permissions/checker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/xhx_agent/tools/present_plan.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/tools/present_plan.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/review.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/review.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/rewind.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/rewind.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/session.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/session.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/skill.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/skill.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/status.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/status.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/worktree.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/commands/handlers/worktree.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/xhx_agent/memory/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/memory/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/xhx_agent/tui/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/tui/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/xhx_agent/tui/styles.tcss" beforeDir="false" afterPath="$PROJECT_DIR$/src/xhx_agent/tui/styles.tcss" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_commands.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_commands.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -63,28 +71,28 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "fix/refactor-runtime-gaps",
-    "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "D:/pycharmprojects/XHX-Agent",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "reference.settings.project.statistic.project.settings",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;fix/refactor-runtime-gaps&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/pycharmprojects/XHX-Agent&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;reference.settings.project.statistic.project.settings&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -109,7 +117,7 @@
       <workItem from="1781084883491" duration="1117000" />
       <workItem from="1781273197014" duration="7173000" />
       <workItem from="1781617082914" duration="1526000" />
-      <workItem from="1781662529231" duration="7844000" />
+      <workItem from="1781662529231" duration="8645000" />
     </task>
     <servers />
   </component>

@@ -64,6 +64,7 @@ class _FakeUI:
         self.sent: list[str] = []
         self.refreshed = 0
         self.graceful_called = False
+        self.resume_shown = False
         self._agent_task: _FakeTask | None = None
 
     def add_system_message(self, text: str) -> None:
@@ -83,6 +84,9 @@ class _FakeUI:
 
     async def graceful_exit(self) -> None:
         self.graceful_called = True
+
+    async def show_resume_picker(self) -> None:
+        self.resume_shown = True
 
 
 class _FakeSessionManager:
@@ -239,3 +243,48 @@ def test_exit_calls_graceful_exit(tmp_path: Path) -> None:
     ctx, ui, agent, registry = _build_ctx(tmp_path)
     _run(registry.find("exit").handler, ctx)
     assert ui.graceful_called is True
+
+
+def test_no_command_has_aliases(tmp_path: Path) -> None:
+    """按用户要求：所有命令都不带别名。"""
+    _ctx, _ui, _agent, registry = _build_ctx(tmp_path)
+    with_alias = [cmd.name for cmd in registry.list_commands() if getattr(cmd, "aliases", [])]
+    assert not with_alias, f"以下命令仍带别名: {with_alias}"
+
+
+def test_session_no_args_opens_resume_picker(tmp_path: Path) -> None:
+    """/session（无参）应打开上下键可选的恢复列表，而非打印文本。"""
+    ctx, ui, agent, registry = _build_ctx(tmp_path)
+    ctx.args = ""
+    _run(registry.find("session").handler, ctx)
+    assert ui.resume_shown is True
+
+
+def test_session_manager_load_messages_roundtrip(tmp_path: Path) -> None:
+    """SessionManager 写入的会话能被 load_messages 完整读回（resume 的地基）。"""
+    from xhx_agent.conversation import Message, ToolResultBlock, ToolUseBlock
+    from xhx_agent.memory import SessionManager
+
+    sm = SessionManager(str(tmp_path))
+    sess = sm.create()
+    sess.append(Message(role="user", content="做一个贪吃蛇"))
+    sess.append(
+        Message(
+            role="assistant",
+            content="好的",
+            tool_uses=[ToolUseBlock(tool_use_id="t1", tool_name="Write", arguments={"path": "snake.py"})],
+        )
+    )
+    sess.append(Message(role="user", content="", tool_results=[ToolResultBlock(tool_use_id="t1", content="ok")]))
+    sess.close()
+
+    loaded = sm.load_messages(sess.session_id)
+    assert [m.role for m in loaded] == ["user", "assistant", "user"]
+    assert loaded[0].content == "做一个贪吃蛇"
+    assert loaded[1].tool_uses[0].tool_name == "Write"
+    assert loaded[2].tool_results[0].content == "ok"
+
+    # open() 续写同一会话，消息计数从已存条数接续
+    reopened = sm.open(sess.session_id)
+    assert reopened.session_id == sess.session_id
+    assert reopened._message_count == 3

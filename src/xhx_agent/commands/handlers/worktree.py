@@ -27,7 +27,6 @@ def create_worktree_command(manager: Any) -> Any:
 
     return Command(
         name="worktree",
-        aliases=["wt"],
         description="列出 git worktree",
         usage="/worktree",
         handler=handle,

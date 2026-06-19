@@ -15,7 +15,6 @@ async def handle_clear(ctx: CommandContext) -> None:
 
 CLEAR_COMMAND = Command(
     name="clear",
-    aliases=["cls"],
     description="清空聊天区域",
     usage="/clear",
     handler=handle_clear,

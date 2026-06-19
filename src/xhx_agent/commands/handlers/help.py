@@ -41,7 +41,6 @@ async def handle_help(ctx: CommandContext) -> None:
 
 HELP_COMMAND = Command(
     name="help",
-    aliases=["h", "?"],
     description="显示帮助信息",
     usage="/help [命令名]",
     handler=handle_help,

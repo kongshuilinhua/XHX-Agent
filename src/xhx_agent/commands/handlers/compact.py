@@ -34,7 +34,6 @@ async def handle_compact(ctx: CommandContext) -> None:
 
 COMPACT_COMMAND = Command(
     name="compact",
-    aliases=["c"],
     description="压缩上下文（token 超阈值时用 LLM 摘要压缩历史）",
     usage="/compact",
     handler=handle_compact,

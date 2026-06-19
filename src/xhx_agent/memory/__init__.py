@@ -179,6 +179,45 @@ class Session:
 # ---------------------------------------------------------------------------
 
 
+def _record_to_message(rec: dict[str, Any]) -> Any:
+    """把一条 jsonl 记录还原成 Message；非消息记录返回 None。"""
+    from xhx_agent.conversation import Message, ToolResultBlock, ToolUseBlock
+
+    role = rec.get("role")
+    if role is None:
+        return None
+    tool_uses = []
+    for tu in rec.get("tool_uses", []) or []:
+        try:
+            tool_uses.append(
+                ToolUseBlock(
+                    tool_use_id=tu.get("tool_use_id", ""),
+                    tool_name=tu.get("tool_name", ""),
+                    arguments=tu.get("arguments", {}) or {},
+                )
+            )
+        except Exception:
+            pass
+    tool_results = []
+    for tr in rec.get("tool_results", []) or []:
+        try:
+            tool_results.append(
+                ToolResultBlock(
+                    tool_use_id=tr.get("tool_use_id", ""),
+                    content=tr.get("content", ""),
+                    is_error=bool(tr.get("is_error", False)),
+                )
+            )
+        except Exception:
+            pass
+    return Message(
+        role=role,
+        content=rec.get("content", "") or "",
+        tool_uses=tool_uses,
+        tool_results=tool_results,
+    )
+
+
 class SessionManager:
     """会话管理器：create / list / cleanup。"""
 
@@ -242,6 +281,61 @@ class SessionManager:
         # 按 last_active 倒序
         result.sort(key=lambda m: m.last_active, reverse=True)
         return result
+
+    def load_messages(self, session_id: str) -> list[Any]:
+        """读取某会话的 jsonl，重建为 Message 列表（供 resume 用）。
+
+        - ``type: "message"`` → 还原一条 Message（含 tool_uses / tool_results）。
+        - ``type: "compact_boundary"`` → 之前的历史已被摘要替换：重置为
+          [摘要消息] + keep_tail，后续 message 记录接在其后。
+        """
+        from xhx_agent.conversation import Message
+
+        path = self._sessions_dir / f"{session_id}.jsonl"
+        messages: list[Any] = []
+        if not path.is_file():
+            return messages
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    rtype = data.get("type", "message")
+                    if rtype == "compact_boundary":
+                        messages = []
+                        summary = data.get("summary", "")
+                        if summary:
+                            messages.append(Message(role="user", content=f"[Earlier turns compacted]\n{summary}"))
+                        for kt in data.get("keep_tail", []):
+                            m = _record_to_message(kt)
+                            if m is not None:
+                                messages.append(m)
+                    else:
+                        m = _record_to_message(data)
+                        if m is not None:
+                            messages.append(m)
+        except OSError:
+            return messages
+        return messages
+
+    def open(self, session_id: str) -> Session:
+        """打开一个已存在的会话句柄（续写同一 jsonl，并恢复消息计数/标题）。"""
+        session = Session(session_id=session_id, sessions_dir=self._sessions_dir)
+        meta_path = self._sessions_dir / f"{session_id}.meta"
+        if meta_path.is_file():
+            try:
+                meta = SessionMeta.load(meta_path)
+                session.meta = meta
+                session._message_count = meta.message_count
+                session._title = meta.title or None
+            except Exception:
+                pass
+        return session
 
     def cleanup(self) -> None:
         """删除空会话（无消息的 jsonl）。"""

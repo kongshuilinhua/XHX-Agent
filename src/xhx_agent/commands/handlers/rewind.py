@@ -44,7 +44,6 @@ async def handle_rewind(ctx: CommandContext) -> None:
 
 REWIND_COMMAND = Command(
     name="rewind",
-    aliases=["rw"],
     description="回退对话 N 轮",
     usage="/rewind <轮数>",
     handler=handle_rewind,

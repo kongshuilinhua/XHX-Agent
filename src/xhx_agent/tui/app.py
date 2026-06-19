@@ -1856,6 +1856,69 @@ class XHXApp(App):
             pass
 
     # -----------------------------------------------------------------
+    # 会话恢复（上下键可选列表）
+    # -----------------------------------------------------------------
+
+    async def show_resume_picker(self) -> None:
+        """弹出可上下键选择的历史会话列表（供 /session 调用）。"""
+        from xhx_agent.tui.session_dialog import InlineResumeWidget
+
+        if self.session_manager is None:
+            self._show_system_message("会话管理器未初始化")
+            return
+        sessions = self.session_manager.list_sessions()
+        # 排除当前这个（通常是空的）新会话
+        if self.session is not None:
+            sessions = [s for s in sessions if s.session_id != self.session.session_id]
+        if not sessions:
+            self._show_system_message("暂无可恢复的历史会话")
+            return
+
+        chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：旧 resume 弹窗 remove() 延迟生效，先 await 移除避免重复 ID 崩溃。
+        await chat.query("#resume-inline").remove()
+        project = Path(self.agent.work_dir).name if self.agent is not None else ""
+        widget = InlineResumeWidget(sessions, project_name=project)
+        await chat.mount(widget)
+        self.call_after_refresh(chat.scroll_end, animate=False)
+        try:
+            self.query_one("#chat-input").disabled = True
+        except Exception:
+            pass
+
+    async def on_inline_resume_widget_selected(self, event: Any) -> None:
+        from xhx_agent.tui.session_dialog import InlineResumeWidget
+
+        try:
+            self.query_one("#resume-inline", InlineResumeWidget).remove()
+        except Exception:
+            pass
+        try:
+            self.query_one("#chat-input").disabled = False
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
+        if event.session_id is None:
+            return
+        await self._load_session(event.session_id)
+
+    async def _load_session(self, session_id: str) -> None:
+        """把选中的历史会话读回当前对话并续写。"""
+        if self.session_manager is None or self.agent is None:
+            return
+        messages = self.session_manager.load_messages(session_id)
+        conv = ConversationManager()
+        conv.history = list(messages)
+        self._set_conversation(conv)
+        # open() 续写同一个 jsonl；_session_saved_count 设为已加载条数，避免重复落盘。
+        self._set_session(self.session_manager.open(session_id))
+        self._session_saved_count = len(messages)
+        await self._render_restored_messages(messages)
+        self._recompute_context_used()
+        self.call_later(self._update_xhx_status)
+        self._show_system_message(f"已恢复会话（{len(messages)} 条消息）")
+
+    # -----------------------------------------------------------------
     # 恢复 session 的消息渲染
     # -----------------------------------------------------------------
 

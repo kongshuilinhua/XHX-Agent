@@ -126,7 +126,6 @@ async def _handle_verbose(ctx: CommandContext) -> None:
 
 EXIT_CMD = Command(
     name="exit",
-    aliases=["quit", "q"],
     description="退出 XHX-Agent",
     usage="/exit",
     handler=_handle_exit,

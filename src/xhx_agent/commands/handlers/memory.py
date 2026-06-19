@@ -35,7 +35,6 @@ async def handle_memory(ctx: CommandContext) -> None:
 
 MEMORY_COMMAND = Command(
     name="memory",
-    aliases=["mem"],
     description="查看或管理长期记忆",
     usage="/memory [list|clear]",
     handler=handle_memory,
