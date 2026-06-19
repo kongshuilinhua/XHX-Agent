@@ -19,6 +19,7 @@ from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message as TMessage
 from textual.theme import Theme
 from textual.widgets import Markdown, OptionList, Static, TextArea
@@ -1927,7 +1928,11 @@ class XHXApp(App):
         self.call_after_refresh(chat.scroll_end, animate=False)
 
     def _show_system_message(self, text: str) -> None:
-        chat = self.query_one("#chat-area", VerticalScroll)
+        # 关闭/取消阶段 #chat-area 可能已销毁，查询不到时安全跳过，避免二次崩溃。
+        try:
+            chat = self.query_one("#chat-area", VerticalScroll)
+        except NoMatches:
+            return
         msg = Static(f"  {text}", classes="message system-message")
         chat.mount(msg)
         self.call_after_refresh(chat.scroll_end, animate=False)

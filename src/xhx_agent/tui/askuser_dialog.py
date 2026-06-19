@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -66,7 +67,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
         q = self._questions[self._q_idx]
         header = q.get("question", q.get("message", f"Question {self._q_idx + 1}"))
-        lines.append(f" [bold color(99)]{header}[/]\n")
+        lines.append(f" [bold color(99)]{escape(str(header))}[/]\n")
 
         options = q.get("options", [])
         is_multi = q.get("multiSelect", False)
@@ -82,8 +83,8 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
             check = ("● " if self._selected[self._q_idx].get(i) else "○ ") if is_multi else ""
 
-            desc_part = f" — [dim]{desc}[/]" if desc else ""
-            lines.append(f"{prefix}{check}{bold}{label}{end_bold}{desc_part}")
+            desc_part = f" — [dim]{escape(str(desc))}[/]" if desc else ""
+            lines.append(f"{prefix}{check}{bold}{escape(str(label))}{end_bold}{desc_part}")
 
         # "Other" 选项
         other_idx = len(options)
@@ -94,7 +95,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
         if cursor == other_idx:
             text = self._others[self._q_idx]
-            display = text if text else "[dim]Type your answer here...[/]"
+            display = escape(text) if text else "[dim]Type your answer here...[/]"
             lines.append(f"      {display}█")
 
         if is_multi:
@@ -107,7 +108,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
     def _render_nav_bar(self) -> str:
         parts = []
         for i, q in enumerate(self._questions):
-            header = q.get("header", f"Q{i + 1}")
+            header = escape(str(q.get("header", f"Q{i + 1}")))
             check = "☑" if i in self._answered else "☐"
             if i == self._q_idx and not self._on_submit:
                 parts.append(f"[bold reverse] {header} {check} [/]")
@@ -122,10 +123,10 @@ class InlineAskUserWidget(Vertical, can_focus=True):
     def _render_submit(self) -> str:
         lines = ["\n [bold color(99)]Review your answers:[/]\n"]
         for i, q in enumerate(self._questions):
-            header = q.get("header", q.get("question", f"Q{i + 1}"))
+            header = escape(str(q.get("header", q.get("question", q.get("message", f"Q{i + 1}")))))
             ans = self._answered.get(i, "")
             if ans:
-                lines.append(f"   {header}: {ans}")
+                lines.append(f"   {header}: {escape(str(ans))}")
             else:
                 lines.append(f"   {header}: [dim](not answered)[/]")
         lines.append("")
@@ -218,7 +219,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
             if self._submit_idx == 0:
                 answers = {}
                 for i, q in enumerate(self._questions):
-                    key = q.get("question", q.get("message", f"q{i}"))
+                    key = q.get("name", q.get("question", q.get("message", f"q{i}")))
                     answers[key] = self._answered.get(i, "")
                 self.post_message(self.Responded(answers))
             else:
@@ -228,7 +229,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
             if len(self._questions) == 1:
                 answers = {}
                 q = self._questions[0]
-                key = q.get("question", q.get("message", "q0"))
+                key = q.get("name", q.get("question", q.get("message", "q0")))
                 answers[key] = self._answered.get(0, "")
                 self.post_message(self.Responded(answers))
             elif self._q_idx < len(self._questions) - 1:
