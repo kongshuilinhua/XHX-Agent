@@ -3,6 +3,7 @@
 覆盖之前漏测的交互路径（call_ui / session.meta / LoopComplete / 会话摘要）——
 这些只在真实 TUI 事件流里执行，agent.run() 直接调用走不到。
 """
+
 from __future__ import annotations
 
 import asyncio

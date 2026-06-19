@@ -1,4 +1,5 @@
 """新栈 LLM 客户端测试。"""
+
 from __future__ import annotations
 
 from xhx_agent.client import OpenAICompatClient

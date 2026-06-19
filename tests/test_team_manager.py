@@ -1,4 +1,5 @@
 """TeamManager 方法测试：覆盖 TUI 后台轮询/通知会用到的接口。"""
+
 from __future__ import annotations
 
 from xhx_agent.teams.manager import TeamManager
