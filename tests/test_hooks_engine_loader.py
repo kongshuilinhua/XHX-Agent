@@ -16,7 +16,12 @@ def test_load_hooks_valid() -> None:
     hooks = load_hooks(
         [
             {"event": "pre_send", "action": {"type": "prompt", "message": "记得跑测试"}},
-            {"id": "h2", "event": "pre_tool_use", "if": 'tool == "Bash"', "action": {"type": "command", "command": "echo hi"}},
+            {
+                "id": "h2",
+                "event": "pre_tool_use",
+                "if": 'tool == "Bash"',
+                "action": {"type": "command", "command": "echo hi"},
+            },
         ]
     )
     assert len(hooks) == 2
@@ -41,9 +46,13 @@ def test_load_hooks_errors() -> None:
     with pytest.raises(HookConfigError):
         load_hooks([{"event": "pre_send", "action": {"type": "command"}}])  # 缺 command
     with pytest.raises(HookConfigError):
-        load_hooks([{"event": "pre_send", "reject": True, "action": {"type": "prompt", "message": "x"}}])  # reject 非 pre_tool_use
+        load_hooks(
+            [{"event": "pre_send", "reject": True, "action": {"type": "prompt", "message": "x"}}]
+        )  # reject 非 pre_tool_use
     with pytest.raises(HookConfigError):
-        load_hooks([{"event": "pre_tool_use", "async": True, "action": {"type": "command", "command": "x"}}])  # async+pre_tool_use
+        load_hooks(
+            [{"event": "pre_tool_use", "async": True, "action": {"type": "command", "command": "x"}}]
+        )  # async+pre_tool_use
     with pytest.raises(HookConfigError):
         load_hooks([{"event": "pre_send", "action": {"type": "prompt", "message": "x", "timeout": -1}}])  # 非法 timeout
 
