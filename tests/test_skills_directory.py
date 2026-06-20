@@ -47,17 +47,25 @@ def test_load_tool_implementation(tmp_path: Path) -> None:
 
 
 def test_run_skill_tool() -> None:
-    assert "no implementation" in _run_skill_tool("t", None, {})
+    # 无实现 → failed，tool 名带 custom_ 前缀
+    no_impl = _run_skill_tool("t", None, {})
+    assert no_impl.status == "failed"
+    assert no_impl.tool == "custom_t"
+    assert "no implementation" in no_impl.summary
 
     def good(**kw):
         return {"ok": kw}
 
-    assert "ok" in _run_skill_tool("t", good, {"a": 1})
+    ok = _run_skill_tool("t", good, {"a": 1})
+    assert ok.status == "success"
+    assert "ok" in ok.summary
 
     def boom(**kw):
         raise RuntimeError("x")
 
-    assert "Tool execution error" in _run_skill_tool("t", boom, {})
+    err = _run_skill_tool("t", boom, {})
+    assert err.status == "failed"
+    assert "Tool execution error" in err.summary
 
 
 def test_register_skill_tools(tmp_path: Path) -> None:
@@ -72,11 +80,11 @@ def test_register_skill_tools(tmp_path: Path) -> None:
     (refs / "adder.py").write_text("def execute(a, b):\n    return a + b\n", encoding="utf-8")
 
     reg = ToolRegistry()
-    # 已知不兼容：register_skill_tools 用关键字参数调 register_definition，
-    # 而 ToolRegistry.register_definition 只收一个 ToolDefinition 对象 → 注册失败被吞掉，
-    # 返回 0。这里断言当前真实行为（该 bug 另行跟踪修复）。
+    # register_skill_tools 会把 schema 构造成 ToolDefinition 注册进 registry，
+    # 工具名加 custom_ 前缀。
     count = register_skill_tools(skill_dir, reg)
-    assert count == 0
+    assert count == 1
+    assert reg.definition("custom_adder") is not None
 
     # 无 tool.json → 0
     assert register_skill_tools(tmp_path / "empty", reg) == 0
