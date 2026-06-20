@@ -78,6 +78,19 @@ def test_rule_engine_last_match_wins(tmp_path: Path) -> None:
     assert eng.evaluate("Read", "x") is None
 
 
+def test_rule_engine_cross_tier_priority(tmp_path: Path) -> None:
+    # local > project > user：高优先级层覆盖低优先级层
+    ufile = tmp_path / "permissions.yaml"
+    ufile.write_text('- rule: "Bash(*)"\n  effect: allow\n', encoding="utf-8")
+    lfile = tmp_path / "permissions.local.yaml"
+    lfile.write_text('- rule: "Bash(rm *)"\n  effect: deny\n', encoding="utf-8")
+    eng = RuleEngine(user_rules_path=ufile, local_rules_path=lfile)
+    # local 的 deny 覆盖 user 的 allow
+    assert eng.evaluate("Bash", "rm -rf /") == "deny"
+    # local 未命中时回退到 user 的 allow
+    assert eng.evaluate("Bash", "ls") == "allow"
+
+
 def test_rule_engine_append_local(tmp_path: Path) -> None:
     local = tmp_path / "permissions.local.json"
     eng = RuleEngine(local_rules_path=local)
