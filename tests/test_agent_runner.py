@@ -246,6 +246,79 @@ def test_permission_ask_then_deny(tmp_path) -> None:
     assert any(isinstance(e, ToolResultEvent) and e.is_error for e in events)
 
 
+def test_with_hook_engine(tmp_path) -> None:
+    """带 HookEngine 跑一轮工具调用，覆盖 agent_runner 的各生命周期 hook 分支。"""
+    from xhx_agent.hooks.engine import HookEngine
+    from xhx_agent.hooks.loader import load_hooks
+
+    hooks = load_hooks(
+        [
+            {"event": "session_start", "action": {"type": "prompt", "message": "开始"}},
+            {"event": "turn_start", "action": {"type": "prompt", "message": "轮开始"}},
+            {"event": "pre_send", "action": {"type": "prompt", "message": "发送前"}},
+            {"event": "post_receive", "action": {"type": "command", "command": "echo recv"}},
+            {"event": "pre_tool_use", "action": {"type": "command", "command": "echo pre"}},
+            {"event": "post_tool_use", "action": {"type": "command", "command": "echo post"}},
+            {"event": "turn_end", "action": {"type": "prompt", "message": "轮结束"}},
+            {"event": "session_end", "action": {"type": "command", "command": "echo end"}},
+        ]
+    )
+    client = _ScriptedClient(
+        [
+            [
+                ToolCallComplete(tool_id="1", tool_name="echo", arguments={"text": "a"}),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [TextDelta(text="done"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)],
+        ]
+    )
+    agent = Agent(
+        client=client,
+        registry=_registry(),
+        protocol="openai-compat",
+        work_dir=str(tmp_path),
+        hook_engine=HookEngine(hooks),
+    )
+    conv = ConversationManager()
+    conv.add_user_message("go")
+    events = _drive(agent, conv)
+    assert any(isinstance(e, LoopComplete) for e in events)
+    assert any(isinstance(e, ToolResultEvent) and "echoed: a" in e.output for e in events)
+
+
+def test_parallel_concurrent_tools(tmp_path) -> None:
+    """一轮里两个并发安全工具 → 走并行批量执行路径。"""
+    client = _ScriptedClient(
+        [
+            [
+                ToolCallComplete(tool_id="1", tool_name="echo", arguments={"text": "a"}),
+                ToolCallComplete(tool_id="2", tool_name="echo", arguments={"text": "b"}),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [TextDelta(text="done"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)],
+        ]
+    )
+    agent = Agent(client=client, registry=_registry(), protocol="openai-compat", work_dir=str(tmp_path))
+    conv = ConversationManager()
+    conv.add_user_message("two calls")
+    events = _drive(agent, conv)
+    outs = [e.output for e in events if isinstance(e, ToolResultEvent)]
+    assert any("echoed: a" in o for o in outs) and any("echoed: b" in o for o in outs)
+
+
+def test_notification_fn_injects_reminder(tmp_path) -> None:
+    client = _ScriptedClient(
+        [[TextDelta(text="ok"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)]]
+    )
+    agent = Agent(client=client, registry=_registry(), protocol="openai-compat", work_dir=str(tmp_path))
+    agent.notification_fn = lambda: ["有新消息"]
+    conv = ConversationManager()
+    conv.add_user_message("hi")
+    _drive(agent, conv)
+    # 通知被作为 system reminder 注入历史
+    assert any("有新消息" in (m.content or "") for m in conv.history)
+
+
 def test_bypass_mode_auto_allows(tmp_path) -> None:
     from xhx_agent.permissions import PermissionMode
 
