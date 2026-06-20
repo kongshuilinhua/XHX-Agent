@@ -15,7 +15,6 @@ from xhx_agent.hooks.conditions import (
 from xhx_agent.hooks.executors import (
     _EXECUTOR_MAP,
     execute_action,
-    execute_agent,
     execute_command,
     execute_prompt,
     execute_verification,
@@ -90,12 +89,6 @@ def test_execute_command_success_and_fail() -> None:
     assert bad.success is False
 
 
-def test_execute_agent_is_stub() -> None:
-    res = asyncio.run(execute_agent(Action(type="agent", prompt="do x"), _ctx()))
-    assert res.success is True
-    assert "not yet implemented" in res.output
-
-
 def test_execute_verification_skips_without_changes(tmp_path) -> None:
     # 空目录（无项目标记）→ 推断不出命令 → 视为成功跳过
     res = asyncio.run(execute_verification(Action(type="verification"), _ctx(work_dir=str(tmp_path))))
@@ -117,5 +110,7 @@ def test_execute_action_dispatch_and_unknown() -> None:
 
 
 def test_executors_registry_complete() -> None:
-    for key in ("command", "prompt", "http", "agent", "verification"):
+    for key in ("command", "prompt", "http", "verification"):
         assert key in _EXECUTOR_MAP
+    # "agent" 动作已停用：执行器表里不应再有它
+    assert "agent" not in _EXECUTOR_MAP

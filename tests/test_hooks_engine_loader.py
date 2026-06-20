@@ -44,6 +44,9 @@ def test_load_hooks_errors() -> None:
     with pytest.raises(HookConfigError):
         load_hooks([{"event": "pre_send", "action": {"type": "weird"}}])  # 非法 action type
     with pytest.raises(HookConfigError):
+        # "agent" 动作已停用（从未实现，避免假装成功）→ 配置加载即拒绝
+        load_hooks([{"event": "pre_send", "action": {"type": "agent", "prompt": "x"}}])
+    with pytest.raises(HookConfigError):
         load_hooks([{"event": "pre_send", "action": {"type": "command"}}])  # 缺 command
     with pytest.raises(HookConfigError):
         load_hooks(

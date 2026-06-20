@@ -1,17 +1,13 @@
-"""Hook 动作执行器：command / prompt / http / agent。"""
+"""Hook 动作执行器：command / prompt / http / verification。"""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import subprocess
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from xhx_agent.hooks.models import Action, ActionResult, HookContext
-
-log = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # 异步执行器（原始接口）
@@ -79,13 +75,6 @@ async def execute_http(action: Action, ctx: HookContext) -> ActionResult:
     return await loop.run_in_executor(None, _do_request)
 
 
-async def execute_agent(action: Action, ctx: HookContext) -> ActionResult:
-    """触发子 Agent（当前为 stub）。"""
-    prompt = ctx.expand(action.prompt)
-    log.info("Agent executor stub called with prompt: %s", prompt[:100])
-    return ActionResult(output="agent executor not yet implemented", success=True)
-
-
 async def execute_verification(action: Action, ctx: HookContext) -> ActionResult:
     """根据本轮改动文件推断并运行定向验证命令（默认跑变更相关的测试）。
 
@@ -134,7 +123,6 @@ _EXECUTOR_MAP = {
     "command": execute_command,
     "prompt": execute_prompt,
     "http": execute_http,
-    "agent": execute_agent,
     "verification": execute_verification,
 }
 

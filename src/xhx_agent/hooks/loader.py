@@ -6,14 +6,16 @@ from xhx_agent.hooks.conditions import ConditionParseError, parse_condition
 from xhx_agent.hooks.events import LifecycleEvent
 from xhx_agent.hooks.models import Action, Hook
 
+# 注意：曾有 "agent"（hook 触发子 agent）动作类型，但从未实现——它只是个返回
+# "not yet implemented" 的 stub（参考架构里也一样）。与其留个会"假装成功却什么都不做"
+# 的占位，不如在配置加载阶段就明确拒绝，给出清晰报错。需要时再正式接入子 agent 基建。
 _VALID_EVENTS = {e.value for e in LifecycleEvent}
-_VALID_ACTION_TYPES = {"command", "prompt", "http", "agent"}
+_VALID_ACTION_TYPES = {"command", "prompt", "http"}
 
 _REQUIRED_FIELDS: dict[str, list[str]] = {
     "command": ["command"],
     "prompt": ["message"],
     "http": ["url"],
-    "agent": ["prompt"],
 }
 
 
@@ -41,7 +43,7 @@ def load_hooks(raw_hooks: list[dict] | None) -> list[Hook]:
             "once": false,                # 可选，一次性 hook
             "async": false,               # 可选，异步执行
             "action": {
-                "type": "command",        # command | prompt | http | agent
+                "type": "command",        # command | prompt | http
                 "command": "echo hello",  # type=command 必填
                 ...
             }
