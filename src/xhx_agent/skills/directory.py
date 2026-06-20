@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from xhx_agent.tools.registry import ToolContext, ToolDefinition, ToolExecutionResult, ToolRunner
+
 log = logging.getLogger(__name__)
 
 
@@ -61,7 +63,7 @@ def load_tool_implementation(references_dir: Path, tool_name: str) -> Callable[.
     return execute_fn
 
 
-def register_skill_tools(skill_dir: Path, registry: object) -> int:
+def register_skill_tools(skill_dir: Path, registry: Any) -> int:
     """从 skill 目录注册自定义工具到 ToolRegistry。
 
     Returns:
@@ -100,7 +102,7 @@ def register_skill_tools(skill_dir: Path, registry: object) -> int:
         # 注册为 custom_ 前缀工具（利用 XHX-Agent 的约定）
         params = schema.get("parameters", schema.get("input_schema", {}))
         try:
-            registry.register_definition(  # type: ignore[union-attr]
+            definition = ToolDefinition(
                 name=f"custom_{tool_name}",
                 description=description,
                 parameters=params,
@@ -108,8 +110,9 @@ def register_skill_tools(skill_dir: Path, registry: object) -> int:
                 destructive=False,
                 network=False,
                 is_command=False,
-                runner=lambda ctx, args, impl=impl: _run_skill_tool(tool_name, impl, args),  # noqa: B023 闭包即时调用,循环变量绑定无误
+                runner=_make_skill_runner(tool_name, impl),
             )
+            registry.register_definition(definition)  # type: ignore[union-attr]
         except Exception as e:
             log.warning("Failed to register skill tool '%s': %s", tool_name, e)
             continue
@@ -119,12 +122,44 @@ def register_skill_tools(skill_dir: Path, registry: object) -> int:
     return count
 
 
-def _run_skill_tool(tool_name: str, impl: Callable[..., Any] | None, args: dict[str, Any]) -> str:
-    """运行 Skill 自定义工具。"""
+def _make_skill_runner(tool_name: str, impl: Callable[..., Any] | None) -> ToolRunner:
+    """工厂：为单个 skill 工具生成 runner，避免在循环里用 lambda 误捕获循环变量。"""
+
+    def runner(_ctx: ToolContext, args: dict[str, Any]) -> ToolExecutionResult:
+        return _run_skill_tool(tool_name, impl, args)
+
+    return runner
+
+
+def _run_skill_tool(tool_name: str, impl: Callable[..., Any] | None, args: dict[str, Any]) -> ToolExecutionResult:
+    """运行 Skill 自定义工具，返回标准 ToolExecutionResult（与其他工具 runner 一致）。"""
+    tool = f"custom_{tool_name}"
     if impl is None:
-        return f"Error: no implementation found for tool '{tool_name}'"
+        msg = f"Error: no implementation found for tool '{tool_name}'"
+        return ToolExecutionResult(
+            tool=tool,
+            status="failed",
+            summary=msg,
+            trace_payload={"tool": tool, "error": msg},
+            error=msg,
+        )
     try:
-        result = impl(**args)
-        return str(result)
+        text = str(impl(**args))
+        return ToolExecutionResult(
+            tool=tool,
+            status="success",
+            summary=text,
+            trace_payload={"tool": tool, "arguments": args, "content": text},
+            evidence_kind="file",
+            evidence_source=tool,
+            evidence_summary=text,
+        )
     except Exception as e:
-        return f"Tool execution error: {e}"
+        msg = f"Tool execution error: {e}"
+        return ToolExecutionResult(
+            tool=tool,
+            status="failed",
+            summary=msg,
+            trace_payload={"tool": tool, "error": str(e)},
+            error=str(e),
+        )

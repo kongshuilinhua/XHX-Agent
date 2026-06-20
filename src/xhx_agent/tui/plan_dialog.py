@@ -97,15 +97,27 @@ class InlinePlanWidget(Vertical, can_focus=True):
             self.post_message(self.Responded(PlanChoice.FEEDBACK, self._input))
 
     def on_key(self, event) -> None:
-        if self._cursor != 2:
-            return
         key = event.key
-        if key == "backspace":
-            if self._input:
-                self._input = self._input[:-1]
+        # 反馈输入模式（光标在选项3）：所有可打印字符都进反馈框，含数字。
+        if self._cursor == 2:
+            if key == "backspace":
+                if self._input:
+                    self._input = self._input[:-1]
+                    self._refresh()
+                event.stop()
+            elif len(key) == 1 and key.isprintable():
+                self._input += key
                 self._refresh()
+                event.stop()
+            return
+        # 非输入模式：数字键直接对应编号选项（与界面"1. 2. 3."一致）。
+        if key == "1":
+            self.post_message(self.Responded(PlanChoice.YOLO))
             event.stop()
-        elif len(key) == 1 and key.isprintable():
-            self._input += key
+        elif key == "2":
+            self.post_message(self.Responded(PlanChoice.MANUAL))
+            event.stop()
+        elif key == "3":
+            self._cursor = 2  # 进入反馈输入：显示输入框，随后键入即写反馈
             self._refresh()
             event.stop()

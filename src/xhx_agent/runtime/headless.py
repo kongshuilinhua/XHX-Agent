@@ -47,7 +47,7 @@ def _build_permission_checker(work_dir: Path, mode: PermissionMode) -> Permissio
     home = Path.home()
     return PermissionChecker(
         detector=DangerousCommandDetector(),
-        sandbox=PathSandbox(work_dir),
+        sandbox=PathSandbox(str(work_dir)),
         rule_engine=RuleEngine(
             user_rules_path=home / ".XHX" / "permissions.json",
             project_rules_path=work_dir / ".XHX" / "permissions.json",

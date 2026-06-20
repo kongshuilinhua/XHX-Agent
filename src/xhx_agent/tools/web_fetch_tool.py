@@ -26,7 +26,7 @@ class WebFetchTool(Tool):
         self._workspace = workspace or Path.cwd()
         self._max_bytes = max_bytes
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         from xhx_agent.tools.web import web_fetch
 
         try:

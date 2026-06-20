@@ -6,25 +6,12 @@ from xhx_agent.commands import Command, CommandContext
 
 
 async def handle_session(ctx: CommandContext) -> None:
-    """查看或管理会话。"""
-    if ctx.session_manager is None:
-        ctx.ui.add_system_message("会话管理器未初始化")
-        return
+    """恢复或新建会话。
 
-    sub = ctx.args.strip().lower() if ctx.args else "list"
-
-    if sub == "list" or sub == "":
-        sessions = ctx.session_manager.list_sessions()
-        if not sessions:
-            ctx.ui.add_system_message("暂无历史会话")
-            return
-        lines = ["历史会话："]
-        for s in sessions[-20:]:  # 最近 20 个
-            sid = getattr(s, "run_id", str(s))
-            task = getattr(s, "task", "")[:60] or ""
-            lines.append(f"  {sid}  {task}")
-        ctx.ui.add_system_message("\n".join(lines))
-        return
+    - 无参数 / list / resume → 弹出可上下键选择的历史会话列表（选中即恢复）。
+    - new → 新建空会话。
+    """
+    sub = ctx.args.strip().lower() if ctx.args else ""
 
     if sub == "new":
         set_session = ctx.config.get("set_session")
@@ -39,13 +26,16 @@ async def handle_session(ctx: CommandContext) -> None:
         ctx.ui.add_system_message("已创建新会话")
         return
 
-    ctx.ui.add_system_message("用法: /session [list|new]")
+    if sub in ("", "list", "resume"):
+        await ctx.ui.show_resume_picker()
+        return
+
+    ctx.ui.add_system_message("用法: /session [list|resume|new]")
 
 
 SESSION_COMMAND = Command(
     name="session",
-    aliases=["sess"],
-    description="查看或管理会话",
-    usage="/session [list|new]",
+    description="恢复历史会话（上下键选择）或新建会话",
+    usage="/session [list|resume|new]",
     handler=handle_session,
 )

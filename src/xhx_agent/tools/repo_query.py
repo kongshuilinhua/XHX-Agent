@@ -25,7 +25,7 @@ class RepoQueryTool(Tool):
     def __init__(self, workspace: str = ".", **kwargs: Any) -> None:
         self._workspace = workspace
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         from pathlib import Path
 
         from xhx_agent.repo_intel.index import load_repo_intel_index

@@ -32,7 +32,6 @@ async def handle_skill(ctx: CommandContext) -> None:
 
 SKILL_COMMAND = Command(
     name="skill",
-    aliases=["sk"],
     description="列出可用 Skill",
     usage="/skill [list]",
     handler=handle_skill,

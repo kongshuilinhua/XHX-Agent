@@ -23,5 +23,5 @@ class TeamDeleteTool(Tool):
     def __init__(self, manager: Any = None, **kwargs: Any) -> None:
         self._manager = manager
 
-    async def execute(self, params: TeamDeleteParams) -> ToolResult:
+    async def execute(self, params: TeamDeleteParams) -> ToolResult:  # type: ignore[override]
         return ToolResult(output=f"Team '{params.name}' deleted.")

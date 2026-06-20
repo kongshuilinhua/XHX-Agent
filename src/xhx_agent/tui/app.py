@@ -9,19 +9,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     from xhx_agent.askuser_dialog import InlineAskUserWidget
     from xhx_agent.permission_dialog import InlinePermissionWidget
     from xhx_agent.plan_dialog import InlinePlanWidget
+    from xhx_agent.tools.present_plan import PresentPlanTool
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message as TMessage
 from textual.theme import Theme
 from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+from xhx_agent import __version__
 from xhx_agent.agent import (
     Agent,
     CompactNotification,
@@ -60,7 +65,7 @@ from xhx_agent.commands.handlers import register_all_commands
 from xhx_agent.commands.handlers.skill_register import register_skill_commands
 from xhx_agent.commands.handlers.tasks import create_tasks_command
 from xhx_agent.commands.handlers.worktree import create_worktree_command
-from xhx_agent.config import MCPServerConfig, ProviderConfig
+from xhx_agent.config import ProviderConfig
 from xhx_agent.conversation import ConversationManager, Message
 from xhx_agent.hooks import HookContext, HookEngine
 from xhx_agent.mcp import MCPManager
@@ -81,6 +86,7 @@ from xhx_agent.permissions import (
     PermissionMode,
     RuleEngine,
 )
+from xhx_agent.runtime.mcp_config import MCPServerConfig
 from xhx_agent.skills.executor import SkillExecutor
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.teammate_tree import TeammateTree
@@ -89,6 +95,7 @@ from xhx_agent.tools.agent_tool import AgentTool
 from xhx_agent.tools.ask_user import AskUserEvent, AskUserTool
 from xhx_agent.tools.impl.tool_search import ToolSearchTool
 from xhx_agent.tools.load_skill import LoadSkill
+from xhx_agent.tui.format import strip_emoji
 from xhx_agent.worktree.cleanup import start_stale_cleanup_task
 from xhx_agent.worktree.manager import WorktreeManager
 
@@ -239,7 +246,7 @@ class ChatInput(TextArea):
     def action_nav_up(self) -> None:
         popup = self._popup()
         if popup is not None and popup.is_visible:
-            popup.move_up()
+            popup.nav_up()
             return
         if not self._history:
             return
@@ -256,7 +263,7 @@ class ChatInput(TextArea):
     def action_nav_down(self) -> None:
         popup = self._popup()
         if popup is not None and popup.is_visible:
-            popup.move_down()
+            popup.nav_down()
             return
         if self._history_index == -1:
             return
@@ -675,12 +682,12 @@ class XHXApp(App):
         self._thinking_start: float = 0.0
         self._thinking_verb: str = ""
         self._spinner_idx: int = 0
-        self._spinner_timer = None
+        self._spinner_timer: Timer | None = None
         self._spinner_label: Static | None = None
         self._mcp_server_info: str = ""
+        self._plan_pending: bool = False
+        self._present_plan_tool: PresentPlanTool | None = None
         self._agent_task: asyncio.Task[None] | None = None
-        self._subagent_task: asyncio.Task[None] | None = None
-        self._subagent_start_time: float | None = None
         self.session_manager: SessionManager | None = None
         self.session: Session | None = None
         self._session_saved_count: int = 0
@@ -714,17 +721,34 @@ class XHXApp(App):
         self._mcp_instructions_ok: bool = False
         self._mcp_connecting: bool = False
         self._teammate_tree: TeammateTree | None = None
-        self._teammate_timer = None
+        self._teammate_timer: Timer | None = None
+        self._pending_askuser_event: AskUserEvent | None = None
+        self._pending_perm_request: PermissionRequest | None = None
 
     @staticmethod
     def _make_banner(model: str = "", work_dir: str = "") -> RichText:
         t = RichText()
-        t.append(" /\\_/\\    ", style="bold color(99)")
-        t.append("XHX v0.1.0\n", style="color(242)")
-        t.append("( o.o )   ", style="bold color(99)")
-        t.append(f"{model}\n" if model else "\n", style="color(242)")
-        t.append(" > ^ <    ", style="bold color(99)")
-        t.append(work_dir, style="color(242)")
+        # Line 1: stars + version
+        t.append("      ★   ★    ", style="color(220)")
+        t.append(f"XHX v{__version__}\n", style="bold color(99)")
+        # Line 2: head top
+        t.append('     \\_.-"C"-. ', style="bold color(99)")
+        t.append("\n", style="")
+        # Line 3: left ear + model
+        t.append("  .-'        \\", style="bold color(99)")
+        t.append(f"  {model}\n" if model else "\n", style="color(242)")
+        # Line 4: face
+        t.append(" /:::\\ ( ._. )", style="bold color(99)")
+        t.append("\n", style="")
+        # Line 5: body + work_dir
+        t.append("|:::::| | | | |", style="bold color(99)")
+        t.append(f"  {work_dir}\n" if work_dir else "\n", style="color(242)")
+        # Line 6: body lower
+        t.append(" \\:::/  | | | |", style="bold color(99)")
+        t.append("\n", style="")
+        # Line 7: tail
+        t.append('  `"`   |_____|', style="bold color(99)")
+        t.append("\n", style="")
         return t
 
     def compose(self) -> ComposeResult:
@@ -750,6 +774,9 @@ class XHXApp(App):
     def on_mount(self) -> None:
         self.register_theme(_XHX_THEME)
         self.theme = "XHX"
+        # AskUser 工具在 execute() 内阻塞 await future，主事件循环此时被挂起，
+        # 无法靠流式分支检测其 _pending_event；用独立 interval 轮询来弹出询问框。
+        self.set_interval(0.15, self._poll_askuser)
         if len(self.providers) == 1:
             self._select_provider(self.providers[0])
         else:
@@ -766,7 +793,7 @@ class XHXApp(App):
             self._show_error(str(e))
             return
 
-        work_dir = Path.cwd()
+        work_dir = str(Path.cwd())
         home = Path.home()
         checker = PermissionChecker(
             detector=DangerousCommandDetector(),
@@ -799,10 +826,26 @@ class XHXApp(App):
         self.registry.register(ToolSearchTool(self.registry, protocol=provider.protocol))
         self.registry.register(AskUserTool())
 
+        from xhx_agent.tools.enter_plan_mode import EnterPlanModeTool
         from xhx_agent.tools.exit_plan_mode import ExitPlanModeTool
+        from xhx_agent.tools.present_plan import PresentPlanTool
 
         self._exit_plan_tool = ExitPlanModeTool()
         self.registry.register(self._exit_plan_tool)
+
+        # 进入 plan 模式是安全操作（仅收紧为只读）——模型可自主调用，无需审批。
+        self._enter_plan_tool = EnterPlanModeTool(
+            on_enter=lambda: self.set_plan_mode(True),
+            is_plan_mode=lambda: self.agent is not None and self.agent.plan_mode,
+        )
+        self.registry.register(self._enter_plan_tool)
+
+        # 找到 default factory 已注册的 PresentPlanTool 并注入回调
+        self._present_plan_tool = None
+        for tool in self.registry.list_tools():
+            if isinstance(tool, PresentPlanTool):
+                self._present_plan_tool = tool
+                break
 
         self.agent = Agent(
             client=self.client,
@@ -818,15 +861,25 @@ class XHXApp(App):
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
 
-        self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
-        self._exit_plan_tool._plan_exists = lambda: self.agent._get_plan_path().exists()
+        # 注入回调：两个工具共享同一个 _is_plan_mode / _plan_exists
+        def _is_plan() -> bool:
+            return self.agent is not None and self.agent.plan_mode
+
+        def _exists() -> bool:
+            return self.agent is not None and self.agent._get_plan_path().exists()
+
+        self._exit_plan_tool._is_plan_mode = _is_plan
+        self._exit_plan_tool._plan_exists = _exists
+        if self._present_plan_tool is not None:
+            self._present_plan_tool._is_plan_mode = _is_plan
+            self._present_plan_tool._plan_exists = _exists
 
         # Layer 2: 在后台异步拉取模型的 context window，不阻塞启动流程。
         # agent 已经有一个同步解析的窗口值（来自配置 / 映射表 / 默认值）；
         # 如果异步拉取成功，就原地升级为更准确的值。
         self.run_worker(self._resolve_context_window(provider), exclusive=False)
 
-        self.skill_loader = SkillLoader(work_dir)
+        self.skill_loader = SkillLoader(Path(work_dir))
         self.skill_loader.load_all()
 
         load_skill_tool.set_loader(self.skill_loader)
@@ -1052,10 +1105,11 @@ class XHXApp(App):
             },
         )
 
-    def _set_session(self, session: Session) -> None:
+    def _set_session(self, session: Session | None) -> None:
+        # /new 与 /session new 会传 None 以清空会话——不能再去取 None.session_id。
         self.session = session
         if self.agent:
-            self.agent.session_id = session.session_id
+            self.agent.session_id = session.session_id if session is not None else ""
 
     def _persist_compact_boundary(self, notification: CompactNotification) -> None:
         """Layer-2 compact 后写入 compact_boundary 记录。
@@ -1109,6 +1163,10 @@ class XHXApp(App):
             self._show_system_message(cmd.arg_prompt)
             return
 
+        if cmd.handler is None:
+            self._show_system_message(f"命令 /{name} 暂未实现")
+            return
+
         ctx = self._build_command_context(args)
         try:
             await cmd.handler(ctx)
@@ -1138,7 +1196,7 @@ class XHXApp(App):
         await self._dispatch_command(text)
 
     def on_chat_input_tab_complete(self, event: ChatInput.TabComplete) -> None:
-        matches = complete(self.command_registry, event.text)
+        matches = complete(event.text, self.command_registry)
         if not matches:
             return
         popup = self.query_one(CompletionPopup)
@@ -1147,40 +1205,25 @@ class XHXApp(App):
             input_widget.clear()
             input_widget.insert(matches[0][1] + " ")
         else:
-            popup.show_pairs(matches)
+            popup.show_items([display for display, _value in matches])
 
     def on_chat_input_slash_menu_update(self, event: ChatInput.SlashMenuUpdate) -> None:
         popup = self.query_one(CompletionPopup)
         if event.prefix is None:
             popup.hide()
             return
-        matches = complete(self.command_registry, event.prefix)
+        matches = complete(event.prefix, self.command_registry)
         if not matches:
             popup.hide()
             return
-        popup.show_pairs(matches)
+        popup.show_items([display for display, _value in matches])
 
     def on_chat_input_at_file_request(self, event: ChatInput.AtFileRequest) -> None:
         work_dir = self.agent.work_dir if self.agent else os.getcwd()
         matches = scan_files_for_at(event.prefix, work_dir)
         if matches:
             popup = self.query_one(CompletionPopup)
-            popup.show([f"@{m}" for m in matches])
-
-    def on_completion_popup_selected(self, event: CompletionPopup.Selected) -> None:
-        input_widget = self.query_one("#chat-input", ChatInput)
-        selected = event.value
-        text = input_widget.text
-        if selected.startswith("@"):
-            at_idx = text.rfind("@")
-            if at_idx >= 0:
-                input_widget.clear()
-                input_widget.insert(text[:at_idx] + selected + " ")
-                input_widget.focus()
-                return
-        input_widget.clear()
-        input_widget.insert(selected + " ")
-        input_widget.focus()
+            popup.show_items([f"@{m}" for m in matches])
 
     def action_cycle_mode(self) -> None:
         if self.agent is None:
@@ -1212,10 +1255,12 @@ class XHXApp(App):
                     if isinstance(child, ToolCallBlock) and child.tool_name in COLLAPSIBLE_TOOLS:
                         child.display = summary._expanded
 
-        for block in self.query(SubAgentBlock):
-            if block._done:
-                block._collapsed = not block._collapsed
-                block._render_done()
+        for sa_block in self.query(SubAgentBlock):
+            if not isinstance(sa_block, SubAgentBlock):
+                continue
+            if sa_block._done:
+                sa_block._collapsed = not sa_block._collapsed
+                sa_block._render_done()
 
     def action_cancel(self) -> None:
         popup = self.query_one(CompletionPopup)
@@ -1224,59 +1269,22 @@ class XHXApp(App):
             self.query_one("#chat-input", ChatInput).focus()
             return
         if self._agent_task and not self._agent_task.done():
-            if self._subagent_task and not self._subagent_task.done():
-                task_id = (
-                    self.task_manager.adopt_running(self._subagent_task, "background task")
-                    if hasattr(self.task_manager, "adopt_running")
-                    else None
-                )
-                if task_id:
-                    self._show_system_message(f"Task moved to background (id: {task_id})")
-                    return
             self._agent_task.cancel()
 
     async def _prefetch_relevant_memories(self, query: str) -> str:
-        """Run the recall selector as a side-query with an 8s timeout.
-
-        Creates a fresh LLM client so the selector's system prompt is
-        independent of the main conversation's system prompt. Returns the
-        rendered system-reminder body, or "" on any failure / timeout.
-        """
-        if self.memory_manager is None or self._selected_provider is None:
+        """同步召回相关记忆，用线程防阻塞事件循环。失败返回 ""。"""
+        if self.agent is None:
             return ""
 
-        provider = self._selected_provider
-        user_dir = self.memory_manager.user_mem_dir
-        project_dir = self.memory_manager.project_mem_dir
-
-        async def selector(system_prompt: str, user_message: str) -> str:
-            from xhx_agent.tools.base import StreamEnd, TextDelta
-
-            side_client = create_client(provider)
-            mini_conv = ConversationManager()
-            mini_conv.history = [Message(role="user", content=user_message)]
-            collected = ""
-            async for event in side_client.stream(mini_conv, system=system_prompt):
-                if isinstance(event, TextDelta):
-                    collected += event.text
-                elif isinstance(event, StreamEnd):
-                    pass
-            return collected
-
         try:
-            results = await asyncio.wait_for(
-                find_relevant_memories(
-                    query=query,
-                    user_mem_dir=user_dir,
-                    project_mem_dir=project_dir,
-                    recent_tools=None,
-                    already_surfaced=None,
-                    selector=selector,
-                ),
-                timeout=8.0,
+            results = await asyncio.to_thread(
+                find_relevant_memories,
+                self.agent.work_dir,
+                query,
+                5,
             )
             return render_reminder(results)
-        except (TimeoutError, Exception):
+        except TimeoutError:
             return ""
 
     async def _send_message(self, text: str, is_notification: bool = False) -> None:
@@ -1331,11 +1339,12 @@ class XHXApp(App):
         # 准备 AI 回复区域
         ai_row = Vertical(classes="ai-row")
         await chat.mount(ai_row)
-        streaming_label = Static("", classes="message ai-message")
-        await ai_row.mount(streaming_label)
+        _initial_label = Static("", classes="message ai-message")
+        await ai_row.mount(_initial_label)
+        streaming_label: Static | None = _initial_label
 
         accumulated_text = ""
-        tool_blocks: dict[str, ToolCallBlock] = {}
+        tool_blocks: dict[str, ToolCallBlock | SubAgentBlock] = {}
 
         # 在聊天区底部启动持续旋转的加载动画
         self._thinking_start = _time.monotonic()
@@ -1364,8 +1373,9 @@ class XHXApp(App):
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
                 elif isinstance(event, StreamText):
-                    if streaming_label is not None and not accumulated_text:
-                        await streaming_label.remove()
+                    if streaming_label is None or not accumulated_text:
+                        if streaming_label is not None:
+                            await streaming_label.remove()
                         streaming_label = Static("", classes="message ai-message")
                         await ai_row.mount(streaming_label)
                     accumulated_text += event.text
@@ -1373,7 +1383,7 @@ class XHXApp(App):
 
                     t = RichText()
                     t.append("● ", style="bold color(99)")
-                    t.append(accumulated_text)
+                    t.append(strip_emoji(accumulated_text))
                     streaming_label.update(t)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
@@ -1388,7 +1398,7 @@ class XHXApp(App):
 
                         prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
                         await ai_row.mount(prefix)
-                        md = Markdown(accumulated_text, classes="message ai-message")
+                        md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
                         await ai_row.mount(md)
                         streaming_label = None
                         accumulated_text = ""
@@ -1396,6 +1406,7 @@ class XHXApp(App):
                         await streaming_label.remove()
                         streaming_label = None
 
+                    block: ToolCallBlock | SubAgentBlock
                     if _is_subagent_tool(event.tool_name):
                         agent_type = event.arguments.get("subagent_type", "")
                         desc = event.arguments.get("description", "")
@@ -1416,16 +1427,16 @@ class XHXApp(App):
                 elif isinstance(event, ToolResultEvent):
                     self._xhx_tool_count += 1
                     self.call_later(self._update_xhx_status)
-                    block = tool_blocks.get(event.tool_id)
-                    if block:
-                        block.set_result(event.output, event.is_error, event.elapsed)
+                    result_block = tool_blocks.get(event.tool_id)
+                    if result_block:
+                        result_block.set_result(event.output, event.is_error, event.elapsed)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
-                    ask_tool = self.registry.get("AskUserQuestion")
-                    if ask_tool and isinstance(ask_tool, AskUserTool) and ask_tool._pending_event:
-                        await self._handle_askuser(ask_tool._pending_event)
-
                 elif isinstance(event, TurnComplete):
+                    # 每轮都按当前对话本地估算 context 占用——不依赖 API 是否回传 usage
+                    # （deepseek 流末常不带 usage chunk，纯靠 API token 会一直显示 0）。
+                    self._recompute_context_used()
+                    self.call_later(self._update_xhx_status)
                     if self.session:
                         for msg in self.conversation.history[history_cursor:]:
                             self.session.append(msg)
@@ -1460,7 +1471,8 @@ class XHXApp(App):
                     self._xhx_tokens_prompt = event.input_tokens
                     self._xhx_tokens_completion = event.output_tokens
                     self._xhx_tokens_total += event.input_tokens + event.output_tokens
-                    self._xhx_context_used = self._xhx_tokens_total
+                    # context 占用由 _recompute_context_used()（current_tokens）统一算，
+                    # 不用累计总量覆盖——后者会无限增长、与"窗口占用"语义不符。
                     if self._selected_provider:
                         self._xhx_last_model = self._selected_provider.model
                         self._xhx_context_budget = self._selected_provider.context_window
@@ -1494,13 +1506,23 @@ class XHXApp(App):
                         history_cursor = len(self.conversation.history)
                         self.session.meta.total_tokens = self.agent.total_input_tokens + self.agent.total_output_tokens
                         asyncio.ensure_future(self._update_session_summary())
-                    if self.agent.plan_mode:
-                        asyncio.ensure_future(self._show_plan_approval())
+                    # 模型调用 ExitPlanMode / present_plan 即弹审批——present_plan 任何模式可用，
+                    # 故不再要求"必须在 plan 模式"。实际弹出推迟到 _send_message 收尾 input.focus()
+                    # 之后，避免焦点被抢。
+                    exit_requested = getattr(self._exit_plan_tool, "_exit_requested", False)
+                    pp_requested = getattr(self, "_present_plan_tool", None) is not None and getattr(
+                        self._present_plan_tool, "_exit_requested", False
+                    )
+                    if exit_requested or pp_requested:
+                        self._plan_pending = True
+                        self._exit_plan_tool._exit_requested = False
+                        if self._present_plan_tool is not None:
+                            self._present_plan_tool._exit_requested = False
 
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
                 await streaming_label.remove()
-                md = Markdown(accumulated_text, classes="message ai-message")
+                md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
                 await ai_row.mount(md)
             elif streaming_label is not None:
                 await streaming_label.remove()
@@ -1542,6 +1564,11 @@ class XHXApp(App):
 
             await self._process_task_notifications()
 
+        # 收尾之后再弹 plan 审批：此时 input.focus() 已执行，审批控件能稳拿到焦点。
+        if getattr(self, "_plan_pending", False):
+            self._plan_pending = False
+            await self._show_plan_approval()
+
     async def _process_task_notifications(self) -> None:
         completed = self.task_manager.poll_completed()
         if not completed or self.agent is None:
@@ -1574,13 +1601,31 @@ class XHXApp(App):
         if not notes:
             return
         for note in notes:
-            self.conversation.add_system_reminder(note)
+            self.conversation.add_system_reminder(f"[{note.from_agent}] {note.summary or note.content}")
         self._agent_task = asyncio.create_task(self._send_message("", is_notification=True))
 
     async def _show_plan_approval(self) -> None:
         from xhx_agent.plan_dialog import InlinePlanWidget
 
+        # 优先用 present_plan 随参数带来的方案正文；否则回退读 plan 文件（ExitPlanMode 路径）。
+        plan_text = ""
+        pp = self._present_plan_tool
+        if pp is not None and pp._plan_text:
+            plan_text = pp._plan_text.strip()
+        if not plan_text and self.agent is not None:
+            plan_path = self.agent._get_plan_path()
+            if plan_path.exists():
+                try:
+                    plan_text = plan_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    pass
+
         chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：旧 plan 弹窗 remove() 延迟生效，先 await 移除避免重复 ID 崩溃。
+        await chat.query("#plan-inline").remove()
+        # 方案正文用 Markdown 控件渲染（标题/表格/代码块/列表都解析），而非 Static 原文。
+        if plan_text:
+            await chat.mount(Markdown(strip_emoji(plan_text), classes="message ai-message"))
         widget = InlinePlanWidget()
         await chat.mount(widget)
         self.call_after_refresh(chat.scroll_end, animate=False)
@@ -1607,13 +1652,18 @@ class XHXApp(App):
 
         choice = event.choice
         feedback = event.feedback
-        plan_path = self.agent._get_plan_path()
+        # 优先用 present_plan 带来的方案正文；否则回退 plan 文件（ExitPlanMode 路径）。
         plan_content = ""
-        if plan_path.exists():
-            try:
-                plan_content = plan_path.read_text(encoding="utf-8")
-            except Exception:
-                pass
+        pp = self._present_plan_tool
+        if pp is not None and pp._plan_text:
+            plan_content = pp._plan_text
+        if not plan_content:
+            plan_path = self.agent._get_plan_path()
+            if plan_path.exists():
+                try:
+                    plan_content = plan_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
 
         pre = getattr(self, "_pre_plan_mode", PermissionMode.DEFAULT)
         if choice == PlanChoice.YOLO:
@@ -1632,9 +1682,29 @@ class XHXApp(App):
             else:
                 self._show_system_message("Type your feedback and send.")
 
+    async def _poll_askuser(self) -> None:
+        """轮询 AskUser 工具的待处理事件并弹出询问框。
+
+        工具 execute() 内阻塞 await future，流式主循环此刻被挂起，故无法在事件分支里
+        检测；此处由 set_interval 独立驱动。仅在未在显示、且 future 未完成时弹框。
+        """
+        if self._pending_askuser_event is not None:
+            return
+        registry = getattr(self, "registry", None)
+        if registry is None:
+            return
+        ask_tool = registry.get("AskUserQuestion")
+        if not isinstance(ask_tool, AskUserTool):
+            return
+        ev = ask_tool._pending_event
+        if ev is not None and not ev.future.done():
+            await self._handle_askuser(ev)
+
     async def _handle_askuser(self, event: AskUserEvent) -> None:
         from xhx_agent.askuser_dialog import InlineAskUserWidget
 
+        if self._pending_askuser_event is not None or self.query("#askuser-inline"):
+            return
         chat = self.query_one("#chat-area", VerticalScroll)
         widget = InlineAskUserWidget(event.questions)
         self._pending_askuser_event = event
@@ -1752,6 +1822,9 @@ class XHXApp(App):
         from xhx_agent.permission_dialog import InlinePermissionWidget
 
         chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：上一个权限弹窗的 remove() 是延迟的（Textual 下个刷新才真正移除）；
+        # 连续两个工具都要审批时，旧组件可能还在 DOM 里 → 重复 ID 崩溃。先 await 移除。
+        await chat.query("#perm-inline").remove()
         widget = InlinePermissionWidget(request.tool_name, request.description)
         self._pending_perm_request = request
         await chat.mount(widget)
@@ -1781,6 +1854,69 @@ class XHXApp(App):
             self.query_one("#chat-input").focus()
         except Exception:
             pass
+
+    # -----------------------------------------------------------------
+    # 会话恢复（上下键可选列表）
+    # -----------------------------------------------------------------
+
+    async def show_resume_picker(self) -> None:
+        """弹出可上下键选择的历史会话列表（供 /session 调用）。"""
+        from xhx_agent.tui.session_dialog import InlineResumeWidget
+
+        if self.session_manager is None:
+            self._show_system_message("会话管理器未初始化")
+            return
+        sessions = self.session_manager.list_sessions()
+        # 排除当前这个（通常是空的）新会话
+        if self.session is not None:
+            sessions = [s for s in sessions if s.session_id != self.session.session_id]
+        if not sessions:
+            self._show_system_message("暂无可恢复的历史会话")
+            return
+
+        chat = self.query_one("#chat-area", VerticalScroll)
+        # 防御：旧 resume 弹窗 remove() 延迟生效，先 await 移除避免重复 ID 崩溃。
+        await chat.query("#resume-inline").remove()
+        project = Path(self.agent.work_dir).name if self.agent is not None else ""
+        widget = InlineResumeWidget(sessions, project_name=project)
+        await chat.mount(widget)
+        self.call_after_refresh(chat.scroll_end, animate=False)
+        try:
+            self.query_one("#chat-input").disabled = True
+        except Exception:
+            pass
+
+    async def on_inline_resume_widget_selected(self, event: Any) -> None:
+        from xhx_agent.tui.session_dialog import InlineResumeWidget
+
+        try:
+            self.query_one("#resume-inline", InlineResumeWidget).remove()
+        except Exception:
+            pass
+        try:
+            self.query_one("#chat-input").disabled = False
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
+        if event.session_id is None:
+            return
+        await self._load_session(event.session_id)
+
+    async def _load_session(self, session_id: str) -> None:
+        """把选中的历史会话读回当前对话并续写。"""
+        if self.session_manager is None or self.agent is None:
+            return
+        messages = self.session_manager.load_messages(session_id)
+        conv = ConversationManager()
+        conv.history = list(messages)
+        self._set_conversation(conv)
+        # open() 续写同一个 jsonl；_session_saved_count 设为已加载条数，避免重复落盘。
+        self._set_session(self.session_manager.open(session_id))
+        self._session_saved_count = len(messages)
+        await self._render_restored_messages(messages)
+        self._recompute_context_used()
+        self.call_later(self._update_xhx_status)
+        self._show_system_message(f"已恢复会话（{len(messages)} 条消息）")
 
     # -----------------------------------------------------------------
     # 恢复 session 的消息渲染
@@ -1832,24 +1968,27 @@ class XHXApp(App):
         self._mcp_connecting = True
         self._update_mode_label()
         manager = MCPManager()
-        manager.load_configs(self._mcp_server_configs)
+        # 在后台线程中同步执行连接（connect_all 内部用 anyio portal）
+        await asyncio.to_thread(
+            manager.connect_all,
+            self._mcp_server_configs,
+            None,  # on_error
+        )
         tools_before = len(self.registry.list_tools())
-        errors = await manager.register_all_tools(self.registry)
+        manager.register_tools_to_registry(self.registry)
         self.mcp_manager = manager
         self._mcp_connecting = False
         self._update_mode_label()
-        for err in errors:
-            self._show_system_message(f"MCP warning: {err}")
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
-        server_count = len(manager._clients)
+        server_count = len(getattr(manager, "_sessions", {}))
         if server_count > 0:
             self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             parts = []
             for cfg in self._mcp_server_configs:
                 srv_name = cfg.name if hasattr(cfg, "name") else str(cfg)
-                tool_names = [t.name for t in self.registry.list_tools() if t.name.startswith(f"mcp__{srv_name}__")]
+                tool_names = [t.name for t in self.registry.list_tools() if t.name.startswith(f"mcp_{srv_name}_")]
                 section = f"## {srv_name}\n"
                 if tool_names:
                     section += "Available tools: " + ", ".join(tool_names)
@@ -1869,7 +2008,7 @@ class XHXApp(App):
                 pass
             self._mcp_init_task = None
         if self.mcp_manager is not None:
-            await self.mcp_manager.shutdown()
+            self.mcp_manager.close()
             self.mcp_manager = None
 
     # -----------------------------------------------------------------
@@ -1893,6 +2032,14 @@ class XHXApp(App):
         if getattr(self, "_exit_requested", False):
             self.exit()
             return
+        await self.graceful_exit()
+
+    async def graceful_exit(self) -> None:
+        """优雅退出：清理 MCP/hook/team、落盘会话，然后真正退出应用。
+
+        ctrl+c 与 /exit 命令共用此路径——/exit 之前只设了 _exit_requested 标志却从不
+        调 exit()，导致界面"卡住"（且把标志置真还会让随后的 ctrl+c 跳过清理）。
+        """
         self._exit_requested = True
 
         async def _cleanup() -> None:
@@ -1949,7 +2096,11 @@ class XHXApp(App):
         self.call_after_refresh(chat.scroll_end, animate=False)
 
     def _show_system_message(self, text: str) -> None:
-        chat = self.query_one("#chat-area", VerticalScroll)
+        # 关闭/取消阶段 #chat-area 可能已销毁，查询不到时安全跳过，避免二次崩溃。
+        try:
+            chat = self.query_one("#chat-area", VerticalScroll)
+        except NoMatches:
+            return
         msg = Static(f"  {text}", classes="message system-message")
         chat.mount(msg)
         self.call_after_refresh(chat.scroll_end, animate=False)
@@ -1984,12 +2135,35 @@ class XHXApp(App):
     def _update_token_label(self, input_tokens: int, output_tokens: int) -> None:
         pass  # token 标签已从 UI 中移除
 
+    def _recompute_context_used(self) -> None:
+        """按当前对话估算 context 窗口占用（token）。
+
+        用 ConversationManager.current_tokens()——它是规范算法：有真实用量锚点时
+        baseline + 仅对锚点后新增消息做估算；冷启动则对整段历史估算。这能正确算进
+        tool_calls / tool_results，且**不依赖 provider 是否在流末回传 usage**
+        （deepseek 常不回传，纯靠 API 会一直显示 0）。
+
+        注意：这是"当前窗口占用"，与累计消耗的 _xhx_tokens_total（逐轮相加、会无限增长）
+        语义不同，不可混用。
+        """
+        conv = getattr(self, "conversation", None)
+        if conv is None:
+            return
+        try:
+            self._xhx_context_used = conv.current_tokens()
+        except Exception:
+            return
+
     def _update_xhx_status(self) -> None:
         """更新 XHX 独有状态栏：tokens / context / compaction。"""
         try:
             status = self.query_one("#xhx-status", Static)
         except Exception:
             return
+
+        # 每次渲染都按当前对话刷新 context 占用——不依赖某个特定事件是否触发，
+        # 也不依赖 provider 是否回传 usage。
+        self._recompute_context_used()
 
         parts = []
         if self._xhx_tokens_total > 0:

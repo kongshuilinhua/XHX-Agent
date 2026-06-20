@@ -19,12 +19,73 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from xhx_agent.runtime.mcp_config import MCPServerConfig
-    from xhx_agent.tools.registry import ToolRegistry
 
 OnError = Callable[[str, Exception], None]
+
+
+# 宽松参数模型：MCP 工具的参数 schema 是动态的，用 dict 接收
+class _MCPToolParams(BaseModel):
+    """接受任意 key-value 的宽松参数模型。"""
+
+    model_config = {"extra": "allow"}
+
+
+class _MCPTool:
+    """MCP 工具的动态 Tool 包装器。
+
+    每个 MCP server 的工具都动态生成一个继承 Tool 的实例，通过 registry.register()
+    注册进 Tool 式 registry。不是 pydantic model，而是真正的 Tool 子类。
+    """
+
+
+def _make_mcp_tool(
+    full_name: str,
+    description: str,
+    server_name: str,
+    tool_name: str,
+    mcp_manager: Any,
+    is_read_only: bool,
+) -> Any:
+    """为单个 MCP 工具动态创建一个 Tool 子类实例。"""
+    from xhx_agent.tools.base import Tool, ToolCategory, ToolResult
+
+    # 闭包变量避免 Python 类体 scoping 陷阱（description = description 在类体里报 NameError）
+    _desc = description
+    _cat: ToolCategory = "read" if is_read_only else "command"
+
+    class _DynamicMCPTool(Tool):
+        name = full_name
+        description = _desc
+        params_model = _MCPToolParams
+        category = _cat
+
+        @property
+        def is_read_only(self) -> bool:
+            return is_read_only
+
+        async def execute(self, params: BaseModel) -> ToolResult:
+            args: dict[str, Any] = {}
+            if isinstance(params, BaseModel):
+                model_dump = getattr(params, "model_dump", None)
+                args = dict(model_dump()) if model_dump else dict(getattr(params, "__dict__", {}))
+            try:
+                result = mcp_manager.call_tool(server_name, tool_name, args)
+                texts = []
+                for item in getattr(result, "content", []):
+                    text = getattr(item, "text", None)
+                    if text:
+                        texts.append(text)
+                summary = "\n".join(texts) or f"Tool {full_name} completed."
+                is_error = bool(getattr(result, "isError", False))
+                return ToolResult(output=summary, is_error=is_error)
+            except Exception as e:
+                return ToolResult(output=f"Error executing MCP tool {full_name}: {e}", is_error=True)
+
+    return _DynamicMCPTool()
 
 
 class MCPManager:
@@ -39,7 +100,7 @@ class MCPManager:
         self._stack: ExitStack | None = None
         self._portal: Any = None
         self._sessions: dict[str, Any] = {}
-        self._registry: ToolRegistry | None = None
+        self._registry: Any = None
         self._registered_names: list[str] = []
 
     # ---------- 生命周期 ----------
@@ -61,7 +122,8 @@ class MCPManager:
         # 先注销注册过的工具：registry 是跨 run 共享的，避免残留指向已关会话的定义。
         if self._registry is not None:
             for name in self._registered_names:
-                self._registry.unregister(name)
+                if hasattr(self._registry, "unregister"):
+                    self._registry.unregister(name)
         self._registered_names = []
         self._registry = None
         self._sessions = {}
@@ -123,58 +185,27 @@ class MCPManager:
         return self._portal.call(_acall)
 
     # ---------- 工具注册 ----------
-    def register_tools_to_registry(self, registry: ToolRegistry) -> None:
-        from xhx_agent.tools.registry import ToolContext, ToolDefinition, ToolExecutionResult
+    def register_tools_to_registry(self, registry: Any) -> None:
+        """将连接到的所有 MCP 服务器工具注册进 Tool 式 registry。
 
+        为每个 MCP 工具动态构造 Tool 子类实例，用 ``registry.register(tool)``
+        注册。MCP 标注的 readOnlyHint 映射到 Tool 实例属性。
+        """
         self._registry = registry
         for server_name in self._sessions:
             for tool in self.list_tools(server_name):
                 full_name = f"mcp_{server_name}_{tool.name}"
                 description = tool.description or f"MCP tool {full_name}"
-                parameters = tool.inputSchema or {"type": "object", "properties": {}}
-                # 只读提示（MCP annotations.readOnlyHint）的工具标 read_only → 内核放行不弹框；
-                # 其余（破坏性或无提示=陌生）保持需确认。
                 annotations = getattr(tool, "annotations", None)
                 read_only = bool(getattr(annotations, "readOnlyHint", False)) if annotations else False
 
-                def make_runner(srv: str, original: str, fname: str) -> Any:
-                    def runner(context: ToolContext, arguments: dict[str, object]) -> ToolExecutionResult:
-                        try:
-                            result = self.call_tool(srv, original, dict(arguments))
-                            texts = [t for t in (getattr(item, "text", None) for item in result.content) if t]
-                            summary = "\n".join(texts) or f"Tool {fname} completed."
-                            is_error = bool(getattr(result, "isError", False))
-                            return ToolExecutionResult(
-                                tool=fname,
-                                status="failed" if is_error else "success",
-                                summary=summary,
-                                trace_payload={
-                                    "tool": fname,
-                                    "arguments": arguments,
-                                    "result": result.model_dump(mode="json"),
-                                },
-                                evidence_kind="decision",
-                                evidence_source=fname,
-                                evidence_summary=summary,
-                            )
-                        except Exception as e:
-                            return ToolExecutionResult(
-                                tool=fname,
-                                status="failed",
-                                summary=f"Error executing MCP tool {fname}: {e}",
-                                trace_payload={"tool": fname, "arguments": arguments, "error": str(e)},
-                                error=str(e),
-                            )
-
-                    return runner
-
-                registry.register_definition(
-                    ToolDefinition(
-                        name=full_name,
-                        description=description,
-                        parameters=parameters,
-                        read_only=read_only,
-                        runner=make_runner(server_name, tool.name, full_name),
-                    )
+                tool_instance = _make_mcp_tool(
+                    full_name=full_name,
+                    description=description,
+                    server_name=server_name,
+                    tool_name=tool.name,
+                    mcp_manager=self,
+                    is_read_only=read_only,
                 )
+                registry.register(tool_instance)
                 self._registered_names.append(full_name)

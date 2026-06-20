@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xhx_agent.worktree.changes import CleanupResult
 
 log = logging.getLogger(__name__)
 
@@ -128,10 +132,3 @@ class WorktreeHandle:
         self.branch = branch
         self.name = name
         self.head_commit = head_commit
-
-
-class CleanupResult:
-    def __init__(self, kept: bool, path: str = "", branch: str = "") -> None:
-        self.kept = kept
-        self.path = path
-        self.branch = branch

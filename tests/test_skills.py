@@ -14,7 +14,7 @@ from xhx_agent.runtime.mcp_config import MCPServerConfig
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.skills.metadata import Skill, SkillMetadata
-from xhx_agent.tools.registry import ToolContext, ToolRegistry
+from xhx_agent.tools import ToolRegistry
 
 FAKE_MCP_SERVER = str(Path(__file__).parent / "mcp_fake_server.py")
 
@@ -154,6 +154,8 @@ def test_mcp_manager_stdio_connect_list_call() -> None:
 
 
 def test_mcp_manager_register_and_close_unregisters() -> None:
+    import asyncio
+
     cfg = MCPServerConfig(name="demo", command=sys.executable, args=[FAKE_MCP_SERVER])
     mgr = MCPManager()
     registry = ToolRegistry()
@@ -162,23 +164,28 @@ def test_mcp_manager_register_and_close_unregisters() -> None:
         mgr.register_tools_to_registry(registry)
 
         # 命名空间 + schema：模型能看见
-        assert "mcp_demo_echo" in registry.names
-        definition = registry.definition("mcp_demo_echo")
-        assert definition is not None and definition.name == "mcp_demo_echo"
-        assert any(s["function"]["name"] == "mcp_demo_echo" for s in registry.tool_schemas())
+        tool_names = {t.name for t in registry.list_tools()}
+        assert "mcp_demo_echo" in tool_names
+        tool = registry.get("mcp_demo_echo")
+        assert tool is not None and tool.name == "mcp_demo_echo"
+        assert any(s["function"]["name"] == "mcp_demo_echo" for s in registry.get_all_schemas())
 
-        # 经 registry 执行 → 映射回原始工具名调用
-        from xhx_agent.models.types import ToolStep
+        # 经 Tool 实例直接执行
+        from pydantic import BaseModel as PydanticBaseModel
 
-        context = ToolContext(workspace=Path("."))
-        result = registry.execute(context, ToolStep(tool="mcp_demo_echo", arguments={"text": "yo"}))
-        assert result.status == "success"
-        assert "echo: yo" in result.summary
+        class _TestParams(PydanticBaseModel):
+            text: str = "yo"
+
+        result = asyncio.run(tool.execute(_TestParams(text="yo")))
+        assert result is not None
+        assert not result.is_error
+        assert "echo: yo" in result.output
     finally:
         mgr.close()
 
     # close 后注销：共享 registry 不残留陈旧定义
-    assert "mcp_demo_echo" not in registry.names
+    tool_names_after = {t.name for t in registry.list_tools()}
+    assert "mcp_demo_echo" not in tool_names_after
 
 
 def test_mcp_manager_connect_failure_isolated() -> None:

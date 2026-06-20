@@ -19,7 +19,7 @@ class Glob(Tool):
     category = "read"
     is_concurrency_safe = True
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         base = Path(params.path)
         if not base.exists():
             return ToolResult(output=f"Error: path not found: {params.path}", is_error=True)

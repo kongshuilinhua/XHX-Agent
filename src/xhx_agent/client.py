@@ -474,6 +474,8 @@ class OpenAICompatClient(LLMClient):
         # 用于累积 streaming tool call 的状态。Chat Completions 流按
         # tool_calls 列表中的位置索引下发 delta，我们按索引跟踪每个进行中的调用。
         active_calls: dict[int, dict[str, str]] = {}  # 索引 -> {id, name, args}
+        stop_reason = "end_turn"  # 由 finish_reason 更新
+        emitted_end = False  # 是否已 yield StreamEnd（避免重复/遗漏）
 
         try:
             response = await self._client.chat.completions.create(**kwargs)
@@ -489,12 +491,13 @@ class OpenAICompatClient(LLMClient):
                         cache_read = getattr(details, "cached_tokens", 0) or 0
                         prompt_tokens = chunk.usage.prompt_tokens or 0
                         yield StreamEnd(
-                            stop_reason="end_turn",
+                            stop_reason=stop_reason,
                             input_tokens=max(prompt_tokens - cache_read, 0),
                             output_tokens=chunk.usage.completion_tokens or 0,
                             cache_read=cache_read,
                             cache_creation=0,
                         )
+                        emitted_end = True
                     continue
 
                 choice = chunk.choices[0]
@@ -526,6 +529,7 @@ class OpenAICompatClient(LLMClient):
 
                 # --- 结束原因 ---
                 if choice.finish_reason in ("tool_calls", "stop"):  # noqa: SIM102 保持嵌套以分别处理两种 finish_reason
+                    stop_reason = "tool_calls" if choice.finish_reason == "tool_calls" else "end_turn"
                     if choice.finish_reason == "tool_calls":
                         for _idx, call in sorted(active_calls.items()):
                             try:
@@ -538,6 +542,11 @@ class OpenAICompatClient(LLMClient):
                                 arguments=args,
                             )
                         active_calls.clear()
+
+            # 兜底：provider 未在流末回传 usage chunk（如 deepseek）时，这里补一个 StreamEnd，
+            # 确保 stop_reason 正确、agent 循环正常收尾（token 计数交由本地估算）。
+            if not emitted_end:
+                yield StreamEnd(stop_reason=stop_reason, input_tokens=0, output_tokens=0)
 
         except _openai.AuthenticationError as e:
             raise AuthenticationError(f"Invalid API key: {e}") from e

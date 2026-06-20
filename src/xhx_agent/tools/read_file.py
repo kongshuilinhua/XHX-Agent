@@ -32,7 +32,7 @@ class ReadFile(Tool):
         self._cache = file_cache
         self._state_cache = file_state_cache
 
-    async def execute(self, params: Params) -> ToolResult:
+    async def execute(self, params: Params) -> ToolResult:  # type: ignore[override]
         path = Path(params.file_path)
         if not path.exists():
             return ToolResult(output=f"Error: file not found: {params.file_path}", is_error=True)

@@ -92,7 +92,7 @@ def compile_context_pack(
     budget_tokens: int = DEFAULT_CONTEXT_BUDGET_TOKENS,
     top_k_evidence: int = DEFAULT_TOP_K_EVIDENCE,
     history_summarizer: Callable[[list[str]], str] | None = None,
-    skill_loader: object | None = None,
+    skill_loader: Any = None,
 ) -> ContextPack:
     """编译一份预算内的上下文包：收集带优先级的候选 → 按优先级塞进 budget_tokens → 超出则丢弃。"""
     candidates: list[ContextItem] = []

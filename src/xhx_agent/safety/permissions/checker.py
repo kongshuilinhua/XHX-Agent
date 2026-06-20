@@ -20,11 +20,15 @@ from xhx_agent.safety.permissions.rules import RuleEngine, extract_content
 from xhx_agent.safety.permissions.sandbox import PathSandbox
 
 # Plan 模式下允许自动放行的工具白名单
-# 注意：ExitPlanMode 已由 present_plan 替代，此处仅保留 XHX-Agent 实际存在的工具
+# present_plan 是主入口（两段式闸门），ExitPlanMode 是兼容别名
 _PLAN_MODE_ALLOWED_TOOLS = frozenset(
     {
         "dispatch",
+        "Agent",  # 派只读调研子 agent（spawn 出的子 agent 被强制只读，故免审批）
+        "AskUserQuestion",
+        "ToolSearch",
         "present_plan",
+        "ExitPlanMode",
     }
 )
 

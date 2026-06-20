@@ -209,8 +209,12 @@ class RuleEngine:
     # ------------------------------------------------------------------
 
     def evaluate(self, tool_name: str, content: str) -> Effect | None:
-        """返回匹配到的最高优先级规则的 effect，无匹配返回 None。"""
-        for rules in self._load_tiers():
+        """返回匹配到的最高优先级规则的 effect，无匹配返回 None。
+
+        层间按优先级从高到低遍历（local → project → user），命中即返回，
+        使高优先级层覆盖低优先级层；层内仍 last-match-wins。
+        """
+        for rules in reversed(self._load_tiers()):
             # 层内 last-match-wins：倒序遍历
             for rule in reversed(rules):
                 if rule.matches(tool_name, content):

@@ -148,7 +148,7 @@ def find_relevant_memories(
 
     ws = P(workspace) if not isinstance(workspace, P) else workspace
     records = recall_memories(ws, task, limit=limit)
-    return [{"name": r.name, "description": r.description, "body": r.content} for r in records]
+    return [{"name": r.name, "description": r.description, "body": r.body} for r in records]
 
 
 def render_reminder(memories: list[dict[str, str]]) -> str:

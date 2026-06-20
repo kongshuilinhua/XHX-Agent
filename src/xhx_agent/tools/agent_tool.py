@@ -108,7 +108,7 @@ class AgentTool(Tool):
         from xhx_agent.agent import Agent as AgentClass
         from xhx_agent.agents.fork import ForkError, build_forked_messages
         from xhx_agent.agents.parser import AgentDef
-        from xhx_agent.agents.tool_filter import resolve_agent_tools
+        from xhx_agent.agents.tool_filter import build_filtered_registry
         from xhx_agent.conversation import ConversationManager
         from xhx_agent.permissions import (
             DangerousCommandDetector,
@@ -170,7 +170,7 @@ class AgentTool(Tool):
 
         # 过滤工具（coordinator 模式可能缩减了注册表，这里用完整注册表）
         _base_registry = getattr(self._parent_agent, "_full_registry", None) or self._parent_agent.registry
-        filtered_registry = resolve_agent_tools(_base_registry, definition, is_background)
+        filtered_registry = build_filtered_registry(_base_registry, definition, is_background)
 
         # 为子 agent 创建权限检查器
         pm_str = definition.permission_mode
@@ -179,6 +179,10 @@ class AgentTool(Tool):
             PERMISSION_MODE_MAP.get(pm_str, "DEFAULT"),
             PermissionMode.DEFAULT,
         )
+        # 父 agent 在 plan 模式时，强制子 agent 也只读：可广泛调研（Read/Grep/Glob 等），
+        # 但禁止写改——规划阶段不应落任何改动。
+        if getattr(self._parent_agent, "plan_mode", False):
+            pm_enum = PermissionMode.PLAN
         checker = PermissionChecker(
             detector=DangerousCommandDetector(),
             sandbox=PathSandbox(self._parent_agent.work_dir),
@@ -221,7 +225,7 @@ class AgentTool(Tool):
 
         if is_background:
             if is_fork:
-                sub_agent._fork_conversation = conversation
+                sub_agent._fork_conversation = conversation  # type: ignore[attr-defined]
             task_id = self._task_manager.launch(
                 agent=sub_agent,
                 task="" if is_fork else p.prompt,
@@ -274,7 +278,7 @@ class AgentTool(Tool):
             PermissionMode,
             RuleEngine,
         )
-        from xhx_agent.teams.models import BackendType, TeammateInfo
+        from xhx_agent.teams.models import TeammateInfo
         from xhx_agent.teams.registry import AgentNameRegistry
 
         team = self._team_manager.get_team(p.team_name)
@@ -336,8 +340,10 @@ class AgentTool(Tool):
         # 3. 选择 LLM
         client = self._select_llm(p, definition)
 
-        # 4. 检测后端类型
-        backend = self._team_manager.detect_backend()
+        # 4. 检测后端类型（仅 in-process）
+        from xhx_agent.teams.spawn import detect_backend
+
+        backend = detect_backend()
 
         # 5. 构建队友的工具集
         trace_node = self._trace_manager.create(
@@ -362,7 +368,7 @@ class AgentTool(Tool):
         teammate_registry = build_teammate_tools(
             parent_registry=full_registry,
             team_manager=self._team_manager,
-            team_name=p.team_name,
+            team_name=p.team_name or "",
             agent_id=agent_id,
             agent_name=teammate_name,
             backend_type=backend.value,
@@ -395,7 +401,7 @@ class AgentTool(Tool):
         sub_agent.parent_id = self._parent_agent.agent_id
         sub_agent.trace_id = self._parent_agent.trace_id or self._parent_agent.agent_id
         sub_agent.agent_id = agent_id
-        sub_agent.team_name = p.team_name
+        sub_agent.team_name = p.team_name or ""
         sub_agent._team_manager = self._team_manager
 
         # 7. 注册名称和成员信息
@@ -412,11 +418,7 @@ class AgentTool(Tool):
         )
         self._team_manager.register_member(p.team_name, member)
 
-        # 8. 按后端类型启动队友
-        if backend in (BackendType.TMUX, BackendType.ITERM2):
-            return self._spawn_pane_teammate(p, team, member, backend, wt, agent_id, teammate_name)
-
-        # 进程内模式：直接用 task_manager 执行并通知结果
+        # 8. 仅 in-process 模式：直接用 task_manager 执行
         task_id = self._task_manager.launch(
             agent=sub_agent,
             task="" if is_fork else p.prompt,
@@ -432,64 +434,6 @@ class AgentTool(Tool):
                 f"Worktree: {wt.path}\n"
                 f"Task ID: {task_id}\n"
                 f"The system will notify when it completes."
-            )
-        )
-
-    def _spawn_pane_teammate(
-        self,
-        p: Any,
-        team: Any,
-        member: Any,
-        backend: Any,
-        wt: Any,
-        agent_id: str,
-        teammate_name: str,
-    ) -> ToolResult:
-        from xhx_agent.teams.models import BackendType
-
-        mailbox = self._team_manager.get_mailbox(p.team_name)
-        mailbox_dir = str(mailbox._base_dir) if mailbox else ""
-
-        try:
-            if backend == BackendType.TMUX:
-                from xhx_agent.teams.spawn_tmux import spawn_tmux_teammate
-
-                pane_info = spawn_tmux_teammate(
-                    team_name=p.team_name,
-                    teammate_name=teammate_name,
-                    worktree_path=wt.path,
-                    prompt=p.prompt,
-                    agent_type=p.subagent_type or "",
-                    model=p.model or "",
-                    mailbox_dir=mailbox_dir,
-                )
-                self._team_manager.register_pane_id(agent_id, pane_info.pane_id)
-            elif backend == BackendType.ITERM2:
-                from xhx_agent.teams.spawn_iterm2 import spawn_iterm2_teammate
-
-                pane_info = spawn_iterm2_teammate(
-                    team_name=p.team_name,
-                    teammate_name=teammate_name,
-                    worktree_path=wt.path,
-                    prompt=p.prompt,
-                    agent_type=p.subagent_type or "",
-                    model=p.model or "",
-                    mailbox_dir=mailbox_dir,
-                )
-        except Exception as e:
-            log.warning("Pane spawn failed, falling back to in-process: %s", e)
-            return ToolResult(
-                output=f"Pane spawn failed ({e}), teammate not started. Retry or set teammate_mode to in-process.",
-                is_error=True,
-            )
-
-        return ToolResult(
-            output=(
-                f"Teammate '{teammate_name}' spawned in team '{p.team_name}'.\n"
-                f"Agent ID: {agent_id}\n"
-                f"Backend: {backend.value} (pane)\n"
-                f"Worktree: {wt.path}\n"
-                f"The teammate is running in an independent process."
             )
         )
 
@@ -517,7 +461,7 @@ class AgentTool(Tool):
 
         from xhx_agent.agent import Agent as AgentClass
         from xhx_agent.agents.parser import AgentDef
-        from xhx_agent.agents.tool_filter import resolve_agent_tools
+        from xhx_agent.agents.tool_filter import build_filtered_registry
         from xhx_agent.permissions import (
             DangerousCommandDetector,
             PathSandbox,
@@ -566,7 +510,7 @@ class AgentTool(Tool):
         client = self._select_llm(p, definition)
 
         _base_registry = getattr(self._parent_agent, "_full_registry", None) or self._parent_agent.registry
-        filtered_registry = resolve_agent_tools(_base_registry, definition, False)
+        filtered_registry = build_filtered_registry(_base_registry, definition, False)
 
         pm_str = definition.permission_mode
         pm_enum = getattr(

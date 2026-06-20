@@ -59,6 +59,19 @@ MEMORY_EXTRACTION_INTERVAL = 5
 MAX_TOKENS_CEILING = 64000
 MAX_OUTPUT_TOKENS_RECOVERIES = 3
 
+# plan 模式下不向模型暴露的工具：规划阶段禁止建团队（团队是并行写代码的执行手段）。
+# 注意：Agent(dispatch) 仍保留——plan 模式需要派只读子 agent 做广泛调研；spawn 出的子 agent
+# 会被强制为只读（见 tools/agent_tool.py：父 plan_mode → 子 agent 用 PLAN 模式）。
+_PLAN_MODE_DISALLOWED_TOOLS = frozenset({"TeamCreate", "TeamDelete", "EnterPlanMode"})
+
+# 模型调用这些工具表示"规划完成、请求弹出审批对话框"。present_plan 可在任何模式下使用
+# （模型自行判断任务复杂、主动提方案，对标 Claude）；ExitPlanMode 仅用于退出 plan 模式。
+_EXIT_PLAN_TOOLS = frozenset({"ExitPlanMode", "present_plan"})
+
+# 非 plan 模式下不暴露给模型的工具：仅 ExitPlanMode（"退出 plan 模式"在非 plan 模式无意义）。
+# present_plan 不在此列——它是通用的"提交方案待审批"工具，任何模式都可用。
+_NON_PLAN_DISALLOWED_TOOLS = frozenset({"ExitPlanMode"})
+
 
 # ---------------------------------------------------------------------------
 # AgentEvent 事件类型
@@ -278,7 +291,7 @@ class StreamingExecutor:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out: list[_ToolExecResult] = []
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 out.append(
                     _ToolExecResult(
                         tool_id="",
@@ -359,6 +372,19 @@ class Agent:
     @property
     def plan_mode(self) -> bool:
         return self.permission_mode == PermissionMode.PLAN
+
+    def _active_tool_schemas(self) -> list[dict[str, Any]]:
+        """当前轮喂给模型的工具 schema：按模式裁剪。
+
+        - plan 模式：剔除 team 类工具（团队是并行写代码的执行手段，不属于规划）；
+        - 非 plan 模式：剔除 plan 专属工具（present_plan / ExitPlanMode），否则模型会误调被拒。
+        """
+        disallowed = _PLAN_MODE_DISALLOWED_TOOLS if self.plan_mode else _NON_PLAN_DISALLOWED_TOOLS
+        return [
+            s
+            for s in self.registry.get_all_schemas(self.protocol)
+            if s.get("function", {}).get("name") not in disallowed
+        ]
 
     @property
     def turn_count(self) -> int:
@@ -457,10 +483,11 @@ class Agent:
             self._agent_catalog_list = catalog_list
 
     def _build_hook_context(self, event: str, **kwargs: str | dict) -> HookContext:
+        _ta = kwargs.get("tool_args", {})
         return HookContext(
             event_name=event,
             tool_name=str(kwargs.get("tool_name", "")),
-            tool_args=kwargs.get("tool_args", {}),
+            tool_args=_ta if isinstance(_ta, dict) else {},
             file_path=str(kwargs.get("file_path", "")),
             message=str(kwargs.get("message", "")),
             error=str(kwargs.get("error", "")),
@@ -579,8 +606,10 @@ class Agent:
                 conversation.add_system_reminder(plan_reminder)
 
             if self.hook_engine:
-                for note in self.hook_engine.drain_notifications():
-                    conversation.add_system_reminder(f"Hook [{note.hook_id}] {note.event}: {note.output}")
+                for hook_note in self.hook_engine.drain_notifications():
+                    conversation.add_system_reminder(
+                        f"Hook [{hook_note.hook_id}] {hook_note.event}: {hook_note.output}"
+                    )
 
             deferred_names = self.registry.get_deferred_tool_names()
             if deferred_names:
@@ -591,7 +620,7 @@ class Agent:
                     + "\n".join(deferred_names)
                 )
 
-            tools = self.registry.get_all_schemas(self.protocol)
+            tools = self._active_tool_schemas()
 
             # Layer 1: 在 LLM 调用前应用 tool-result budget，确保 api_conv 反映
             # 本轮迭代中所有已发生的写入（system reminders、hook 通知等）。
@@ -800,7 +829,7 @@ class Agent:
                 yield ErrorEvent(message="Agent terminated: too many consecutive unknown tool calls")
                 break
 
-            exit_plan_called = any(tc.tool_name == "ExitPlanMode" for tc in response.tool_calls)
+            exit_plan_called = any(tc.tool_name in _EXIT_PLAN_TOOLS for tc in response.tool_calls)
             conversation.add_tool_results_message(tool_results)
             if exit_plan_called:
                 yield TurnComplete(turn=iteration)
@@ -882,7 +911,9 @@ class Agent:
         tasks = [self._execute_single_tool_direct(tc) for tc in calls]
         return list(await asyncio.gather(*tasks))
 
-    async def _execute_tool(self, tc: ToolCallComplete) -> AsyncIterator[tuple[ToolResult, float, bool]]:
+    async def _execute_tool(
+        self, tc: ToolCallComplete
+    ) -> AsyncIterator[tuple[ToolResult, float, bool] | PermissionRequest]:
         tool = self.registry.get(tc.tool_name)
         start = time.monotonic()
         is_unknown = False
@@ -905,7 +936,7 @@ class Agent:
 
         # 权限检查
         if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
+            decision = self.permission_checker.check(tool.name, tc.arguments, tool_category=tool.category)
 
             if decision.effect == "deny":
                 result = ToolResult(
@@ -938,7 +969,7 @@ class Agent:
                     return
 
                 if response == PermissionResponse.ALLOW_ALWAYS:
-                    from xhx_agent.permissions.rules import Rule, extract_content
+                    from xhx_agent.permissions import Rule, extract_content
 
                     content = extract_content(tc.tool_name, tc.arguments)
                     pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"
@@ -980,7 +1011,24 @@ class Agent:
             return
         self._extracting = True
         try:
-            await self.memory_manager.extract(self.client, conversation, self.protocol)
+            from xhx_agent.conversation import Message as _Msg
+
+            messages = [
+                {"role": m.role, "content": m.content}
+                for m in conversation.history
+                if m.role in ("user", "assistant") and m.content
+            ]
+
+            async def summarize_fn(prompt: str) -> str:
+                mini = ConversationManager()
+                mini.history = [_Msg(role="user", content=prompt)]
+                collected = ""
+                async for event in self.client.stream(mini):
+                    if isinstance(event, TextDelta):
+                        collected += event.text
+                return collected.strip()
+
+            await self.memory_manager.extract(messages, summarize_fn)
         except Exception as e:
             log.debug("Memory extraction failed: %s", e)
         finally:
@@ -1044,7 +1092,7 @@ class Agent:
             coordinator_mode=self.coordinator_mode,
         )
 
-        tools = self.registry.get_all_schemas(self.protocol)
+        tools = self._active_tool_schemas()
 
         # tool schema 在 openai-compat 协议下是嵌套的（{"function": {"name": ...}}），
         # anthropic 协议下是扁平的（{"name": ...}）；日志要兼容两种形状。
@@ -1222,7 +1270,7 @@ class Agent:
                 )
 
         if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
+            decision = self.permission_checker.check(tool.name, tc.arguments, tool_category=tool.category)
             if decision.effect == "deny":
                 return ToolResult(
                     output=f"Permission denied: {decision.reason}",
