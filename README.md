@@ -6,29 +6,28 @@
 [![Python](https://img.shields.io/badge/python-3.13-blue?style=flat-square&logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![CI](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen?style=flat-square)](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-75%25-brightgreen?style=flat-square)](https://github.com/kongshuilinhua/XHX-Agent/actions/workflows/ci.yml)
 
 **English** · [简体中文](README.zh-CN.md)
 
 </div>
 
-> A **context-budgeted local coding agent runtime** with a **pluggable, tri-paradigm orchestrator**: run the same task as a single autonomous **`loop`** (ReAct, Claude-Code-style), as a batch-planned **`plan`** (Plan-Execute), or as a multi-agent **`team`** (Coordinator + Worker, from mewcode) — all three speaking the **same native tool-calling protocol** over one shared safety / context / code-intelligence base.
+> A **local coding agent** that works directly inside your repository — a single native **tool-calling** loop on top of a layered runtime: permission gating, MCP, token-budgeted context, long-term memory, skills, hooks, read-only/edit sub-agents, isolated git worktrees, and multi-agent teams. Verified end-to-end against a **real model** (DeepSeek), not just an offline mock.
 
-`xhx-agent` operates directly inside a local repository. It compiles a token-budgeted context pack before every model turn, classifies and gates shell commands through a safe execution kernel, edits inside an isolated git worktree, runs targeted tests, and records a replayable evidence trail. The same task can be driven by three interchangeable control-flow paradigms, selectable at runtime — so the loop-vs-plan-vs-graph design trade-off is concrete, comparable, and **benchmarked with real numbers**.
+`xhx-agent` runs an autonomous read → edit → verify loop. Every model turn streams token-by-token, every shell command and file write is gated through a permission system, long histories are kept inside a `tiktoken` budget via compaction, and durable facts persist across sessions in `.xhx/memory/`. It ships an interactive **Textual TUI**, a headless `xhx run`, and a JSON-RPC interface — all driven by the same agent core.
 
 ---
 
-## Why this project is interesting
+## Highlights
 
-- **One protocol, three paradigms.** A single `Orchestrator` abstraction with three real implementations that all drive the model through **native tool-calling**. All three are **verified end-to-end against a real model** (DeepSeek), not just the offline mock.
-- **Quantified, not hand-waved.** A built-in [benchmark harness](#benchmark-quantifying-the-paradigms) runs a fixture task-set across all three paradigms and emits a comparison report (turns / tokens / wall-clock / success / files changed) as Markdown + JSON. The token meter makes the multi-agent overhead a number: on a real model (DeepSeek), `graph` spends **~4× the tokens** of single-agent `loop`/`plan` for the same work — and isn't automatically more reliable.
-- **Cross-session memory — the fourth axis of context management.** Beyond per-turn budgeting, in-loop history compaction, and sub-agent delegation, `xhx-agent` keeps a `.xhx/memory/` of durable facts (`user` / `feedback` / `project` / `reference`). Recall is **deterministic** (keyword/token overlap on each fact's description — no extra LLM call) and injected into the system prompt under the token budget; a freshness check skips memories that name files no longer on disk. Writes are explicit (`/remember`) or **suggest-confirm** (the agent proposes after a run, you approve with one keypress). Verified end-to-end: a fact that exists *only* in memory is recalled and used by the real model.
-- **Multi-model routing + graceful fallback.** A run can route different roles to different profiles — cheap models for exploration/summarization, a strong model for edits — and **falls back down a profile chain** when the primary errors or rate-limits (à la Claude Code's `fallbackModel`). Routing and streaming are orthogonal: the fallback wrapper forwards the streaming callback to whichever client serves.
-- **Streaming, with the budget intact.** The tool-calling loop streams the model's output **token-by-token** to a thin live status line (reassembling fragmented `tool_calls` as they arrive over SSE), while long histories are kept in budget by **microcompact** — summarizing the older middle of the conversation into one note *without ever orphaning a tool result from its call*.
-- **Token-budgeted Context Pack.** Each model turn is fed a deterministically-budgeted context pack (project map / task / source / evidence / errors), measured with `tiktoken` (`cl100k_base`) and pruned by priority when it overflows. Long autonomous histories are compacted rather than dropped.
-- **Safe Execution Kernel.** Shell commands are tokenized (`shlex`) and classified into `safe` / `confirm` / `deny` tiers, with a denylisted-executable set, shell-metacharacter blocking, and inline-interpreter detection as defense-in-depth. Edits run in an isolated git worktree and are synced back only on success.
-- **Repo intelligence.** A symbol / import / reference / call index built from Python's `ast` and tree-sitter (for JS/TS), persisted as JSON with a SQLite mirror, refreshed incrementally on file changes.
-- **Honest implementation status.** The [implementation status](#implementation-status) section states plainly what is fully implemented vs. simplified — and the [engineering notes](#engineering-notes-what-building-this-taught-me) record what broke against a real model and what a prompt alone could *not* fix.
+- **One native tool-calling loop.** A single agent (`agents/agent_runner.py`) iterates `read → search → edit → verify` over tools (`ReadFile`, `EditFile`, `WriteFile`, `ApplyPatch`, `Grep`, `Glob`, `Bash`, `RepoQuery`, `WebFetch`, `WebSearch`, `ToolSearch`, `Agent`, …) until it reports done — streaming output token-by-token and reassembling fragmented `tool_calls` over SSE.
+- **A real permission system.** Tools are classified `read` / `write` / `command` and gated by mode (`default` / `acceptEdits` / `plan` / `bypassPermissions` / `dontAsk`) plus a three-tier rule engine (user → project → local, last-match-wins), dangerous-command detection, and a path sandbox. **Plan mode is two-stage**: the agent researches read-only, presents a plan, and only executes after you approve.
+- **Context that stays in budget.** Each turn compiles a `tiktoken`-budgeted context pack; large tool results are spilled to disk with previews; long histories are compacted (**microcompact**) into a summary *without ever orphaning a tool result from its call*; cross-session resume rebuilds state from a `compact_boundary` record.
+- **Cross-session long-term memory.** `.xhx/memory/` keeps durable facts (`user` / `feedback` / `project` / `reference`) with **deterministic recall** (keyword/token overlap, no extra LLM call) injected into the system prompt under budget. Verified end-to-end: a fact that exists *only* in memory is recalled and shapes the real model's answer.
+- **Sub-agents & multi-agent teams.** Spawn a read-only **research** sub-agent or a write-capable **edit** sub-agent (its own worktree, merged back with conflict detection) via the `Agent` tool. Or stand up an **Agent Team** (coordinator + workers, mailbox messaging, shared task board) for parallel collaboration.
+- **MCP, web, and skills.** Connect external **MCP** servers (stdio / Streamable HTTP / SSE) from `.xhx/mcp.json`; fetch and search the web (SSRF-guarded `WebFetch` + Tavily `WebSearch`); load **skills** (`SKILL.md`, three-tier builtin/user/project) that inject SOPs and slash commands on trigger.
+- **Multi-model routing + graceful fallback.** Route roles to different model profiles and fall back down a profile chain on error/rate-limit; orthogonal to streaming.
+- **Honest about its edges.** The [implementation status](#implementation-status) states plainly what is full vs. simplified, and the [engineering notes](#engineering-notes) record what broke against a real model and what a prompt alone could *not* fix.
 
 ---
 
@@ -37,41 +36,37 @@
 ```mermaid
 graph TD
     classDef entry fill:#1e2330,stroke:#5b8def,stroke-width:1px,color:#dce6ff;
-    classDef orch fill:#2a2433,stroke:#a06bd6,stroke-width:1px,color:#ede0fb;
+    classDef core fill:#2a2433,stroke:#a06bd6,stroke-width:1px,color:#ede0fb;
     classDef base fill:#14302a,stroke:#2e8b57,stroke-width:1px,color:#e0eee0;
 
-    E["Entry points<br/>CLI run · REPL · TUI · JSON-RPC"]:::entry
-    S["Orchestrator selection<br/>--mode loop / plan / team<br/>(default: loop)"]:::orch
-    L["loop paradigm<br/>single autonomous agent (ReAct)<br/>read → edit → verify, until done"]:::orch
-    P["plan paradigm<br/>batch plan → execute → verify<br/>bounded self-repair (≤2 rounds)"]:::orch
-    G["team paradigm (mewcode)<br/>Coordinator + Worker<br/>mailbox · worktree isolation"]:::orch
+    E["Entry points<br/>TUI · headless run · JSON-RPC"]:::entry
+    A["Agent loop (agent_runner)<br/>stream → tool-calls → execute → repeat<br/>microcompact · usage anchoring"]:::core
+    SUB["Sub-agents & Teams<br/>read-only research · edit (worktree)<br/>coordinator + workers · mailbox"]:::core
 
-    subgraph base_box["Shared base — native tool-calling"]
-        M["Long-term Memory<br/>(.xhx/memory · deterministic recall)"]:::base
-        B["Context Pack Compiler<br/>(tiktoken budget + compaction)"]:::base
-        R["Repo Intelligence<br/>(ast + tree-sitter, JSON + SQLite)"]:::base
-        K["Safe Execution Kernel<br/>(risk tiers · worktree isolation)"]:::base
-        V["Verification + bounded Auto-Repair<br/>(targeted pytest, max 2 rounds)"]:::base
-        EV["Evidence Trail<br/>(replayable traces + reports)"]:::base
-        M --> B --> R --> K --> V --> EV
+    subgraph base_box["Shared runtime — native tool-calling"]
+        T["Tool registry<br/>(read / write / command tools)"]:::base
+        P["Permission system<br/>(modes · rules · sandbox · dangerous-cmd)"]:::base
+        C["Context pack + compaction<br/>(tiktoken budget · spill · microcompact)"]:::base
+        M["Long-term memory<br/>(.xhx/memory · deterministic recall)"]:::base
+        H["Hooks<br/>(pre/post tool · verification · lifecycle)"]:::base
+        R["Repo intelligence<br/>(ast + tree-sitter · JSON + SQLite)"]:::base
+        SK["Skills + MCP<br/>(SKILL.md · external servers)"]:::base
+        W["Git worktree isolation"]:::base
     end
 
-    E --> S
-    S -->|loop| L
-    S -->|plan| P
-    S -->|team| G
-    L --> M
-    P --> M
-    G --> M
+    E --> A
+    A --> SUB
+    A --> T --> P --> C --> M --> H --> R --> SK --> W
+    SUB --> T
 ```
 
-All three paradigms issue the same tool calls (`search`, `read_file`, `apply_patch`, `repo_query`, `verify`, `terminal`, `dispatch`, …) through the same kernel — the difference is purely *who decides what to call next*: one agent (`loop`), a plan-then-execute controller (`plan`), or a coordinator dispatching workers (`team`). Orthogonal to the paradigm, each run **routes roles to model profiles with a fallback chain**, **streams** output token-by-token, and keeps long histories in budget via **microcompact**.
+The agent drives the model through native tool-calling; the permission system gates every call; the context layer keeps the prompt in budget; memory, hooks, repo-intelligence, skills/MCP, and worktree isolation hang off the same shared base. Sub-agents and teams reuse the identical tool/safety stack with a filtered toolset.
 
 ---
 
 ## Quick Start
 
-`xhx-agent` ships with a built-in **`mock`** profile, so the full pipeline runs **offline with no API key** — ideal for trying it out, CI, and reproducible demos.
+`xhx-agent` ships a built-in **`mock`** profile, so the full pipeline runs **offline with no API key** — handy for trying it out, CI, and reproducible demos.
 
 ```bash
 git clone https://github.com/kongshuilinhua/XHX-Agent.git
@@ -79,7 +74,7 @@ cd XHX-Agent
 uv sync
 ```
 
-Initialize the workspace and build the repo intelligence index in your target codebase:
+Initialize a workspace and build the repo-intelligence index inside your target codebase:
 
 ```bash
 uv run xhx init          # creates .xhx/, XHX.md, and the repo index
@@ -87,127 +82,65 @@ uv run xhx repo-index    # prints index diagnostics
 ```
 
 **Configure your model once, use it from any directory.** Model config resolves
-`project .xhx/ → user-level ~/.xhx/ → built-in placeholder`, so you set up a real
-provider once globally and every directory falls back to it:
+`project .xhx/ → user-level ~/.xhx/ → built-in placeholder`:
 
 ```bash
 uv run xhx init --global   # writes ~/.xhx/{config.json,profiles.json}
-# edit the `default` profile in ~/.xhx/profiles.json (base_url/model/api_key_env),
-# then export that API key — now `xhx tui`/`xhx run` work from anywhere.
+# edit the `default` profile in ~/.xhx/profiles.json (base_url / model / api_key_env),
+# export that API key — now xhx works from anywhere. A project .xhx/profiles.json
+# still overrides the global one (e.g. pin `mock` for CI).
 ```
 
-A project `.xhx/profiles.json` still overrides the global one (e.g. pin `mock` for CI).
-
-Real output from this repository:
-
-```text
-repo index: current
-schema: 1
-files: 165
-symbols: 860
-import edges: 388
-call edges: 2000
-references: 2000
-```
-
-Run a task headlessly. `--dry-run` previews the plan and token budget without editing files:
+Open the interactive agent (the primary interface):
 
 ```bash
-uv run xhx run "explain the orchestrator architecture" --profile mock --dry-run
+uv run xhx tui     # full-screen Textual TUI
+uv run xhx chat    # same TUI (alias)
 ```
 
-```text
-status: success
-summary: Read-only mock plan.
-steps: 1
-context: 5068/6000 estimated tokens
-trace: .xhx/traces/dry-run-...jsonl
-```
+In the TUI the model's reply **streams token-by-token**; tool calls render inline with results; the status bar shows mode · context usage · tool count · model. Type `/` for the command menu. **Plan mode** is two-stage — `/plan` switches to read-only research, the agent presents a plan, and you approve before any edit runs. `shift+tab` cycles permission modes.
 
-Pick the orchestrator paradigm explicitly with `--mode`:
+Run a task headlessly (for scripts / CI):
 
 ```bash
-uv run xhx run "refactor the math helpers" --profile mock --mode loop    # autonomous ReAct loop
-uv run xhx run "refactor the math helpers" --profile mock --mode plan    # plan → execute → verify
-uv run xhx run "refactor the math helpers" --profile mock --mode team    # Coordinator + Worker multi-agent
+uv run xhx run "explain the agent architecture" --profile mock
+uv run xhx run "fix the failing test in src/calc.py"      # real model via your default profile
+uv run xhx run "keep going" --continue                    # resume the most recent session
 ```
-
-Open the interactive REPL or the full-screen dashboard:
-
-```bash
-uv run xhx chat              # prompt-toolkit REPL with slash commands
-uv run xhx tui --fullscreen  # Textual dashboard
-```
-
-In the REPL the model's answer **streams token-by-token** into a thin status line (`state · mode · turn · tokens · streaming`). Teach it durable facts with `/remember <fact>`, list them with `/memory`, and toggle the post-run **suggest-confirm** auto-extraction with `/automem on|off`. To route roles to cheaper/stronger models and add a fallback chain, edit the `routing` block in `.xhx/config.json` (`roles: {explore: cheap, …}`, `fallback: [strong, …]`).
 
 ---
 
-## Three execution paradigms
+## Features
 
-All three run over the identical tool / safety / context / code-intelligence base and the same native tool-calling protocol — only the control flow differs.
+The runtime is organized into focused, independently-testable layers:
 
-| | `loop` (default) | `plan` | `team` |
-|:--|:--|:--|:--|
-| **Style** | Single autonomous agent (ReAct) | Plan-Execute controller | Coordinator + Worker (mewcode) |
-| **Control flow** | One model iterates read → edit → verify across up to `max_loop_turns` until it reports done | Plans the whole task up front, executes the steps, verifies, and runs bounded self-repair on failure | Coordinator splits the task, dispatches workers serially or in parallel, workers communicate via mailbox, independent verification |
-| **Decomposition** | Implicit, per-turn | Batch, up front | Coordinator-driven, into sub-tasks |
-| **Best for** | Open-ended edits, exploratory work | Tasks that benefit from an explicit plan + verification gate | Multi-agent collaboration with isolated worktrees |
-| **Real-model overhead** | Lowest (1 agent) | Low (1 agent + verify) | Highest (~4× tokens, ~3× time — multi-agent coordination) |
-| **Select via** | `--mode loop` / `/mode loop` | `--mode plan` / `/mode plan` | `--mode team` / `/mode team` |
-
-When `--mode` is omitted, the task runs on the default **`loop`** — the same native tool-calling path as the explicit paradigms. The legacy `linear` / `dag` orchestrators (the older ModelPlan path) have been **removed**; reach the new `team` mode via `--mode team` for multi-agent workflows.
-
----
-
-## Benchmark: quantifying the paradigms
-
-The core thesis — *one base, three interchangeable paradigms* — is only convincing with numbers. `xhx benchmark` runs a fixture task-set across the paradigms and writes a comparison report (`.xhx/benchmark/report.md` + `report.json`):
-
-```bash
-uv run xhx benchmark --modes loop,plan,team --profile default  # real model (DeepSeek)
-uv run xhx benchmark --modes loop,plan,team                    # offline, deterministic (mock)
-```
-
-**Real model** (DeepSeek `deepseek-chat`) — three read-only research fixtures, per-paradigm means:
-
-| Paradigm | Success | Mean turns | Mean tokens | Mean wall-clock (s) |
-|:--|:--:|:--:|:--:|:--:|
-| `loop` | 3/3 | 4.7 (tool iterations) | ~14.3K | 14.1 |
-| `plan` | 3/3 | 4.0 (tool iterations) | ~15.0K | 13.0 |
-| `team` | 2/3 | 1.7 (review rounds) | **~58.9K** | 44.6 |
-
-Two things jump out:
-
-- **The multi-agent `team` costs ~4× the tokens and ~3× the wall-clock** of the single-agent `loop`/`plan` — coordinator, worker(s), and reviewer each carry their own full context. (Its lower "turn" count is a *different unit* — review rounds, not tool iterations.)
-- **More agents did not mean a better outcome here:** `team` succeeded on only 2 of 3 fixtures (one reviewer returned FAIL), while `loop` and `plan` completed all three. Role separation buys explicit plan/review structure — it does not come for free, and it is not automatically more reliable.
-
-The offline `mock` profile reproduces the *same shape* deterministically (`graph` ~3× the tokens of `loop`/`plan`) for CI and zero-key demos, though it doesn't exercise the LLM coordination `graph` depends on — so success rate there is only meaningful under a real model. Reproduce either table with the commands above (`--profile default` requires a `DEEPSEEK_API_KEY`).
-
-<details>
-<summary>Offline <code>mock</code> table (deterministic, reproducible)</summary>
-
-| Paradigm | Tasks | Mean turns | Mean tokens | Mean wall-clock (s) |
-|:--|:--:|:--:|:--:|:--:|
-| `loop` | 3 | 1.0 | ~978 | 0.40 |
-| `plan` | 3 | 1.0 | ~986 | 0.38 |
-| `team` | 3 | 2.0 | ~2919 | 0.77 |
-
-</details>
+| Layer | What it does |
+|:--|:--|
+| **Tool system** | One `ToolRegistry` of `Tool` instances (read/write/command categories); deferred tools discovered via `ToolSearch`; parallel execution for concurrency-safe tools. |
+| **Agent loop** | Streaming native tool-calling loop with usage anchoring, max-iteration guard, and unknown-tool termination. |
+| **System prompt** | Composed from instructions (`XHX.md`), environment context, skill catalog, agent catalog, and injected memory. |
+| **Permissions** | Modes + three-tier rule engine + path sandbox + dangerous-command detection; two-stage plan mode; inline approval dialogs in the TUI. |
+| **MCP** | Connect external MCP servers (stdio / HTTP / SSE) from `.xhx/mcp.json`; tools register as `mcp_<server>_<tool>` under the same gate; failed servers are skipped. |
+| **Context management** | `tiktoken` budgeting, large-result spill-to-disk with previews, and validity-preserving microcompact of long histories. |
+| **Memory** | Long-term facts with deterministic recall + freshness check; per-session JSONL persistence and resume. |
+| **Slash commands** | A command registry driving the TUI (see [Commands](#commands)). |
+| **Skills** | `SKILL.md` (three-tier) with trigger matching → SOP injection / slash commands. |
+| **Hooks** | Event-driven engine (`pre/post_tool_use`, `pre_send`, `turn_*`, `session_*`) with `command` / `prompt` / `http` / `verification` actions. |
+| **Sub-agents** | `Agent` tool spawns read-only research or write-capable edit sub-agents with a filtered toolset; edit agents work in isolated worktrees. |
+| **Worktree** | Full git-worktree lifecycle (create / enter / exit / auto-cleanup) for isolated edits. |
+| **Agent Teams** | Coordinator + workers, file-based mailbox messaging, shared task board, per-teammate progress. |
 
 ---
 
-## Engineering notes: what building this taught me
+## Engineering notes
 
 Three findings worth more than a green test suite — each is a place where a *real* model diverged from the comfortable offline mock.
 
-**1 · `apply_patch` met the real model.** The patch tool was first built around a custom `*** Begin Patch … *** End Patch` envelope, and the offline mock dutifully produced it. Switched to real DeepSeek, *every* edit failed: `Patch must start with *** Begin Patch`. The real model emits **unified diffs** — often wrapped in a ```` ```diff ```` fence — not the bespoke envelope. The fix was to make the parser dispatch by *format*: envelope, unified diff (`---` / `+++` / `@@`, with `/dev/null` meaning a new file), and a fence-stripping pre-pass. **Lesson:** mock parity is not real parity. The real model's output distribution *is* the spec you have to parse.
+**1 · `apply_patch` met the real model.** The patch tool was first built around a custom `*** Begin Patch … *** End Patch` envelope, and the mock dutifully produced it. Against real DeepSeek, *every* edit failed: `Patch must start with *** Begin Patch`. The real model emits **unified diffs** — often inside a ```` ```diff ```` fence. The fix was to dispatch by *format*: envelope, unified diff (`---`/`+++`/`@@`, `/dev/null` = new file), plus a fence-stripping pre-pass. **Lesson:** mock parity is not real parity; the model's output distribution *is* the spec you parse.
 
-**2 · A prompt is not a silver bullet.** I added a `dispatch` tool so the agent could hand a focused, multi-file investigation to an isolated read-only sub-agent — keeping the parent's context clean. The capability is wired, gated, and correct. But even with explicit prompt guidance, the real model overwhelmingly prefers to just read the files itself and rarely reaches for `dispatch`. Rather than dress that up, I'm recording it plainly: **changing model behavior often needs a stronger mechanism than a paragraph in the system prompt** — and knowing the difference is part of the job.
+**2 · A prompt is not a silver bullet.** The `Agent` tool lets the model hand a focused investigation to an isolated read-only sub-agent, keeping the parent context clean. The capability is wired, gated, and correct — but even with explicit prompt guidance, the real model usually just reads the files itself and rarely reaches for it. Recorded plainly: **changing model behavior often needs a stronger mechanism than a paragraph in the system prompt.**
 
-**3 · Putting a number on coordination.** A small token meter wraps every model call, accumulating a `tiktoken` estimate of the outgoing context into the run metrics. That is what turns "team has more overhead" into "team costs ~4× the tokens" in the real-model table above. Cheap to build, and it converts an architectural intuition into something a reviewer can check.
-
-**4 · An injection feature isn't real until a memory-only fact moves the output.** Cross-session recall is easy to *wire* and easy to fool yourself about. So the test wasn't "does the recall function return rows" — it was: write a fact that exists **only** in `.xhx/memory/` (the project mascot is a blue axolotl named Pacha), ask the real model an otherwise-unanswerable question, and confirm the recalled fact both reached the system prompt and shaped the answer. **Lesson:** for anything that silently injects context, verify end-to-end with a fact the model could not otherwise know — not with a unit test of the retriever.
+**3 · An injection feature isn't real until a memory-only fact moves the output.** Cross-session recall is easy to *wire* and easy to fool yourself about. So the test wasn't "does recall return rows" — it was: write a fact that exists **only** in `.xhx/memory/` (the project mascot is a blue axolotl named Pacha), ask the real model an otherwise-unanswerable question, and confirm the recalled fact reached the prompt *and* shaped the answer. **Lesson:** for anything that silently injects context, verify end-to-end with a fact the model could not otherwise know.
 
 ---
 
@@ -221,20 +154,20 @@ uv run xhx run "<task>" [options]
 
 | Option | Description |
 |:--|:--|
-| `--profile <name>` | LLM profile, resolved `project .xhx/ → ~/.xhx/ → built-in` (`mock` runs offline). |
-| `--mode <loop\|plan\|team>` | Pick the orchestrator paradigm (default: `loop`). |
-| `--auto-repair` | Enable up to 2 self-repair rounds when targeted verification fails. |
-| `--dry-run` | Preview plan, token budget, and risks, then exit. |
-| `-y`, `--yes` | Pre-approve `confirm`-tier commands (non-interactive). |
+| `--profile <name>` | Model profile, resolved `project .xhx/ → ~/.xhx/ → built-in` (`mock` runs offline). |
+| `--verify` | Run change-targeted tests after the agent stops. |
+| `-y`, `--yes` | Pre-approve confirm-tier commands (non-interactive). |
 | `--json` | Emit the run result as structured JSON. |
 | `--continue` | Resume from the most recent session, injecting its summary as context. |
 | `--resume <run-id>` | Resume from a specific past session (`xhx sessions` lists them). |
 
-Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `sessions`, `chat`, `tui`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`.
+Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `sessions`, `tui` / `chat`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`, `compact`, `config list` / `config set-profile`.
 
-### REPL slash commands
+### TUI slash commands
 
-`/help` · `/model` · `/mode` · `/status` · `/plan` · `/evidence` · `/context` · `/verify` · `/repair` · `/diff` · `/skills` · `/remember` · `/memory` · `/automem` · `/dashboard` · `/live` · `/cancel` · `/clear` · `/exit`
+`/help` · `/status` · `/model` · `/plan` · `/permission` · `/compact` · `/memory` · `/session` · `/skill` · `/mcp` · `/review` · `/rewind` · `/tools` · `/worktree` · `/tasks` · `/trace` · `/verbose` · `/cancel` · `/allow` · `/deny` · `/new` · `/clear` · `/exit`
+
+Type `/` for the full menu; `/help <name>` shows usage for one command. `/session` opens an up/down-selectable history picker to resume a past conversation.
 
 ---
 
@@ -243,38 +176,26 @@ Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `ses
 Stated plainly so capability is never confused with roadmap.
 
 **Fully implemented**
-- Tri-paradigm orchestrator on one native tool-calling protocol: `loop` (autonomous ReAct), `plan` (Plan-Execute with bounded self-repair), and `team` (Coordinator + Worker from mewcode) — all wired into every entry point (CLI `--mode`, REPL/TUI `/mode`).
-- Sub-agents via the `dispatch` tool: a read-only `explore` agent (its own message history + restricted toolset) and a **write-capable `edit` agent** that edits inside its own git worktree and **merges back serially with first-wins conflict detection**.
-- Three-paradigm benchmark harness (`xhx benchmark --modes …`) emitting a Markdown + JSON comparison report, with per-call token metering.
-- Long-term memory: `.xhx/memory/` of 4-type facts with deterministic recall injected into the system prompt under budget, a freshness check against current files, explicit `/remember` writes, and post-run **suggest-confirm** auto-extraction (`/automem`) — verified end-to-end against a real model.
-- Multi-model routing: per-role `role → profile` mapping plus an ordered **fallback chain** that degrades gracefully on a primary error/rate-limit; orthogonal to streaming.
-- Streaming tool-calling output to a thin live status line (with fragmented `tool_calls` reassembled over SSE), plus validity-preserving **microcompact** of long loop histories.
-- `repo_query` read-only tool exposing the symbol / reference index to the model through the same risk-gated kernel.
-- Model Context Protocol (MCP) clients (built on the official `mcp` SDK, bridged into the synchronous runtime via an anyio `BlockingPortal`) connecting to external servers defined in `.xhx/mcp.json` / global `~/.xhx/mcp.json` over **stdio, Streamable HTTP, or SSE**. Remote servers support a static `Authorization: Bearer` token (`auth_token` / `auth_token_env` — keep secrets in the gitignored `.xhx/` or an env var, never committed). Tools register with proper schema and `mcp_<server>_<tool>` namespaces under the safe execution kernel; failed servers are skipped without affecting the rest. Example `.xhx/mcp.json`:
-
-  ```json
-  {
-    "servers": [
-      {"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
-      {"name": "remote", "transport": "http", "url": "https://api.example.com/mcp", "auth_token_env": "MY_MCP_TOKEN"}
-    ]
-  }
-  ```
-- Network-enabled web tools: `web_fetch` tool (with SSRF guardrails, redirect inspection, response size limits, and HTML-to-Markdown conversion) and `web_search` tool (connecting to the Tavily API, configured via `.xhx/config.json` or `TAVILY_API_KEY` env) for real-time internet search and retrieval.
-- Context Pack compiler with `tiktoken` budgeting, priority pruning, and history compaction (heuristic, or LLM summary in autonomous mode with heuristic fallback).
-- Safe Execution Kernel: risk tiering, denylist + metacharacter + inline-interpreter blocking, git-worktree isolation, in-place Restore Plan fallback.
-- Repo intelligence: symbol / import / reference / call index — Python via `ast`, JS/TS symbols via tree-sitter — persisted as JSON with a SQLite mirror and incremental refresh on file change.
-- Verification router + bounded (≤2-round) auto-repair; replayable evidence traces; session recovery (`--continue` / `--resume` / `sessions`).
-- REPL (prompt-toolkit) and full-screen TUI (Textual); JSON-RPC 2.0 stdio interface; offline `mock` profile; benchmark + replay.
+- Native tool-calling agent loop with streaming, parallel concurrency-safe tools, usage anchoring, and microcompact of long histories.
+- Permission system: `default` / `acceptEdits` / `plan` / `bypassPermissions` / `dontAsk` modes, three-tier rule engine (user → project → local), path sandbox, dangerous-command detection, two-stage plan mode, inline TUI approval dialogs.
+- Context pack with `tiktoken` budgeting, large-result spill-to-disk + preview, and validity-preserving compaction; cross-session resume via `compact_boundary`.
+- Long-term memory: 4-type facts, deterministic recall under budget, freshness check, per-session JSONL persistence + resume — verified end-to-end against a real model.
+- Tools: `ReadFile` / `WriteFile` / `EditFile` (read-before-edit gate) / `ApplyPatch` (envelope + unified diff) / `Grep` / `Glob` / `Bash` (with background dev-server detection) / `RepoQuery` / `WebFetch` (SSRF-guarded) / `WebSearch` (Tavily) / `ToolSearch` / `Agent`.
+- MCP clients over stdio / Streamable HTTP / SSE, registered under the safe gate; web tools; skills (`SKILL.md`, three-tier) with trigger matching.
+- Hooks: lifecycle engine with `command` / `prompt` / `http` / `verification` actions.
+- Sub-agents (read-only research + write-capable edit-in-worktree) and Agent Teams (coordinator + workers, mailbox, shared tasks).
+- Git worktree lifecycle; repo intelligence (symbol / import / reference / call index, `ast` + tree-sitter, JSON + SQLite); multi-model routing + fallback.
+- Interfaces: Textual TUI, headless `xhx run`, JSON-RPC 2.0 stdio; offline `mock` profile.
+- CI: ruff (check + format), mypy (clean), pytest with a **75%** coverage floor.
 
 **Simplified / partial (by design)**
-- `linear` / `dag` (the older ModelPlan path) have been **removed**; the headline decomposition work happens in `plan` and `team`.
-- The `team` paradigm is a Coordinator + Worker system ported from mewcode: TeamManager, mailbox-based inter-agent communication, shared task store, coordinator system prompt, and in-process worker spawning.
-- Write `edit` sub-agents run sequentially, each isolated in its own worktree and merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
-- The reference index is text-level symbol-name matching, not semantic resolution.
-- JS/TS import and call extraction uses regex (only JS/TS *symbols* use tree-sitter); Python uses full `ast`.
+- The older `--mode loop/plan/graph`, `--auto-repair`, and `--dry-run` flags on `xhx run` are **accepted but no-ops** — superseded by the single unified agent loop. Multi-agent work is reached through the `Agent` tool / Teams in the interactive runtime, not via `--mode`.
+- The `hooks` `agent` action type (hook-triggered sub-agent) is **disabled** at config-load time — it was never implemented; the other three action types are live.
+- Edit sub-agents run sequentially, each in its own worktree, merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
+- The reference index is text-level symbol-name matching, not semantic resolution; JS/TS import/call extraction uses regex (only JS/TS *symbols* use tree-sitter; Python uses full `ast`).
+- TUI rendering internals are deliberately under-unit-tested (covered by pilot smoke tests), which is why the coverage floor sits at 75% rather than higher.
 
-See [`docs/implementation/20-implementation-baseline.md`](docs/implementation/20-implementation-baseline.md) and [`docs/01-architecture.md`](docs/01-architecture.md) for details.
+See [`docs/01-architecture.md`](docs/01-architecture.md) for details.
 
 ---
 
@@ -282,22 +203,24 @@ See [`docs/implementation/20-implementation-baseline.md`](docs/implementation/20
 
 ```text
 src/xhx_agent/
-  orchestrators/   loop · plan · team (primary) · sub-agent · microcompact
-  teams/           TeamManager · mailbox · shared tasks · coordinator · spawn
-  agents/          AgentDef parser · three-tier loader (builtin/user/project)
-  hooks/           event-driven hook engine · pre/post tool hooks
-  commands/        slash command registry + defaults
-  memory/          long-term facts: store + deterministic recall + suggest-confirm extraction
-  context/         Context Pack compiler + token budgeting + compaction
+  agents/          agent loop (agent_runner) · AgentDef parser + three-tier loader · sub-agent · task manager · trace
+  tools/           Tool registry + built-in tools (read/edit/write/bash/grep/glob/apply_patch/repo_query/web/tool-search)
+  commands/        slash command registry + handlers
+  context/         context pack compiler + tiktoken budgeting + history compaction (microcompact)
+  memory/          long-term facts (deterministic recall) + session persistence/resume
   repo_intel/      symbol / import / reference / call index (ast + tree-sitter, JSON + SQLite)
-  safety/          risk classification · policy · worktree · checkpoints · repair · permissions
-  planner/         execution modes · reviewer · agents
-  verification/    targeted test router
-  evals/           benchmark harness + RunMetrics
+  safety/          risk classification · policy · permissions (rules/sandbox/modes) · worktree checkpoints
+  hooks/           event-driven hook engine (command/prompt/http/verification actions)
+  skills/          SkillLoader (SKILL.md, three-tier) + MCP client manager
+  teams/           Agent Teams: coordinator + workers · mailbox · shared task store
+  worktree/        git worktree lifecycle (create/enter/exit/cleanup)
+  verification/    targeted test router (drives the verification hook)
+  filehistory/     per-session file edit history (rewind support)
+  evals/           benchmark harness + replay + RunMetrics
   evidence/        trace store + report generation
-  runtime/         app loop · sessions · config (incl. routing) · context window
   models/          mock + OpenAI-compatible (streaming) + multi-model routing & fallback
-  cli/ · tui/      REPL, full-screen dashboard, JSON-RPC
+  runtime/         headless driver · sessions · config (incl. routing) · context-window resolve
+  cli/ · tui/      CLI, prompt-toolkit input, full-screen Textual TUI, JSON-RPC
 ```
 
 ---
@@ -305,7 +228,7 @@ src/xhx_agent/
 ## Development
 
 ```bash
-uv run pytest          # test suite
+uv run pytest          # test suite (489 passed, ~75% coverage)
 uv run ruff check .    # lint
 uv run ruff format .   # format
 uv run mypy src        # type-check
