@@ -10,8 +10,6 @@ def test_package_exports() -> None:
     # Verify key exports are accessible and not None
     assert xhx_agent.RunResult is not None
     assert xhx_agent.ToolRegistry is not None
-    assert xhx_agent.ToolContext is not None
-    assert xhx_agent.ToolExecutionResult is not None
     assert xhx_agent.EvidenceStore is not None
     assert xhx_agent.EvidenceEntry is not None
     assert xhx_agent.RawTraceEntry is not None
@@ -29,8 +27,6 @@ def test_package_all_attribute() -> None:
     expected = [
         "RunResult",
         "ToolRegistry",
-        "ToolContext",
-        "ToolExecutionResult",
         "EvidenceStore",
         "EvidenceEntry",
         "RawTraceEntry",

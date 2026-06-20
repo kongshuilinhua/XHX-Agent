@@ -1,13 +1,29 @@
-"""MCP 集成测试：不再依赖 RuntimeApp，直接测 MCPManager 的工具注册与生命周期。"""
+"""MCP 集成测试：直接测 MCPManager 的工具注册与生命周期（新 Tool 式 registry）。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from xhx_agent.runtime.mcp_config import MCPServerConfig
-from xhx_agent.tools.registry import ToolDefinition, ToolExecutionResult, ToolRegistry
+from xhx_agent.tools import ToolRegistry
+from xhx_agent.tools.base import Tool, ToolResult
+
+
+class _P(BaseModel):
+    pass
+
+
+class _FakeMcpTool(Tool):
+    name = "mcp_test-server_hello"
+    description = "Say hello"
+    params_model = _P
+    category = "read"
+
+    async def execute(self, params: _P) -> ToolResult:  # type: ignore[override]
+        return ToolResult(output="ok")
 
 
 def test_mcp_manager_register_and_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,16 +42,7 @@ def test_mcp_manager_register_and_close(monkeypatch: pytest.MonkeyPatch) -> None
             self.servers = servers
 
         def register_tools_to_registry(self, registry) -> None:
-            registry.register_definition(
-                ToolDefinition(
-                    name="mcp_test-server_hello",
-                    description="Say hello",
-                    parameters={"type": "object", "properties": {}},
-                    runner=lambda c, a: ToolExecutionResult(
-                        tool="mcp_test-server_hello", status="success", summary="ok", trace_payload={}
-                    ),
-                )
-            )
+            registry.register(_FakeMcpTool())
 
         def close(self) -> None:
             self.closed = True
@@ -53,7 +60,7 @@ def test_mcp_manager_register_and_close(monkeypatch: pytest.MonkeyPatch) -> None
     mgr.connect_all(servers)
     mgr.register_tools_to_registry(registry)
 
-    assert "mcp_test-server_hello" in registry.names
+    assert registry.get("mcp_test-server_hello") is not None
     assert created[0].closed is False
 
     mgr.close()
@@ -96,6 +103,6 @@ def test_mcp_connect_failure_non_blocking(monkeypatch: pytest.MonkeyPatch) -> No
     mgr.connect_all(servers)
     mgr.register_tools_to_registry(registry)
 
-    # 失败不阻塞，内置工具仍正常
+    # 失败不阻塞
     assert len(errors) == 1
     mgr.close()

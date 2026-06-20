@@ -9,13 +9,10 @@ from xhx_agent.runtime.result import RunResult
 from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.mcp import MCPManager
 from xhx_agent.tools import ToolRegistry
-from xhx_agent.tools.registry import ToolContext, ToolExecutionResult
 
 __all__ = [
     "RunResult",
     "ToolRegistry",
-    "ToolContext",
-    "ToolExecutionResult",
     "EvidenceStore",
     "EvidenceEntry",
     "RawTraceEntry",
