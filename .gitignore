@@ -131,6 +131,8 @@ __marimo__/
 .xhx/
 # XHX.md 是 xhx init/repo-index 自动生成的项目地图（含本机路径），按机器本地生成、不入库
 XHX.md
+# ROADMAP.md 是个人前瞻规划，本地保留、不入公开仓库
+ROADMAP.md
 
 # ==========================================
 # Private Study & Architecture Deep Dives

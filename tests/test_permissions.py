@@ -15,7 +15,9 @@ def test_path_sandbox_denies_out_of_scope(tmp_path: Path) -> None:
     """PermissionChecker Layer 2 blocks paths outside workspace."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    ext_file = Path("C:/outside/workspace/README.md")
+    # 盘符根下、既不在 workspace 也不在系统临时目录内的绝对路径——跨平台都"越界"。
+    # （写死 C:/... 在 Linux 上是相对路径会落进 workspace；用 tmp_path 又会命中沙箱自动放行的临时目录。）
+    ext_file = Path(tmp_path.anchor) / "xhx_outside_sandbox" / "README.md"
 
     sandbox = PathSandbox(workspace)
     checker = PermissionChecker(
@@ -53,7 +55,9 @@ def test_path_sandbox_bypass_allows_out_of_scope(tmp_path: Path) -> None:
     """Bypass permission mode grants out-of-scope access."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    ext_file = Path("C:/outside/workspace/README.md")
+    # 盘符根下、既不在 workspace 也不在系统临时目录内的绝对路径——跨平台都"越界"。
+    # （写死 C:/... 在 Linux 上是相对路径会落进 workspace；用 tmp_path 又会命中沙箱自动放行的临时目录。）
+    ext_file = Path(tmp_path.anchor) / "xhx_outside_sandbox" / "README.md"
 
     sandbox = PathSandbox(workspace)
     checker = PermissionChecker(
@@ -71,7 +75,7 @@ def test_permission_checker_blocks_destructive_out_of_scope(tmp_path: Path) -> N
     """Destructive tool on out-of-scope path is denied."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    ext_file = Path("C:/outside/workspace/config.yaml")
+    ext_file = Path(tmp_path.anchor) / "xhx_outside_sandbox" / "config.yaml"
 
     sandbox = PathSandbox(workspace)
     checker = PermissionChecker(
