@@ -129,6 +129,8 @@ __marimo__/
 
 # xhx-agent local runtime state
 .xhx/
+# XHX.md 是 xhx init/repo-index 自动生成的项目地图（含本机路径），按机器本地生成、不入库
+XHX.md
 
 # ==========================================
 # Private Study & Architecture Deep Dives
