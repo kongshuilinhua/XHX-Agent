@@ -27,7 +27,6 @@
 - **Sub-agents & multi-agent teams.** Spawn a read-only **research** sub-agent or a write-capable **edit** sub-agent (its own worktree, merged back with conflict detection) via the `Agent` tool. Or stand up an **Agent Team** (coordinator + workers, mailbox messaging, shared task board) for parallel collaboration.
 - **MCP, web, and skills.** Connect external **MCP** servers (stdio / Streamable HTTP / SSE) from `.xhx/mcp.json`; fetch and search the web (SSRF-guarded `WebFetch` + Tavily `WebSearch`); load **skills** (`SKILL.md`, three-tier builtin/user/project) that inject SOPs and slash commands on trigger.
 - **Multi-model routing + graceful fallback.** Route roles to different model profiles and fall back down a profile chain on error/rate-limit; orthogonal to streaming.
-- **Honest about its edges.** The [implementation status](#implementation-status) states plainly what is full vs. simplified, and the [engineering notes](#engineering-notes) record what broke against a real model and what a prompt alone could *not* fix.
 
 ---
 
@@ -132,18 +131,6 @@ The runtime is organized into focused, independently-testable layers:
 
 ---
 
-## Engineering notes
-
-Three findings worth more than a green test suite — each is a place where a *real* model diverged from the comfortable offline mock.
-
-**1 · `apply_patch` met the real model.** The patch tool was first built around a custom `*** Begin Patch … *** End Patch` envelope, and the mock dutifully produced it. Against real DeepSeek, *every* edit failed: `Patch must start with *** Begin Patch`. The real model emits **unified diffs** — often inside a ```` ```diff ```` fence. The fix was to dispatch by *format*: envelope, unified diff (`---`/`+++`/`@@`, `/dev/null` = new file), plus a fence-stripping pre-pass. **Lesson:** mock parity is not real parity; the model's output distribution *is* the spec you parse.
-
-**2 · A prompt is not a silver bullet.** The `Agent` tool lets the model hand a focused investigation to an isolated read-only sub-agent, keeping the parent context clean. The capability is wired, gated, and correct — but even with explicit prompt guidance, the real model usually just reads the files itself and rarely reaches for it. Recorded plainly: **changing model behavior often needs a stronger mechanism than a paragraph in the system prompt.**
-
-**3 · An injection feature isn't real until a memory-only fact moves the output.** Cross-session recall is easy to *wire* and easy to fool yourself about. So the test wasn't "does recall return rows" — it was: write a fact that exists **only** in `.xhx/memory/` (the project mascot is a blue axolotl named Pacha), ask the real model an otherwise-unanswerable question, and confirm the recalled fact reached the prompt *and* shaped the answer. **Lesson:** for anything that silently injects context, verify end-to-end with a fact the model could not otherwise know.
-
----
-
 ## Commands
 
 ### CLI
@@ -193,7 +180,6 @@ Stated plainly so capability is never confused with roadmap.
 - The `hooks` `agent` action type (hook-triggered sub-agent) is **disabled** at config-load time — it was never implemented; the other three action types are live.
 - Edit sub-agents run sequentially, each in its own worktree, merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution; JS/TS import/call extraction uses regex (only JS/TS *symbols* use tree-sitter; Python uses full `ast`).
-- TUI rendering internals are deliberately under-unit-tested (covered by pilot smoke tests), which is why the coverage floor sits at 75% rather than higher.
 
 See [`docs/01-architecture.md`](docs/01-architecture.md) for details.
 
