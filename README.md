@@ -158,6 +158,28 @@ Type `/` for the full menu; `/help <name>` shows usage for one command. `/sessio
 
 ---
 
+## Skills
+
+A **skill** is a reusable SOP — a `SKILL.md` (YAML frontmatter + a Markdown prompt body) the agent loads on demand. Skills resolve three-tier, **project > user > built-in** (last wins):
+
+| Location | Scope |
+|:--|:--|
+| `src/xhx_agent/skills/builtins/` | shipped with xhx-agent (`commit`, `review`) |
+| `~/.xhx/skills/` | user-level — available in every project |
+| `<project>/.xhx/skills/` | project-level — highest priority |
+
+**Install one** by dropping a single `<name>.md` *or* a `<name>/SKILL.md` folder into a skills directory, then run `/skill reload` in the TUI — no restart needed. Frontmatter needs only `name` (lowercase letters/digits/hyphens) and `description`; optional: `mode` (`inline` | `fork`), `context`, `model`, `allowedTools`, `triggers`. The Markdown body is the injected prompt (`$ARGUMENTS` is substituted from command args). Each loaded skill registers as a `/<name>` slash command.
+
+```bash
+mkdir -p ~/.xhx/skills
+cp -r path/to/some-skill ~/.xhx/skills/   # a folder containing SKILL.md
+# then in the TUI:  /skill reload  →  /skill list  →  /some-skill
+```
+
+Manage from the TUI: `/skill list` (shows source tags), `/skill info <name>`, `/skill reload`. `SKILL.md` is portable across agents that share the format — Claude Code / `obra/superpowers` skills drop in directly. Only install skills from sources you trust: a folder-form skill may ship a `tool.json` + `references/*.py` whose code is executed.
+
+---
+
 ## Implementation status
 
 Stated plainly so capability is never confused with roadmap.
@@ -214,7 +236,7 @@ src/xhx_agent/
 ## Development
 
 ```bash
-uv run pytest          # test suite (489 passed, ~75% coverage)
+uv run pytest          # test suite (521 passed, ~75% coverage)
 uv run ruff check .    # lint
 uv run ruff format .   # format
 uv run mypy src        # type-check

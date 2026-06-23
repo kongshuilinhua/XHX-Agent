@@ -157,6 +157,28 @@ uv run xhx run "<任务>" [选项]
 
 ---
 
+## Skill
+
+一个 **skill** 就是一份可复用的 SOP——一个 `SKILL.md`（YAML frontmatter + Markdown 提示词正文），agent 按需加载。skill 三层解析，**项目 > 用户 > 内置**（后者被前者覆盖）：
+
+| 位置 | 范围 |
+|:--|:--|
+| `src/xhx_agent/skills/builtins/` | 随 xhx-agent 内置（`commit`、`review`） |
+| `~/.xhx/skills/` | 用户级——所有项目可用 |
+| `<项目>/.xhx/skills/` | 项目级——最高优先级 |
+
+**安装一个 skill**：把单文件 `<名字>.md` **或** `<名字>/SKILL.md` 目录丢进上述任一目录，然后在 TUI 里 `/skill reload`——无需重启。frontmatter 只需 `name`（小写字母/数字/连字符）和 `description`；可选：`mode`（`inline` | `fork`）、`context`、`model`、`allowedTools`、`triggers`。Markdown 正文即注入的提示词（`$ARGUMENTS` 用命令参数替换）。每个加载到的 skill 会注册成一个 `/<名字>` 斜杠命令。
+
+```bash
+mkdir -p ~/.xhx/skills
+cp -r path/to/some-skill ~/.xhx/skills/   # 含 SKILL.md 的目录
+# 然后在 TUI 里：/skill reload → /skill list → /some-skill
+```
+
+在 TUI 里管理：`/skill list`（带来源标记）、`/skill info <名字>`、`/skill reload`。`SKILL.md` 在共享该格式的 agent 间可移植——Claude Code / `obra/superpowers` 的 skill 可直接放入。只安装可信来源的 skill：目录式 skill 可能携带 `tool.json` + `references/*.py`，其代码会被执行。
+
+---
+
 ## 实现状态
 
 如实陈述，绝不把能力与路线图混为一谈。
@@ -213,7 +235,7 @@ src/xhx_agent/
 ## 开发
 
 ```bash
-uv run pytest          # 测试套件（489 passed，~75% 覆盖率）
+uv run pytest          # 测试套件（521 passed，~75% 覆盖率）
 uv run ruff check .    # lint
 uv run ruff format .   # 格式化
 uv run mypy src        # 类型检查
