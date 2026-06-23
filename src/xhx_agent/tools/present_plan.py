@@ -24,7 +24,9 @@ class Params(BaseModel):
 class PresentPlanTool(Tool):
     name = "present_plan"
     description = (
-        "Submit your implementation plan for user approval. "
+        "Submit your implementation plan for user approval. This is a TOOL CALL -- "
+        "invoking this tool is the only way to present a plan; never write the plan or "
+        "an approval UI (checkboxes / 'Execute this plan' options) as plain text. "
         "Call this when your plan is complete and written to the plan file. "
         "The user will see an approval dialog and choose how to proceed."
     )

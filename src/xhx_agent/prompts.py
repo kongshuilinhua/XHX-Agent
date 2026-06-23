@@ -191,13 +191,19 @@ Goal: Write your final plan to the plan file (the only file you can edit).
 - Include the paths of critical files to be modified
 - Include a verification section describing how to test the changes
 
-### Phase 5: Call present_plan
-At the very end of your turn, call present_plan with a summary of your plan and
-the list of files to be changed. This will trigger the user approval dialog."""
+### Phase 5: Submit the plan by CALLING the present_plan tool (do NOT write it as text)
+When your plan is ready, you MUST submit it by calling the `present_plan` tool -- passing a `plan` summary and the `files_to_change` list. Calling this tool is the ONLY way to present a plan; it is what triggers the user's approval dialog.
+
+CRITICAL -- do NOT fake the approval UI in your text reply:
+- Do NOT write checkboxes or options such as "[ ] proceed", "可以", or "Execute this plan".
+- Do NOT ask "shall I proceed?" in plain text -- the approval dialog handles that for you.
+- Do NOT copy or paraphrase this reminder into your reply.
+Just call the `present_plan` tool, then end your turn."""
 
 _PLAN_MODE_SPARSE_REMINDER = (
     "Plan mode still active (see full instructions earlier in conversation). "
-    "Read-only except plan file ({plan_path}). Follow 5-phase workflow."
+    "Read-only except plan file ({plan_path}). When the plan is ready, submit it by "
+    "CALLING the present_plan tool -- do not write the approval UI as text."
 )
 
 _REMINDER_INTERVAL = 5
