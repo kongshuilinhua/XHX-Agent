@@ -2250,12 +2250,30 @@ def run_textual_console(
 
     provider = ProviderConfig.from_xhx_profile(p)
 
-    # 接入 MCP：加载 .xhx/mcp.json（项目级优先，其次全局 ~/.xhx/mcp.json）的 server 配置。
-    # 传原始项目根 ws（非隔离 worktree——gitignored 的 .xhx/ 不在 worktree 里）。
-    # 无配置文件时返回空列表，app 启动后 _init_mcp 会直接跳过。
+    # 从 .xhx/config.json 读取运行时开关，统一接入 app。此前 run_textual_console 只传
+    # providers，XHXApp 的 mcp/hooks/coordinator/fork/verify 等开关全用默认——配了也不生效。
+    from xhx_agent.hooks import HookEngine, load_hooks
+    from xhx_agent.runtime.config import load_config
     from xhx_agent.runtime.mcp_config import load_mcp_servers
 
+    cfg = load_config(ws)
+
+    # MCP：.xhx/mcp.json（项目级优先，其次全局）；传原始项目根 ws（gitignored 的 .xhx/ 不在 worktree 里）。
     mcp_servers = load_mcp_servers(ws)
 
-    app = XHXApp(providers=[provider], mcp_servers=mcp_servers)
+    # 生命周期钩子：坏配置不该炸启动，解析失败即视为无 hook。
+    try:
+        hooks = load_hooks(cfg.raw_hooks)
+    except Exception:
+        hooks = []
+    hook_engine = HookEngine(hooks) if hooks else None
+
+    app = XHXApp(
+        providers=[provider],
+        mcp_servers=mcp_servers,
+        hook_engine=hook_engine,
+        enable_fork=cfg.enable_fork,
+        enable_verification_agent=cfg.enable_verification_agent,
+        enable_coordinator_mode=cfg.enable_coordinator_mode,
+    )
     app.run()

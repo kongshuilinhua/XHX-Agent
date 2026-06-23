@@ -46,6 +46,12 @@ class ProjectConfig(BaseModel):
     default_permission_mode: str = "default"  # 默认权限模式 (default, auto, bypass)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     verbose: bool = False  # 详细工具调用输出（对标 Claude Code --verbose）
+    # 生命周期钩子（pre_tool_use / post_tool_use 等）；entry 格式见 hooks/loader.load_hooks。
+    raw_hooks: list[dict] = Field(default_factory=list)
+    # 多 agent / 子 agent 高级开关（此前 TUI 启动写死默认、配了不生效）。
+    enable_coordinator_mode: bool = False  # 协调者模式：lead 工具收窄为仅派发
+    enable_fork: bool = False  # 允许子 agent fork 当前对话（继承完整历史）
+    enable_verification_agent: bool = False  # 启用只读验证子 agent
 
 
 def default_config() -> ProjectConfig:
