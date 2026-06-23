@@ -2226,6 +2226,20 @@ class XHXApp(App):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_perm_mode(s: str) -> PermissionMode:
+    """把 config 的 default_permission_mode 字符串解析为 PermissionMode（容错，未知回退 DEFAULT）。"""
+    t = (s or "").strip().lower().replace("_", "").replace("-", "")
+    if t in ("auto", "acceptedits", "accept", "edits"):
+        return PermissionMode.ACCEPT_EDITS
+    if t in ("bypass", "bypasspermissions", "yolo"):
+        return PermissionMode.BYPASS
+    if t == "plan":
+        return PermissionMode.PLAN
+    if t in ("dontask", "noask"):
+        return PermissionMode.DONT_ASK
+    return PermissionMode.DEFAULT
+
+
 def run_textual_console(
     workspace: str | Path | None = None,
     profile: str | None = None,
@@ -2268,10 +2282,20 @@ def run_textual_console(
         hooks = []
     hook_engine = HookEngine(hooks) if hooks else None
 
+    # 初始权限模式（TUI 内仍可 shift+tab 切换）+ worktree 软链目录配置。
+    perm_mode = _resolve_perm_mode(cfg.default_permission_mode)
+    wt_config = None
+    if cfg.worktree_symlink_directories:
+        from xhx_agent.config import WorktreeConfig
+
+        wt_config = WorktreeConfig(symlink_directories=cfg.worktree_symlink_directories)
+
     app = XHXApp(
         providers=[provider],
+        permission_mode=perm_mode,
         mcp_servers=mcp_servers,
         hook_engine=hook_engine,
+        worktree_config=wt_config,
         enable_fork=cfg.enable_fork,
         enable_verification_agent=cfg.enable_verification_agent,
         enable_coordinator_mode=cfg.enable_coordinator_mode,

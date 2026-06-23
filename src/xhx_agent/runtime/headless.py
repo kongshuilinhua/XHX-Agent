@@ -86,7 +86,19 @@ def build_headless_agent(
 
     registry = create_default_registry(workspace=str(ws))
     checker = _build_permission_checker(ws, permission_mode)
-    hook_engine = HookEngine([default_verification_hook()]) if verify else None
+
+    # 钩子：verify 内置 hook + 用户在 .xhx/config.json 配的 hooks。
+    hook_list: list[Any] = []
+    if verify:
+        hook_list.append(default_verification_hook())
+    try:
+        from xhx_agent.hooks import load_hooks
+        from xhx_agent.runtime.config import load_config
+
+        hook_list.extend(load_hooks(load_config(ws).raw_hooks))
+    except Exception:
+        pass
+    hook_engine = HookEngine(hook_list) if hook_list else None
 
     return Agent(
         client=client,
@@ -127,32 +139,51 @@ async def run_headless_task_async(
     except Exception as exc:  # 配置/构造期失败：直接返回 error，不抛给 CLI
         return HeadlessResult(status="error", summary="", error=str(exc))
 
+    # 接入 MCP：连接 .xhx/mcp.json 的 server 并注册工具；任务结束（含异常）后 close。
+    mcp_manager = None
     try:
-        text = await agent.run_to_completion(task, event_callback=event_callback)
-    except Exception as exc:
+        from xhx_agent.runtime.mcp_config import load_mcp_servers
+
+        servers = load_mcp_servers(Path(workspace).resolve())
+        if servers:
+            from xhx_agent.skills.mcp import MCPManager
+
+            mcp_manager = MCPManager()
+            await asyncio.to_thread(mcp_manager.connect_all, servers, None)
+            mcp_manager.register_tools_to_registry(agent.registry)
+    except Exception:
+        mcp_manager = None  # MCP 连接失败不该让 headless 任务失败
+
+    try:
+        try:
+            text = await agent.run_to_completion(task, event_callback=event_callback)
+        except Exception as exc:
+            return HeadlessResult(
+                status="error",
+                summary="",
+                input_tokens=agent.total_input_tokens,
+                output_tokens=agent.total_output_tokens,
+                error=str(exc),
+            )
+
+        verification = ""
+        if agent.hook_engine is not None:
+            for note in agent.hook_engine.drain_notifications():
+                if note.hook_id == "builtin-verification":
+                    verification = note.output
+
         return HeadlessResult(
-            status="error",
-            summary="",
+            status="completed",
+            summary=text,
             input_tokens=agent.total_input_tokens,
             output_tokens=agent.total_output_tokens,
-            error=str(exc),
+            verification=verification,
+            turns=agent.turn_count,
+            changed_files=list(agent.changed_files),
         )
-
-    verification = ""
-    if agent.hook_engine is not None:
-        for note in agent.hook_engine.drain_notifications():
-            if note.hook_id == "builtin-verification":
-                verification = note.output
-
-    return HeadlessResult(
-        status="completed",
-        summary=text,
-        input_tokens=agent.total_input_tokens,
-        output_tokens=agent.total_output_tokens,
-        verification=verification,
-        turns=agent.turn_count,
-        changed_files=list(agent.changed_files),
-    )
+    finally:
+        if mcp_manager is not None:
+            mcp_manager.close()
 
 
 def run_headless_task(workspace: str | Path, task: str, **kwargs: Any) -> HeadlessResult:
