@@ -49,6 +49,10 @@ def _read_command(cmd: list[str]) -> str:
 
 def _read_windows() -> str:
     """通过 Win32 剪贴板 API 读取 CF_UNICODETEXT。"""
+    if sys.platform != "win32":
+        # 仅 Windows 有 ctypes.windll；此守卫也让 mypy 在非 win32 平台判定下方不可达，
+        # 避免 Linux CI 上 windll 的 attr-defined 报错。
+        return ""
     import ctypes
     from ctypes import wintypes
 
