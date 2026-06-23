@@ -1429,7 +1429,9 @@ class XHXApp(App):
 
                         prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
                         await ai_row.mount(prefix)
-                        md = Markdown(strip_emoji(strip_system_reminder(accumulated_text)), classes="message ai-message")
+                        md = Markdown(
+                            strip_emoji(strip_system_reminder(accumulated_text)), classes="message ai-message"
+                        )
                         await ai_row.mount(md)
                         streaming_label = None
                         accumulated_text = ""
@@ -2248,5 +2250,12 @@ def run_textual_console(
 
     provider = ProviderConfig.from_xhx_profile(p)
 
-    app = XHXApp(providers=[provider])
+    # 接入 MCP：加载 .xhx/mcp.json（项目级优先，其次全局 ~/.xhx/mcp.json）的 server 配置。
+    # 传原始项目根 ws（非隔离 worktree——gitignored 的 .xhx/ 不在 worktree 里）。
+    # 无配置文件时返回空列表，app 启动后 _init_mcp 会直接跳过。
+    from xhx_agent.runtime.mcp_config import load_mcp_servers
+
+    mcp_servers = load_mcp_servers(ws)
+
+    app = XHXApp(providers=[provider], mcp_servers=mcp_servers)
     app.run()
