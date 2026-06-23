@@ -36,10 +36,15 @@ def _handle_list(ctx: CommandContext, loader: SkillLoader) -> None:
         ctx.ui.add_system_message("没有已加载的 Skill" if hasattr(loader, "get_catalog") else "暂无可用 Skill")
         return
 
-    lines = ["已加载的 Skill："]
+    name_w = max((len(name) for name, _ in catalog), default=0)
+    lines = [f"已加载的 Skill（共 {len(catalog)} 个，详情用 /skill info <name>）："]
     for name, desc in catalog:
         source = loader.get_source_label(name) if hasattr(loader, "get_source_label") else "unknown"
-        lines.append(f"  {name:<20} {desc}  [{source}]")
+        # 描述可能很长（如 superpowers 的"何时使用"触发说明会写一两百字），列表里折叠空白
+        # 并截断到一行，避免整坨换行；完整内容用 /skill info <name> 查看。
+        one_line = " ".join(desc.split())
+        short = one_line if len(one_line) <= 56 else one_line[:55].rstrip() + "…"
+        lines.append(f"  {name:<{name_w}}  [{source:<7}] {short}")
     ctx.ui.add_system_message("\n".join(lines))
 
 

@@ -166,6 +166,33 @@ def test_skill_command_handlers(tmp_path: Path):
     assert any("重新加载" in msg for msg in ui.messages)
 
 
+def test_skill_list_truncates_long_description(tmp_path: Path):
+    """回归：/skill list 不能把超长描述（如 superpowers 的"何时使用"说明）整行打出。
+
+    应折叠为一行并截断，附省略号；完整内容留给 /skill info。
+    """
+    long_desc = (
+        "You MUST use this before any creative work - creating features, building "
+        "components, adding functionality, or modifying behavior. Explores user intent."
+    )
+    loader = SkillLoader(tmp_path)
+    skill_def = SkillDef(name="brainstorming", description=long_desc, prompt_body="body")
+    loader.load_all = lambda: {"brainstorming": skill_def}
+    loader._cache["brainstorming"] = (skill_def, 0.0)
+
+    ui = MockUI()
+    ctx = CommandContext(args="list", ui=ui, config={"skill_loader": loader})
+    asyncio.run(handle_skill(ctx))
+
+    listing = "\n".join(ui.messages)
+    assert "brainstorming" in listing
+    assert "…" in listing, "超长描述应被截断并加省略号"
+    assert long_desc not in listing, "列表不应包含完整超长描述"
+    # 每行不应失控变长（容许少量列对齐/中文头部余量）。
+    for line in listing.splitlines():
+        assert len(line) <= 90, f"列表行过长: {line!r}"
+
+
 def test_register_skill_commands(tmp_path: Path):
     loader = SkillLoader(tmp_path)
     skill_def = SkillDef(name="my_skill", description="my desc", prompt_body="body")
