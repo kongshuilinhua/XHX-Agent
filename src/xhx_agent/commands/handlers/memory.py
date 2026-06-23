@@ -30,12 +30,17 @@ async def handle_memory(ctx: CommandContext) -> None:
         ctx.ui.add_system_message("记忆已清空" if cleared else "暂无可清空的记忆")
         return
 
-    ctx.ui.add_system_message("用法: /memory [list|clear]")
+    if sub == "edit":
+        mm = ctx.memory_manager
+        ctx.ui.add_system_message(f"编辑记忆文件：\n  用户级: {mm.user_path}\n  项目级: {mm.project_path}")
+        return
+
+    ctx.ui.add_system_message("用法: /memory [list|clear|edit]")
 
 
 MEMORY_COMMAND = Command(
     name="memory",
     description="查看或管理长期记忆",
-    usage="/memory [list|clear]",
+    usage="/memory [list|clear|edit]",
     handler=handle_memory,
 )

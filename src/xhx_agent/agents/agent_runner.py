@@ -360,6 +360,7 @@ class Agent:
         self._team_manager: Any = None
         self.notification_fn: Callable[[], list[str]] | None = None
         self.file_history: Any = None
+        self._current_conversation: ConversationManager | None = None
         # 本轮累计被改动的文件（相对路径），供 stop 事件上的 verification 钩子定向跑测试。
         self._changed_files: list[str] = []
 
@@ -468,8 +469,13 @@ class Agent:
         if self.permission_checker:
             self.permission_checker.mode = mode
 
+    def _build_env_context(self) -> str:
+        return build_environment_context(self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog)
+
     def activate_skill(self, name: str, prompt_body: str) -> None:
         self.active_skills[name] = prompt_body
+        if self._current_conversation is not None:
+            self._current_conversation.update_environment(self._build_env_context())
 
     def clear_active_skills(self) -> None:
         self.active_skills.clear()
@@ -523,10 +529,7 @@ class Agent:
 
     async def run(self, conversation: ConversationManager) -> AsyncIterator[AgentEvent]:
         self._current_conversation = conversation
-        env_context = build_environment_context(
-            self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog
-        )
-        conversation.inject_environment(env_context)
+        conversation.inject_environment(self._build_env_context())
 
         memory_content = self.memory_manager.load() if self.memory_manager else ""
         conversation.inject_long_term_memory(self.instructions_content, memory_content)
@@ -578,7 +581,7 @@ class Agent:
                     message=f"上下文已压缩（压缩前 {compact_result.before_tokens:,} tokens）",
                     boundary=compact_result.boundary,
                 )
-                conversation.inject_environment(env_context)
+                conversation.inject_environment(self._build_env_context())
                 mem = self.memory_manager.load() if self.memory_manager else ""
                 conversation.inject_long_term_memory(self.instructions_content, mem)
             elif isinstance(compact_result, str):
@@ -1052,10 +1055,7 @@ class Agent:
             transcript_path=self._transcript_path,
         )
         if isinstance(result, CompactEvent):
-            env_context = build_environment_context(
-                self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog
-            )
-            conversation.inject_environment(env_context)
+            conversation.inject_environment(self._build_env_context())
             memory_content = self.memory_manager.load() if self.memory_manager else ""
             conversation.inject_long_term_memory(self.instructions_content, memory_content)
             return CompactNotification(
@@ -1073,15 +1073,15 @@ class Agent:
     ) -> str:
         if conversation is None:
             conversation = ConversationManager()
+            self._current_conversation = conversation
 
-            env_context = build_environment_context(
-                self.work_dir, self.active_skills, self._skill_catalog, self._agent_catalog
-            )
-            conversation.inject_environment(env_context)
+            conversation.inject_environment(self._build_env_context())
 
             if self.instructions_content:
                 memory_content = self.memory_manager.load() if self.memory_manager else ""
                 conversation.inject_long_term_memory(self.instructions_content, memory_content)
+        else:
+            self._current_conversation = conversation
 
         if task:
             conversation.add_user_message(task)
@@ -1129,7 +1129,7 @@ class Agent:
                 transcript_path=self._transcript_path,
             )
             if isinstance(compact_result, CompactEvent):
-                conversation.inject_environment(env_context)
+                conversation.inject_environment(self._build_env_context())
 
             deferred_names = self.registry.get_deferred_tool_names()
             if deferred_names:

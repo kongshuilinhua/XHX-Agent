@@ -1,11 +1,41 @@
-"""SkillExecutor — 技能执行器。"""
-
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from xhx_agent.conversation import ConversationManager, Message
+from xhx_agent.skills.parser import SkillDef, substitute_arguments
+from xhx_agent.tools import ToolRegistry
+
+if TYPE_CHECKING:
+    pass
 
 log = logging.getLogger(__name__)
+
+SYSTEM_TOOL_NAMES = frozenset({"LoadSkill"})
+FORK_RECENT_COUNT = 5
+
+
+class SkillDependencyError(Exception):
+    pass
+
+
+def filter_tool_registry(registry: ToolRegistry, allowed: list[str]) -> ToolRegistry:
+    if not allowed:
+        return registry
+
+    filtered = ToolRegistry()
+    for name in allowed:
+        tool = registry.get(name)
+        if tool is None:
+            raise SkillDependencyError(f"Skill requires tool '{name}' but it is not registered")
+        filtered.register(tool)
+
+    for tool in registry.list_tools():
+        if getattr(tool, "is_system_tool", False) and filtered.get(tool.name) is None:
+            filtered.register(tool)
+
+    return filtered
 
 
 class SkillExecutor:
@@ -13,21 +43,108 @@ class SkillExecutor:
 
     def __init__(
         self,
-        loader: Any = None,
         agent: Any = None,
         client: Any = None,
         protocol: str = "openai-compat",
+        loader: Any = None,
         **kwargs: Any,
     ) -> None:
-        self._loader = loader
+        self.agent = agent
         self._agent = agent
+        self.client = client
         self._client = client
+        self.protocol = protocol
         self._protocol = protocol
-        self.active_skills: dict[str, str] = {}
+        self._loader = loader
 
     def get_active_skill_names(self) -> list[str]:
-        return list(self.active_skills.keys())
+        if self.agent and hasattr(self.agent, "active_skills"):
+            return list(self.agent.active_skills.keys())
+        return []
 
-    async def execute_inline(self, skill_name: str, task: str) -> str:
-        """内联执行：将 SOP 注入 agent。"""
-        return ""
+    def execute_inline(self, skill: SkillDef, args: str) -> None:
+        prompt = substitute_arguments(skill.prompt_body, args)
+        if self.agent:
+            self.agent.activate_skill(skill.name, prompt)
+            if getattr(self.agent, "recovery_state", None) is not None:
+                self.agent.recovery_state.record_skill_invocation(skill.name, prompt)
+
+    async def execute_fork(self, skill: SkillDef, args: str) -> str:
+        prompt = substitute_arguments(skill.prompt_body, args)
+        if self.agent and getattr(self.agent, "recovery_state", None) is not None:
+            self.agent.recovery_state.record_skill_invocation(skill.name, skill.prompt_body)
+
+        fork_conv = ConversationManager()
+
+        context_messages = self._build_fork_context(skill.context)
+        for msg in context_messages:
+            if msg.role == "user":
+                fork_conv.add_user_message(msg.content)
+            else:
+                fork_conv.add_assistant_message(msg.content)
+
+        fork_conv.add_user_message(prompt)
+
+        try:
+            registry_src = self.agent.registry if self.agent else ToolRegistry()
+            filtered_registry = filter_tool_registry(registry_src, skill.allowed_tools)
+        except SkillDependencyError as e:
+            return f"Skill execution failed: {e}"
+
+        from xhx_agent.agent import Agent as AgentClass
+        from xhx_agent.agent import ErrorEvent, LoopComplete, StreamText
+
+        work_dir = self.agent.work_dir if self.agent else "."
+        max_iterations = self.agent.max_iterations if self.agent else 50
+        context_window = self.agent.context_window if self.agent else 200_000
+
+        fork_agent = AgentClass(
+            client=self.client,
+            registry=filtered_registry,
+            protocol=self.protocol,
+            work_dir=work_dir,
+            max_iterations=max_iterations,
+            permission_checker=None,
+            context_window=context_window,
+        )
+
+        result_parts: list[str] = []
+        async for event in fork_agent.run(fork_conv):
+            if isinstance(event, StreamText):
+                result_parts.append(event.text)
+            elif isinstance(event, ErrorEvent):
+                result_parts.append(f"\n[Error: {event.message}]")
+            elif isinstance(event, LoopComplete):
+                break
+
+        return "".join(result_parts)
+
+    def _build_fork_context(self, mode: str) -> list[Message]:
+        if mode == "none":
+            return []
+
+        history = []
+        if self.agent and getattr(self.agent, "_current_conversation", None) is not None:
+            history = self.agent._current_conversation.history
+
+        main_history = history if history else []
+
+        if mode == "recent":
+            content_messages = [m for m in main_history if m.content and not m.tool_results]
+            return content_messages[-FORK_RECENT_COUNT:]
+
+        if mode == "full":
+            content_messages = [m for m in main_history if m.content and not m.tool_results]
+            if not content_messages:
+                return []
+            summary_parts = []
+            for m in content_messages:
+                prefix = "User" if m.role == "user" else "Assistant"
+                text = m.content[:200]
+                if len(m.content) > 200:
+                    text += "..."
+                summary_parts.append(f"{prefix}: {text}")
+            summary = "## Previous conversation summary\n\n" + "\n\n".join(summary_parts)
+            return [Message(role="user", content=summary)]
+
+        return []

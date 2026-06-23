@@ -95,6 +95,7 @@ from xhx_agent.tools.agent_tool import AgentTool
 from xhx_agent.tools.ask_user import AskUserEvent, AskUserTool
 from xhx_agent.tools.impl.tool_search import ToolSearchTool
 from xhx_agent.tools.load_skill import LoadSkill
+from xhx_agent.tui.clipboard import read_clipboard
 from xhx_agent.tui.format import strip_emoji
 from xhx_agent.worktree.cleanup import start_stale_cleanup_task
 from xhx_agent.worktree.manager import WorktreeManager
@@ -149,6 +150,7 @@ class ChatInput(TextArea):
         Binding("enter", "submit", "Submit", priority=True),
         Binding("shift+enter", "newline", "Newline", priority=True),
         Binding("ctrl+j", "newline", "Newline", priority=True),
+        Binding("ctrl+u", "clear_input", "Clear input", priority=True),
         Binding("tab", "complete", "Complete", priority=True),
         Binding("escape", "dismiss_popup", "Dismiss", priority=True),
         Binding("up", "nav_up", "Navigate up", priority=True),
@@ -222,6 +224,35 @@ class ChatInput(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+    def action_clear_input(self) -> None:
+        """Ctrl+U：一键清空整个输入框（含多行草稿），并复位历史导航/补全状态。
+
+        基类的 ctrl+u 只删当前行光标前的部分；对聊天框来说，整框清空才是预期，
+        这里覆盖之。
+        """
+        self.clear()
+        self._history_index = -1
+        self._history_draft = ""
+        popup = self._popup()
+        if popup is not None:
+            popup.hide()
+
+    def action_paste(self) -> None:
+        """Ctrl+V：从系统剪贴板插入文本。
+
+        Textual 默认的 action_paste 读的是 app 内部剪贴板（只含 app 内复制过的内容），
+        在 Windows 上粘不进系统剪贴板的文本。这里改为直接读 OS 剪贴板；读不到时回退
+        到父类行为（仍能粘贴 app 内复制的内容）。整段一次性 replace，粘贴的换行保持为
+        字面换行，不会被 enter→submit 绑定误触发提交。
+        """
+        text = read_clipboard()
+        if not text:
+            super().action_paste()
+            return
+        start, end = self.selection
+        result = self.replace(text, start, end)
+        self.move_cursor(result.end_location)
 
     def action_complete(self) -> None:
         popup = self._popup()

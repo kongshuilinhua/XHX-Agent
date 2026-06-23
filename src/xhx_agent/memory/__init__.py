@@ -337,6 +337,19 @@ class SessionManager:
                 pass
         return session
 
+    def delete(self, session_id: str) -> bool:
+        """删除某会话的 jsonl + meta 文件；返回是否真的删了文件。"""
+        deleted = False
+        for suffix in (".jsonl", ".meta"):
+            p = self._sessions_dir / f"{session_id}{suffix}"
+            if p.exists():
+                try:
+                    p.unlink()
+                    deleted = True
+                except OSError:
+                    pass
+        return deleted
+
     def cleanup(self) -> None:
         """删除空会话（无消息的 jsonl）。"""
         try:

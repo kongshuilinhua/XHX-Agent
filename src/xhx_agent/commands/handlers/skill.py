@@ -2,37 +2,87 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from xhx_agent.commands import Command, CommandContext
+
+if TYPE_CHECKING:
+    from xhx_agent.skills.loader import SkillLoader
 
 
 async def handle_skill(ctx: CommandContext) -> None:
-    """列出或加载 Skill。"""
-    skill_loader = ctx.config.get("skill_loader")
-    if skill_loader is None:
-        ctx.ui.add_system_message("Skill 加载器未初始化")
+    parts = ctx.args.strip().split(maxsplit=1)
+    subcmd = parts[0] if parts else "list"
+    sub_args = parts[1] if len(parts) > 1 else ""
+
+    loader: SkillLoader | None = ctx.config.get("skill_loader")
+    if loader is None:
+        ctx.ui.add_system_message("Skill 系统未初始化")
         return
 
-    sub = ctx.args.strip() if ctx.args else "list"
+    if subcmd == "list":
+        _handle_list(ctx, loader)
+    elif subcmd == "info":
+        _handle_info(ctx, loader, sub_args)
+    elif subcmd == "reload":
+        await _handle_reload(ctx, loader)
+    else:
+        ctx.ui.add_system_message(f"未知子命令：{subcmd}\n用法：/skill list | /skill info <name> | /skill reload")
 
-    if sub == "list" or sub == "":
-        skills = skill_loader.list_all() if hasattr(skill_loader, "list_all") else []
-        if not skills:
-            ctx.ui.add_system_message("暂无可用 Skill")
-            return
-        lines = ["可用 Skill："]
-        for s in skills:
-            name = getattr(s, "name", str(s))
-            desc = getattr(s, "description", "") or ""
-            lines.append(f"  {name:<20} {desc}")
-        ctx.ui.add_system_message("\n".join(lines))
+
+def _handle_list(ctx: CommandContext, loader: SkillLoader) -> None:
+    catalog = loader.get_catalog() if hasattr(loader, "get_catalog") else []
+    if not catalog:
+        ctx.ui.add_system_message("没有已加载的 Skill" if hasattr(loader, "get_catalog") else "暂无可用 Skill")
         return
 
-    ctx.ui.add_system_message("用法: /skill [list]")
+    lines = ["已加载的 Skill："]
+    for name, desc in catalog:
+        source = loader.get_source_label(name) if hasattr(loader, "get_source_label") else "unknown"
+        lines.append(f"  {name:<20} {desc}  [{source}]")
+    ctx.ui.add_system_message("\n".join(lines))
+
+
+def _handle_info(ctx: CommandContext, loader: SkillLoader, name: str) -> None:
+    if not name:
+        ctx.ui.add_system_message("用法：/skill info <name>")
+        return
+
+    skill = loader.get(name) if hasattr(loader, "get") else None
+    if skill is None:
+        ctx.ui.add_system_message(f"未找到 Skill：{name}")
+        return
+
+    source = loader.get_source_label(name) if hasattr(loader, "get_source_label") else "unknown"
+    lines = [
+        f"Skill: {skill.name}",
+        f"Description: {skill.description}",
+        f"Mode: {skill.mode}",
+        f"Context: {skill.context}",
+        f"Model: {skill.model or '(default)'}",
+        f"AllowedTools: {', '.join(skill.allowed_tools) or '(all)'}",
+        f"Source: {source}",
+        f"Path: {skill.source_path or '(builtin)'}",
+        f"Directory: {skill.is_directory}",
+    ]
+    ctx.ui.add_system_message("\n".join(lines))
+
+
+async def _handle_reload(ctx: CommandContext, loader: SkillLoader) -> None:
+    skills = loader.reload() if hasattr(loader, "reload") else {}
+
+    registry = ctx.config.get("registry")
+    if registry is not None:
+        from xhx_agent.commands.handlers.skill_register import register_skill_commands
+
+        register_skill_commands(registry, loader, ctx.config.get("skill_executor"))
+
+    ctx.ui.add_system_message(f"已重新加载 {len(skills)} 个 Skill")
 
 
 SKILL_COMMAND = Command(
     name="skill",
-    description="列出可用 Skill",
-    usage="/skill [list]",
+    description="管理 Skill 技能包",
+    usage="/skill list | /skill info <name> | /skill reload",
     handler=handle_skill,
 )

@@ -248,3 +248,19 @@ class SkillLoader:
                 logger.warning("Skipping built-in skill %s: %s", item.name, e)
 
         return results
+
+    def reload(self) -> dict[str, SkillDef]:
+        return self.load_all()
+
+    def get_source_label(self, name: str) -> str:
+        sd = self.get(name)
+        if sd is None:
+            return "unknown"
+        if sd.source_path is None:
+            return "builtin"
+        path_str = str(sd.source_path)
+        if path_str.startswith(str(self.skills_dir)):
+            return "project"
+        if path_str.startswith(str(self.user_skills_dir)):
+            return "user"
+        return "builtin"
