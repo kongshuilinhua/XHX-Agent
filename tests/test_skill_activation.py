@@ -1,19 +1,20 @@
 import asyncio
 from pathlib import Path
+
 import pytest
 from pydantic import BaseModel
 
-from xhx_agent.conversation import ConversationManager, Message
+from xhx_agent.commands import CommandContext, CommandRegistry
+from xhx_agent.commands.handlers.skill import handle_skill
+from xhx_agent.commands.handlers.skill_register import register_skill_commands
+from xhx_agent.conversation import ConversationManager
+from xhx_agent.skills.directory import register_skill_tools
+from xhx_agent.skills.executor import SkillDependencyError, SkillExecutor, filter_tool_registry
+from xhx_agent.skills.loader import SkillLoader
 from xhx_agent.skills.parser import SkillDef
-from xhx_agent.skills.executor import SkillExecutor, filter_tool_registry, SkillDependencyError
-from xhx_agent.skills.directory import register_skill_tools, SkillCustomTool
 from xhx_agent.tools import ToolRegistry
 from xhx_agent.tools.base import Tool, ToolResult
 from xhx_agent.tools.load_skill import LoadSkill, LoadSkillParams
-from xhx_agent.commands import CommandRegistry, CommandContext, Command
-from xhx_agent.commands.handlers.skill import handle_skill
-from xhx_agent.commands.handlers.skill_register import register_skill_commands
-from xhx_agent.skills.loader import SkillLoader
 
 
 def test_conversation_update_environment():
