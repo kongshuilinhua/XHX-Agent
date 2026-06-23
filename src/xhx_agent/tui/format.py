@@ -20,6 +20,24 @@ def strip_emoji(text: str) -> str:
     return _EMOJI_RE.sub("", text)
 
 
+# 弱模型（如 deepseek）在 plan 模式下有时把注入的 <system-reminder> 内容当普通文本
+# 复述出来，导致内部提示词原文泄漏到聊天区。渲染前一律剥掉，避免污染界面。
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def strip_system_reminder(text: str) -> str:
+    """剥掉模型复述出来的 <system-reminder> 块（仅显示层，不改底层文本）。
+
+    成对标签整段移除；若只剩未闭合的开标签（流式途中或模型只念了开头），
+    从开标签起截断到结尾——宁可暂时少显示，也不让内部提示词泄漏给用户。
+    """
+    text = _SYSTEM_REMINDER_RE.sub("", text)
+    idx = text.lower().find("<system-reminder>")
+    if idx != -1:
+        text = text[:idx]
+    return text
+
+
 def human_tokens(n: int) -> str:
     """Format an integer number of tokens to a human-readable string (e.g. 8.8k)."""
     if abs(n) < 1000:

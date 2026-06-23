@@ -1,4 +1,4 @@
-from xhx_agent.tui.format import context_meter, human_tokens, line_style
+from xhx_agent.tui.format import context_meter, human_tokens, line_style, strip_system_reminder
 
 
 def test_human_tokens() -> None:
@@ -72,3 +72,18 @@ def test_line_style() -> None:
     # Test default case
     assert line_style("ordinary text") == ""
     assert line_style("") == ""
+
+
+def test_strip_system_reminder() -> None:
+    # 成对标签整段剥掉，保留前后正常文本
+    assert strip_system_reminder("前面<system-reminder>Plan mode is active...</system-reminder>后面") == "前面后面"
+    # 多个块都剥掉
+    assert strip_system_reminder("<system-reminder>a</system-reminder>x<system-reminder>b</system-reminder>") == "x"
+    # 跨行（模型复述的多行提示）
+    multiline = "好的\n<system-reminder>\nPlan mode is active.\n## Plan File Info\n</system-reminder>\n开始"
+    assert "system-reminder" not in strip_system_reminder(multiline)
+    assert "Plan mode" not in strip_system_reminder(multiline)
+    # 未闭合的开标签（流式途中）→ 从开标签截断到结尾
+    assert strip_system_reminder("正常内容<system-reminder>Plan mode is acti") == "正常内容"
+    # 无标签时原样返回
+    assert strip_system_reminder("普通回复") == "普通回复"

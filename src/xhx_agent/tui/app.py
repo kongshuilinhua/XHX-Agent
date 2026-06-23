@@ -96,7 +96,7 @@ from xhx_agent.tools.ask_user import AskUserEvent, AskUserTool
 from xhx_agent.tools.impl.tool_search import ToolSearchTool
 from xhx_agent.tools.load_skill import LoadSkill
 from xhx_agent.tui.clipboard import read_clipboard
-from xhx_agent.tui.format import strip_emoji
+from xhx_agent.tui.format import strip_emoji, strip_system_reminder
 from xhx_agent.worktree.cleanup import start_stale_cleanup_task
 from xhx_agent.worktree.manager import WorktreeManager
 
@@ -1414,7 +1414,7 @@ class XHXApp(App):
 
                     t = RichText()
                     t.append("● ", style="bold color(99)")
-                    t.append(strip_emoji(accumulated_text))
+                    t.append(strip_emoji(strip_system_reminder(accumulated_text)))
                     streaming_label.update(t)
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
@@ -1429,7 +1429,7 @@ class XHXApp(App):
 
                         prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
                         await ai_row.mount(prefix)
-                        md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
+                        md = Markdown(strip_emoji(strip_system_reminder(accumulated_text)), classes="message ai-message")
                         await ai_row.mount(md)
                         streaming_label = None
                         accumulated_text = ""
@@ -1553,7 +1553,7 @@ class XHXApp(App):
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
                 await streaming_label.remove()
-                md = Markdown(strip_emoji(accumulated_text), classes="message ai-message")
+                md = Markdown(strip_emoji(strip_system_reminder(accumulated_text)), classes="message ai-message")
                 await ai_row.mount(md)
             elif streaming_label is not None:
                 await streaming_label.remove()
