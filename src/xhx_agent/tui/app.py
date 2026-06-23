@@ -1137,7 +1137,12 @@ class XHXApp(App):
         )
 
     def _set_session(self, session: Session | None) -> None:
-        # /new 与 /session new 会传 None 以清空会话——不能再去取 None.session_id。
+        # /new 与 /session new 传 None 表示"开新会话"：这里就地新建一个空 Session，
+        # 而不是把 self.session 置空。置空会让随后的 _send_message 无处落盘，新会话也
+        # 无法被 /session resume 找回；新建后把已落盘计数清零，避免沿用旧会话的游标。
+        if session is None and self.session_manager is not None:
+            session = self.session_manager.create()
+            self._session_saved_count = 0
         self.session = session
         if self.agent:
             self.agent.session_id = session.session_id if session is not None else ""
@@ -1157,8 +1162,12 @@ class XHXApp(App):
         )
         self.session.append_record(record)
 
-    def _set_conversation(self, conv: ConversationManager) -> None:
-        self.conversation = conv
+    def _set_conversation(self, conv: ConversationManager | None) -> None:
+        # /new 传 None 表示清空对话——新建一个空 ConversationManager 以维持不变量
+        # （self.conversation 永远是有效对象）。否则 _send_message 里的
+        # self.conversation.add_user_message(...) 会因 None 抛 AttributeError：既不回复，
+        # 又把 _streaming 卡在 True，导致下一条消息只显示 "(response interrupted)"。
+        self.conversation = conv if conv is not None else ConversationManager()
 
     def _clear_chat(self) -> None:
         chat = self.query_one("#chat-area", VerticalScroll)
