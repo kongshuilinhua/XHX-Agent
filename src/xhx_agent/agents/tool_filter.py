@@ -30,6 +30,31 @@ CUSTOM_AGENT_DISALLOWED_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# 协调者模式下顶层 agent 允许的工具：只保留派发/通信/产出，逼其把活派给 worker、自己不直接动手。
+COORDINATOR_MODE_ALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "Agent",
+        "SendMessage",
+        "SyntheticOutput",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskList",
+        "TaskGet",
+    }
+)
+
+
+def apply_coordinator_filter(registry: ToolRegistry) -> ToolRegistry:
+    """协调者模式：把工具收窄到只剩派发/通信类（派活给 worker，自己不直接干活）。"""
+    from xhx_agent.tools import ToolRegistry as _ToolRegistry
+
+    filtered = _ToolRegistry()
+    for tool in registry.list_tools():
+        if tool.name in COORDINATOR_MODE_ALLOWED_TOOLS:
+            filtered.register(tool)
+    return filtered
+
 
 def resolve_agent_tools(
     parent_registry: ToolRegistry,

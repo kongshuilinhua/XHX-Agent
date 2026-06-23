@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
+
+def is_coordinator_mode(enable_flag: bool = False) -> bool:
+    """协调者模式是否激活：需显式开启 enable_flag；
+    可用环境变量 XHX_COORDINATOR_MODE=0/false/no/off 强制关闭。"""
+    if not enable_flag:
+        return False
+    val = os.environ.get("XHX_COORDINATOR_MODE", "").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
 
 def get_coordinator_system_prompt(agent_catalog: list[tuple[str, str]] | None = None) -> str:
     """生成协调者 Agent 的 system prompt。

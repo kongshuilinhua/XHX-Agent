@@ -58,9 +58,23 @@ class TeamCreateTool(Tool):
         except Exception as e:
             return ToolResult(output=f"创建团队失败: {e}", is_error=True)
 
+        # 协调者模式：把顶层 agent 的工具收窄为仅派发/通信，并保留完整 registry 供子 agent 用。
+        coordinator_note = ""
+        from xhx_agent.teams.coordinator import is_coordinator_mode
+
+        if is_coordinator_mode(self._enable_coordinator_mode):
+            from xhx_agent.agents.tool_filter import apply_coordinator_filter
+
+            self._parent_agent.coordinator_mode = True
+            self._parent_agent._team_manager = self._team_manager
+            self._parent_agent._full_registry = self._parent_agent.registry
+            self._parent_agent.registry = apply_coordinator_filter(self._parent_agent.registry)
+            coordinator_note = "\n协调者模式已激活：工具已收窄为仅派发/通信。"
+
         return ToolResult(
             output=(
                 f"Team '{team.name}' created (backend: {backend.value}).\n"
                 f"用 Agent 工具传 team_name='{team.name}' 和 name=<队友名> 生成队友。"
+                f"{coordinator_note}"
             )
         )
