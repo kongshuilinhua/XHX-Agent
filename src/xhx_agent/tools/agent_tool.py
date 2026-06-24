@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from xhx_agent.teams.models import BackendType
 from xhx_agent.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -16,6 +17,12 @@ if TYPE_CHECKING:
     from xhx_agent.client import LLMClient
 
 log = logging.getLogger(__name__)
+
+
+def _shell_quote(s: str) -> str:
+    import shlex
+
+    return shlex.quote(s)
 
 
 class AgentToolParams(BaseModel):
@@ -418,13 +425,25 @@ class AgentTool(Tool):
         )
         self._team_manager.register_member(p.team_name, member)
 
-        # 8. 仅 in-process 模式：直接用 task_manager 执行
-        task_id = self._task_manager.launch(
-            agent=sub_agent,
-            task="" if is_fork else p.prompt,
-            name=teammate_name,
-            fork_conversation=conversation if is_fork else None,
-        )
+        # 8. 根据后端类型执行队友
+        if backend == BackendType.TMUX:
+            from xhx_agent.teams.spawn import spawn_tmux_teammate
+
+            cmd = f"python -m xhx_agent.cli.main --headless --work-dir {wt.path} --prompt {_shell_quote(p.prompt)}"
+            tmux_handle = spawn_tmux_teammate(
+                command=cmd,
+                work_dir=str(wt.path),
+                name=teammate_name,
+                team_name=p.team_name or "",
+            )
+            task_id = f"tmux-{tmux_handle.pane_id}"
+        else:
+            task_id = self._task_manager.launch(
+                agent=sub_agent,
+                task="" if is_fork else p.prompt,
+                name=teammate_name,
+                fork_conversation=conversation if is_fork else None,
+            )
 
         return ToolResult(
             output=(

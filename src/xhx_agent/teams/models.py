@@ -13,6 +13,7 @@ from xhx_agent.teams.progress import TeammateProgress
 
 class BackendType(StrEnum):
     IN_PROCESS = "in-process"
+    TMUX = "tmux"
 
 
 @dataclass

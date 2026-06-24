@@ -12,7 +12,7 @@ class RepairDecision(BaseModel):
     reason: str
 
 
-def decide_repair(verification_status: str, attempts_used: int, auto_repair_enabled: bool = False) -> RepairDecision:
+def decide_repair(verification_status: str, attempts_used: int, auto_repair_enabled: bool = True) -> RepairDecision:
     if verification_status != "failed":
         return RepairDecision(
             should_repair=False,
@@ -29,7 +29,7 @@ def decide_repair(verification_status: str, attempts_used: int, auto_repair_enab
         return RepairDecision(
             should_repair=False,
             attempts_used=attempts_used,
-            reason="Auto repair is not enabled in v0.2 baseline implementation.",
+            reason="Auto repair is not enabled.",
         )
     return RepairDecision(
         should_repair=True,

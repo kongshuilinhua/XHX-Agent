@@ -527,12 +527,103 @@ class Agent:
             for n in self.hook_engine.drain_notifications()
         ]
 
+    def _inject_context_pack_memories(self, conversation: ConversationManager) -> None:
+        """通过 compile_context_pack 召回记忆并注入 system reminder（headless 路径也生效）。"""
+        try:
+            from xhx_agent.context.compiler import compile_context_pack
+            from xhx_agent.repo_intel.scanner import ProjectScan
+
+            workspace = Path(self.work_dir)
+            task = ""
+            if conversation.history:
+                for msg in reversed(conversation.history):
+                    if msg.role == "user" and msg.content:
+                        task = msg.content[:500]
+                        break
+
+            if not task:
+                return
+
+            scan = ProjectScan.quick_scan(workspace) if hasattr(ProjectScan, "quick_scan") else ProjectScan()
+
+            pack = compile_context_pack(
+                workspace=workspace,
+                task=task,
+                scan=scan,
+                changed_files=self._changed_files or None,
+                budget_tokens=3000,
+            )
+
+            memory_items = [item for item in pack.items if item.kind.startswith("memory:")]
+            if memory_items:
+                parts = [f"[{item.source}] {item.content}" for item in memory_items]
+                reminder = "<context-pack-memories>\n" + "\n\n".join(parts) + "\n</context-pack-memories>"
+                conversation.add_system_reminder(reminder)
+        except Exception:
+            log.debug("Context-pack memory injection skipped", exc_info=True)
+
+    async def _run_verification_gate(self, conversation: ConversationManager) -> str:
+        """完成前验证关卡：推断并运行验证命令，失败则注入对话让模型修复。"""
+        from xhx_agent.safety.repair import decide_repair
+        from xhx_agent.verification.router import infer_verification
+
+        plan = infer_verification(Path(self.work_dir), self._changed_files)
+        if not plan.commands:
+            self._verification_passed = True
+            return "pass"
+
+        attempts = getattr(self, "_repair_attempts", 0)
+        all_passed = True
+        failure_output: list[str] = []
+
+        for cmd in plan.commands:
+            try:
+                import subprocess
+
+                result = subprocess.run(
+                    cmd.command,
+                    shell=True,
+                    cwd=self.work_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    all_passed = False
+                    output = (result.stdout + result.stderr).strip()
+                    if len(output) > 3000:
+                        output = output[:3000] + "\n...<truncated>"
+                    failure_output.append(f"$ {cmd.command}\nExit code: {result.returncode}\n{output}")
+            except Exception as e:
+                all_passed = False
+                failure_output.append(f"$ {cmd.command}\nError: {e}")
+
+        if all_passed:
+            self._verification_passed = True
+            return "pass"
+
+        decision = decide_repair("failed", attempts)
+        self._repair_attempts = attempts + 1
+
+        if decision.should_repair:
+            repair_msg = "Verification FAILED before completion. Fix the issues and try again.\n\n" + "\n\n".join(
+                failure_output
+            )
+            conversation.add_user_message(repair_msg)
+            return "retry"
+
+        self._verification_passed = True
+        log.warning("Verification failed but repair attempts exhausted; proceeding")
+        return "pass"
+
     async def run(self, conversation: ConversationManager) -> AsyncIterator[AgentEvent]:
         self._current_conversation = conversation
         conversation.inject_environment(self._build_env_context())
 
         memory_content = self.memory_manager.load() if self.memory_manager else ""
         conversation.inject_long_term_memory(self.instructions_content, memory_content)
+
+        self._inject_context_pack_memories(conversation)
 
         if self.hook_engine:
             ctx = self._build_hook_context("session_start")
@@ -683,6 +774,13 @@ class Agent:
             if not response.tool_calls:
                 conversation.add_assistant_message(response.text, thinking_blocks=conv_thinking)
                 self._loop_count += 1
+
+                # 完成前验证关卡：有变更文件时自动运行验证
+                if self._changed_files and not getattr(self, "_verification_passed", False):
+                    gate_result = await self._run_verification_gate(conversation)
+                    if gate_result == "retry":
+                        continue
+
                 if self._loop_count % MEMORY_EXTRACTION_INTERVAL == 0 and self.memory_manager:
                     asyncio.ensure_future(self._extract_memories(conversation))
                 if self.hook_engine:

@@ -97,7 +97,6 @@ class WorktreeConfig:
 
     enabled: bool = True
     auto_cleanup: bool = True
-    symlink_dirs: list[str] = field(default_factory=list)
     symlink_directories: list[str] = field(default_factory=list)
     stale_cleanup_interval: int = 300
     stale_cutoff_hours: int = 24

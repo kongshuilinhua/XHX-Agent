@@ -65,6 +65,13 @@ class SkillExecutor:
     def execute_inline(self, skill: SkillDef, args: str) -> None:
         prompt = substitute_arguments(skill.prompt_body, args)
         if self.agent:
+            if skill.allowed_tools:
+                try:
+                    registry_src = self.agent.registry if hasattr(self.agent, "registry") else ToolRegistry()
+                    filtered = filter_tool_registry(registry_src, skill.allowed_tools)
+                    self.agent.registry = filtered
+                except SkillDependencyError:
+                    log.warning("Skill '%s' tool filtering failed, using full registry", skill.name)
             self.agent.activate_skill(skill.name, prompt)
             if getattr(self.agent, "recovery_state", None) is not None:
                 self.agent.recovery_state.record_skill_invocation(skill.name, prompt)
