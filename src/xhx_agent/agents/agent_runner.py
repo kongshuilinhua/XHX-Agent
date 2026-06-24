@@ -531,7 +531,7 @@ class Agent:
         """通过 compile_context_pack 召回记忆并注入 system reminder（headless 路径也生效）。"""
         try:
             from xhx_agent.context.compiler import compile_context_pack
-            from xhx_agent.repo_intel.scanner import ProjectScan
+            from xhx_agent.repo_intel.scanner import scan_project
 
             workspace = Path(self.work_dir)
             task = ""
@@ -544,7 +544,7 @@ class Agent:
             if not task:
                 return
 
-            scan = ProjectScan.quick_scan(workspace) if hasattr(ProjectScan, "quick_scan") else ProjectScan()
+            scan = scan_project(workspace)
 
             pack = compile_context_pack(
                 workspace=workspace,
