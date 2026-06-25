@@ -91,3 +91,61 @@ def test_permission_checker_blocks_destructive_out_of_scope(tmp_path: Path) -> N
         tool_category="write",
     )
     assert decision.effect == "deny"
+
+
+def _cmd_checker(tmp_path: Path, mode: PermissionMode) -> PermissionChecker:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    return PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=PathSandbox(workspace),
+        rule_engine=RuleEngine(),
+        mode=mode,
+    )
+
+
+def test_dangerous_detector_self_kill_patterns() -> None:
+    """按映像名/进程名杀 python = agent 自杀，必须被绝对禁令层捕获；按 PID 杀不误伤。"""
+    det = DangerousCommandDetector()
+    assert det.detect("taskkill /f /im python.exe")[0]
+    assert det.detect("taskkill /IM PythonW.exe")[0]
+    assert det.detect("killall python")[0]
+    assert det.detect("pkill -9 python3")[0]
+    # 按 PID 杀、杀别的进程，不该误伤（仍可用来停具体子进程，如 dev server）
+    assert not det.detect("taskkill /pid 1234 /f")[0]
+    assert not det.detect("taskkill /im node.exe")[0]
+    assert not det.detect("kill 1234")[0]
+
+
+def test_self_kill_denied_in_all_modes(tmp_path: Path) -> None:
+    """回归：``taskkill /f /im python.exe`` 会把 agent 自身（python.exe）强杀，
+
+    导致终端卡在鼠标上报模式喷乱码。历史 bug 是 bypass 短路在所有安全层之前；
+    现在绝对禁令层在短路之前，任何模式（含 bypass / dontAsk）都拦。
+    """
+    for mode in (PermissionMode.BYPASS, PermissionMode.DONT_ASK, PermissionMode.DEFAULT):
+        d = _cmd_checker(tmp_path, mode).check(
+            "Bash", {"command": "taskkill /f /im python.exe 2>nul"}, tool_category="command"
+        )
+        assert d.effect == "deny", mode
+    for cmd in ("killall python", "pkill -9 python3"):
+        d = _cmd_checker(tmp_path, PermissionMode.BYPASS).check("Bash", {"command": cmd}, tool_category="command")
+        assert d.effect == "deny", cmd
+
+
+def test_bypass_allows_kill_by_pid(tmp_path: Path) -> None:
+    """设计意图：bypass 是用户主动全放行，按 PID 停子进程放行；只有「按映像名杀 python」
+    这类自杀绝对禁令在 bypass 下也拦。"""
+    d = _cmd_checker(tmp_path, PermissionMode.BYPASS).check(
+        "Bash", {"command": "taskkill /pid 12345 /f"}, tool_category="command"
+    )
+    assert d.effect == "allow"
+
+
+def test_risk_gate_unifies_with_decide_terminal(tmp_path: Path) -> None:
+    """Layer 1c：非 bypass 模式下 checker 与 decide_terminal 统一——risk.py 判 DENY 的命令
+    （含按 PID 杀的 taskkill）在 checker 里也 deny，消除「一条闸门拦一条漏」。"""
+    d = _cmd_checker(tmp_path, PermissionMode.DEFAULT).check(
+        "Bash", {"command": "taskkill /pid 12345 /f"}, tool_category="command"
+    )
+    assert d.effect == "deny"

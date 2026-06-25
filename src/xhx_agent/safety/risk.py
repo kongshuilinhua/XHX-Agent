@@ -86,6 +86,7 @@ DENY_EXECUTABLES = frozenset(
         "poweroff",
         "kill",
         "killall",
+        "pkill",
         "taskkill",
         "reg",
         "regedit",

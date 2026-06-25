@@ -26,6 +26,18 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"curl\s+.*\|\s*(ba)?sh"), "管道执行远程脚本"),
     (re.compile(r"wget\s+.*\|\s*(ba)?sh"), "管道执行远程脚本"),
     (re.compile(r">\s*/dev/sd"), "覆盖磁盘设备"),
+    # 按映像名/进程名强杀 python 解释器 = agent 自杀：agent 自身就是 python.exe，
+    # 被 force-kill 后来不及还原终端（残留鼠标上报模式 → 提示符喷转义序列乱码）/ 清理子进程。
+    # 这是「绝对禁令」：即使 bypass 模式也不放行。只拦「按名杀」，不拦「按 PID 杀」
+    # （taskkill /pid <n>、kill <pid> 仍可用来停掉某个具体子进程，如 dev server）。
+    (
+        re.compile(r"taskkill\b[^\r\n]*?/im\s+[\"']?(?:pythonw|python3|python|pyw|py)\b", re.IGNORECASE),
+        "按映像名强杀 python 进程（会杀死 agent 自身）",
+    ),
+    (
+        re.compile(r"\b(?:killall|pkill)\b[^\r\n]*\bpython", re.IGNORECASE),
+        "按进程名杀 python（会杀死 agent 自身）",
+    ),
 ]
 
 # ---------------------------------------------------------------------------

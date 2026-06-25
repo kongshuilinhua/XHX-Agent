@@ -3,10 +3,16 @@
 检查层级（按顺序）：
     Layer 0 — Plan 模式例外放行（只放行 plan 相关工具 + plan 文件写入）
     Layer 1 — 安全命令白名单（is_safe_command 自动放行）
-    Layer 1b— 危险命令黑名单（DangerousCommandDetector 直接拒绝）
+    Layer 1b— 绝对禁令黑名单（DangerousCommandDetector 直接拒绝，任何模式含 bypass 都拦）
+    —— bypass/dontAsk 短路（已过绝对禁令层后才放行）——
+    Layer 1c— 风险分级闸门（classify_command 判 DENY 直接拒绝，与 decide_terminal 统一）
     Layer 2 — 路径沙箱（PathSandbox 拦截越界文件访问）
     Layer 3 — 规则引擎匹配（YAML/JSON 规则文件显式 allow/deny）
     Layer 4 — 权限模式兜底（mode_decide 按 read/write/command 类别判定）
+
+注意 bypass/dontAsk 短路刻意放在 Layer 1b 之后：bypass 是「用户主动选择全放行」，
+但「绝对禁令」（杀 agent 自身、格盘、fork bomb、管道执行远程脚本…）即使 bypass 也不放行。
+Layer 1c 起的完整风险分级只在非 bypass 模式生效（bypass 已在其之前短路返回）。
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from xhx_agent.safety.permissions.dangerous import DangerousCommandDetector, is_
 from xhx_agent.safety.permissions.modes import DecisionEffect, PermissionMode, mode_decide
 from xhx_agent.safety.permissions.rules import RuleEngine, extract_content
 from xhx_agent.safety.permissions.sandbox import PathSandbox
+from xhx_agent.safety.risk import RiskLevel, classify_command
 
 # Plan 模式下允许自动放行的工具白名单
 # present_plan 是主入口（两段式闸门），ExitPlanMode 是兼容别名
@@ -84,10 +91,6 @@ class PermissionChecker:
         """
         content = extract_content(tool_name, arguments)
 
-        # ── Short-circuit: bypass/dontAsk 模式全放行 ───────────────
-        if self.mode in (PermissionMode.BYPASS, PermissionMode.DONT_ASK):
-            return Decision(effect="allow", reason=f"权限模式 {self.mode.value} 全放行")
-
         # ── Layer 0: Plan 模式例外放行 ──────────────────────────
         if self.mode == PermissionMode.PLAN:
             if tool_name in _PLAN_MODE_ALLOWED_TOOLS:
@@ -100,11 +103,29 @@ class PermissionChecker:
         if tool_category == "command" and is_safe_command(content or ""):
             return Decision(effect="allow", reason="Safe read-only command")
 
-        # ── Layer 1b: 危险命令黑名单 ─────────────────────────────
+        # ── Layer 1b: 绝对禁令黑名单（任何模式含 bypass 都拦）─────
         if tool_category == "command":
             hit, reason = self.detector.detect(content or "")
             if hit:
                 return Decision(effect="deny", reason=f"危险命令拦截: {reason}")
+
+        # ── Short-circuit: bypass/dontAsk 模式全放行（YOLO 语义）────
+        # 设计取舍：bypass/dontAsk 是「用户主动全放行」，刻意比逐层模式矩阵更强——
+        # 允许越界读写工作区外文件、跳过沙箱与规则引擎（对标 Claude Code 的 bypassPermissions）。
+        # 但短路的位置至关重要：必须放在「绝对禁令层」（Layer 1b 危险命令黑名单）之后、
+        # 沙箱层之前。这样自杀（按映像名杀 python）/ 格盘 / fork bomb / 管道执行远程脚本
+        # 这类灾难命令即使 YOLO 也拦得住，而其余一切放行。
+        # 维护警告：① 不要把这段挪回 check() 顶部——那会连绝对禁令一起绕过（历史 bug，
+        # 曾导致 `taskkill /f /im python.exe` 自杀 + 终端卡死）；② 不要把它下移到沙箱之后，
+        # 否则就退化成「bypass 无法越界访问文件」，与既定 YOLO 语义不符。
+        if self.mode in (PermissionMode.BYPASS, PermissionMode.DONT_ASK):
+            return Decision(effect="allow", reason=f"权限模式 {self.mode.value} 全放行")
+
+        # ── Layer 1c: 风险分级闸门（与 decide_terminal 统一）──────
+        # bypass 已在上方短路，此处只对非 bypass 模式生效：把 risk.py 判 DENY 的命令
+        # （taskkill/kill、shell 元字符拼接、解释器内联执行…）一律拒绝，避免两条闸门一拦一漏。
+        if tool_category == "command" and content and classify_command(content) is RiskLevel.DENY:
+            return Decision(effect="deny", reason="危险命令拦截: 命令被风险分级判定为 DENY")
 
         # ── Layer 2: 路径沙箱 ────────────────────────────────────
         if tool_category in ("read", "write") and content:
