@@ -21,7 +21,7 @@
 ## 亮点
 
 - **一条原生 tool-calling 主循环。** 单 agent（`agents/agent_runner.py`）在工具集（`ReadFile`、`EditFile`、`WriteFile`、`ApplyPatch`、`Grep`、`Glob`、`Bash`、`RepoQuery`、`WebFetch`、`WebSearch`、`ToolSearch`、`Agent`…）上迭代 `读 → 搜 → 改 → 验` 直到报告完成——输出逐 token 流式，SSE 上分片的 `tool_calls` 会被重新拼装。
-- **真正的权限系统。** 工具分 `read` / `write` / `command` 三类，按模式（`default` / `acceptEdits` / `plan` / `bypassPermissions` / `dontAsk`）+ 三层规则引擎（user → project → local，层内 last-match-wins）+ 危险命令检测 + 路径沙箱门控。**Plan 模式两段式**：agent 先只读调研、给出计划，你批准后才执行。
+- **真正的权限系统。** 工具分 `read` / `write` / `command` 三类，按模式（`default` / `acceptEdits` / `plan` / `bypassPermissions`）+ 三层 `allow` / `ask` / `deny` 规则引擎（user → project → local，行为优先级 `deny > ask > allow`，Bash 按命令前缀/子命令匹配）+ 危险命令检测 + 敏感路径豁免（`.env` / `.git` / shell 配置即使 bypass 也确认）+ 路径沙箱门控。**Plan 模式两段式**：agent 先只读调研、给出计划，你批准后才执行。
 - **始终在预算内的上下文。** 每轮编译一个 `tiktoken` 预算的上下文包；超大工具结果落盘并留预览；长历史被压缩（**microcompact**）成一句摘要，**绝不把 tool_result 与其调用拆散**；跨会话恢复从 `compact_boundary` 记录重建状态。
 - **跨会话长期记忆。** `.xhx/memory/` 存持久事实（`user` / `feedback` / `project` / `reference`），**确定性召回**（关键词/token 重叠，不额外调 LLM）在预算内注入 system prompt。已端到端验证：一条**只**存在于记忆里的事实能被召回并影响真实模型的回答。
 - **子 agent 与多 agent 团队。** 经 `Agent` 工具派发只读**调研**子 agent 或可写**编辑**子 agent（在自己的 worktree 改、带冲突检测合并回来）；或拉起一个 **Agent Team**（coordinator + workers、mailbox 通信、共享任务板）做并行协作。
@@ -185,7 +185,7 @@ cp -r path/to/some-skill ~/.xhx/skills/   # 含 SKILL.md 的目录
 
 **已完整实现**
 - 原生 tool-calling agent 主循环：流式、并发安全工具并行、用量锚定、长历史 microcompact。
-- 权限系统：`default` / `acceptEdits` / `plan` / `bypassPermissions` / `dontAsk` 模式、三层规则引擎（user → project → local）、路径沙箱、危险命令检测、两段式 plan 模式、TUI 内联审批弹窗。
+- 权限系统：`default` / `acceptEdits` / `plan` / `bypassPermissions` 模式、三层 `allow` / `ask` / `deny` 规则引擎（user → project → local，`deny > ask > allow`，Bash 前缀/子命令匹配）、路径沙箱、危险命令检测、敏感路径豁免、两段式 plan 模式、TUI 内联审批弹窗。
 - 上下文包：`tiktoken` 预算、超大结果落盘 + 预览、保有效性压缩；跨会话恢复经 `compact_boundary`。
 - 长期记忆：4 类型事实、预算内确定性召回、新鲜度校验、按会话 JSONL 持久化 + 恢复——已针对真实模型端到端验证。
 - 工具：`ReadFile` / `WriteFile` / `EditFile`（读后才能改门控）/ `ApplyPatch`（信封 + unified diff）/ `Grep` / `Glob` / `Bash`（带后台 dev-server 探测）/ `RepoQuery` / `WebFetch`（SSRF 护栏）/ `WebSearch`（Tavily）/ `ToolSearch` / `Agent`。

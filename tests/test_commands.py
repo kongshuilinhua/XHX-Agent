@@ -171,12 +171,138 @@ def test_every_command_handler_runs_without_crash(tmp_path: Path) -> None:
             pytest.fail(f"/{cmd.name} 空参执行崩溃: {e!r}")
 
 
+def _simulate_edit_turn(
+    conv: ConversationManager,
+    fh: Any,
+    user_text: str,
+    assistant_text: str,
+    target: Path,
+    new_content: str,
+) -> None:
+    """模拟一轮“用户提问 → agent 改文件 → 收尾快照”，复刻真实运行时序。"""
+    conv.add_user_message(user_text)
+    fh.track_edit(str(target))  # 改前备份（与 EditFile/WriteFile 一致，先 track 再写）
+    target.write_text(new_content, encoding="utf-8")
+    conv.add_assistant_message(assistant_text)
+    fh.make_snapshot(len(conv.history), assistant_text)
+
+
+def test_rewind_restores_edited_files(tmp_path: Path) -> None:
+    """/rewind 不仅回退对话，还要把被移除轮次里改过的文件还原回去。"""
+    from xhx_agent.commands.handlers.rewind import handle_rewind
+    from xhx_agent.filehistory import FileHistory
+
+    target = tmp_path / "code.py"
+    target.write_text("A", encoding="utf-8")  # 原始内容
+
+    conv = ConversationManager()
+    fh = FileHistory(str(tmp_path), "sess-rewind")
+    _simulate_edit_turn(conv, fh, "改成 B", "好了 B", target, "B")  # 第 1 轮
+    _simulate_edit_turn(conv, fh, "改成 C", "好了 C", target, "C")  # 第 2 轮
+    assert target.read_text(encoding="utf-8") == "C"
+
+    ui = _FakeUI()
+    ctx = CommandContext(
+        args="1",
+        conversation=conv,
+        ui=ui,
+        config={"file_history": fh},
+    )
+    _run(handle_rewind, ctx)
+
+    # 回退第 2 轮：对话退回 2 条，文件回到第 1 轮收尾状态 "B"。
+    assert len(conv.history) == 2
+    assert target.read_text(encoding="utf-8") == "B"
+    assert any("还原 1 个文件" in m for m in ui.messages)
+
+
+def test_rewind_two_turns_restores_to_original(tmp_path: Path) -> None:
+    """一次回退多轮：文件应还原到最早被移除那一轮的开局状态。"""
+    from xhx_agent.commands.handlers.rewind import handle_rewind
+    from xhx_agent.filehistory import FileHistory
+
+    target = tmp_path / "code.py"
+    target.write_text("A", encoding="utf-8")
+
+    conv = ConversationManager()
+    fh = FileHistory(str(tmp_path), "sess-rewind2")
+    _simulate_edit_turn(conv, fh, "改成 B", "好了 B", target, "B")
+    _simulate_edit_turn(conv, fh, "改成 C", "好了 C", target, "C")
+
+    ui = _FakeUI()
+    ctx = CommandContext(args="2", conversation=conv, ui=ui, config={"file_history": fh})
+    _run(handle_rewind, ctx)
+
+    assert len(conv.history) == 0
+    assert target.read_text(encoding="utf-8") == "A"  # 回到最初
+
+
+def test_rewind_without_file_history_still_works(tmp_path: Path) -> None:
+    """config 里没有 file_history 时（如非 TUI 场景）只回退对话，不崩。"""
+    from xhx_agent.commands.handlers.rewind import handle_rewind
+
+    conv = ConversationManager()
+    conv.add_user_message("你好")
+    conv.add_assistant_message("在的")
+
+    ui = _FakeUI()
+    ctx = CommandContext(args="1", conversation=conv, ui=ui, config={})
+    _run(handle_rewind, ctx)
+    assert len(conv.history) == 0
+    assert any("已回退 1 轮" in m for m in ui.messages)
+
+
+def test_status_shows_session_id_not_question_mark(tmp_path: Path) -> None:
+    """/status 的“会话”要显示 session_id；之前误用 run_id 字段导致恒显示 '?'。"""
+    import types
+
+    from xhx_agent.commands.handlers.status import handle_status
+
+    ctx, ui, _agent, _registry = _build_ctx(tmp_path)
+    ui.messages.clear()
+    ctx.session = types.SimpleNamespace(session_id="abc123def456")
+    _run(handle_status, ctx)
+
+    joined = "\n".join(ui.messages)
+    assert "会话: abc123def456" in joined
+    assert "会话: ?" not in joined
+
+
+def test_compact_emits_progress_before_result(tmp_path: Path) -> None:
+    """/compact 在等待 LLM 摘要前先给“正在压缩”反馈，避免界面看着像卡死。"""
+    from xhx_agent.agents.agent_runner import CompactNotification
+    from xhx_agent.commands.handlers.compact import handle_compact
+
+    class _CompactAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def manual_compact(self, conv: Any) -> CompactNotification:
+            self.calls += 1
+            return CompactNotification(before_tokens=9000, message="上下文已压缩（压缩前 9,000 tokens）")
+
+    conv = ConversationManager()
+    conv.add_user_message("x" * 80_000)  # 撑过 5000 token 阈值，确保进入压缩分支
+
+    ui = _FakeUI()
+    agent = _CompactAgent()
+    ctx = CommandContext(args="", agent=agent, conversation=conv, ui=ui, config={})
+    _run(handle_compact, ctx)
+
+    assert agent.calls == 1, "未真正触发压缩"
+    progress = [i for i, m in enumerate(ui.messages) if "正在压缩上下文" in m]
+    result = [i for i, m in enumerate(ui.messages) if "上下文已压缩" in m]
+    assert progress, "缺少压缩前的进度反馈"
+    assert result, "缺少压缩结果消息"
+    assert progress[0] < result[0], "进度反馈必须出现在结果之前"
+
+
 def test_permission_switch_uses_set_permission_mode(tmp_path: Path) -> None:
     """/permission bypass 必须经 set_permission_mode（同步 checker）并刷新状态栏。"""
     ctx, ui, agent, registry = _build_ctx(tmp_path)
     cmd = registry.find("permission")
     # camelCase 值 + 别名 + 大小写容错都应解析成功
-    for token in ("bypass", "bypassPermissions", "BYPASS", "acceptEdits", "accept_edits", "dontAsk"):
+    for token in ("bypass", "bypassPermissions", "BYPASS", "acceptEdits", "accept_edits", "auto"):
         agent.set_permission_mode_calls.clear()
         ctx.args = token
         _run(cmd.handler, ctx)

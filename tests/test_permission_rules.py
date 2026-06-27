@@ -100,3 +100,61 @@ def test_rule_engine_append_local(tmp_path: Path) -> None:
     # 再追加一条并确认持久化累加
     eng.append_local_rule(Rule("read_file", "**", "allow"))
     assert len(_load_rules_file(local)) == 2
+
+
+# --- 向 Claude 靠拢：shell 命令规则匹配 + deny>ask>allow 优先级 + 前缀规则 ---
+
+from xhx_agent.safety.permissions.rules import (  # noqa: E402
+    _match_shell_rule,
+    build_allow_always_rule,
+    split_shell_command,
+)
+
+
+def test_shell_rule_prefix_exact_wildcard() -> None:
+    assert _match_shell_rule("mkdir:*", "mkdir /a/b") is True
+    assert _match_shell_rule("mkdir:*", "mkdirx y") is False
+    assert _match_shell_rule("git diff:*", "git diff --stat") is True
+    assert _match_shell_rule("git diff:*", "git push") is False
+    assert _match_shell_rule("git *", "git") is True  # 尾部 ` *` 可选
+    assert _match_shell_rule("git *", "git add x") is True
+    assert _match_shell_rule("ls -la", "ls -la") is True  # exact
+    assert _match_shell_rule("ls -la", "ls") is False
+
+
+def test_rule_matches_bash_uses_prefix_semantics() -> None:
+    r = parse_rule("Bash(git diff:*)", "allow")
+    assert r.matches("Bash", "git diff src") is True
+    assert r.matches("Bash", "git push") is False
+    # 文件类工具仍走 fnmatch
+    rf = parse_rule("read_file(src/**)", "allow")
+    assert rf.matches("read_file", "src/a/b.py") is True
+
+
+def test_split_shell_command() -> None:
+    assert split_shell_command("a && b || c ; d | e & f") == ["a", "b", "c", "d", "e", "f"]
+    assert split_shell_command("  ls -la  ") == ["ls -la"]
+
+
+def test_evaluate_priority_deny_over_ask_over_allow(tmp_path: Path) -> None:
+    pf = tmp_path / "permissions.yaml"
+    pf.write_text(
+        '- rule: "Bash(npm:*)"\n  effect: allow\n'
+        '- rule: "Bash(npm publish:*)"\n  effect: ask\n'
+        '- rule: "Bash(npm run danger:*)"\n  effect: deny\n',
+        encoding="utf-8",
+    )
+    eng = RuleEngine(project_rules_path=pf)
+    assert eng.evaluate("Bash", "npm install") == "allow"
+    assert eng.evaluate("Bash", "npm publish --tag x") == "ask"  # ask 压过 allow
+    assert eng.evaluate("Bash", "npm run danger --force") == "deny"  # deny 压过 allow
+
+
+def test_build_allow_always_rule_prefix_and_file() -> None:
+    rb = build_allow_always_rule("Bash", {"command": "mkdir /a/b"})
+    assert rb is not None and rb.pattern == "mkdir:*" and rb.effect == "allow"
+    rg = build_allow_always_rule("Bash", {"command": "git diff --stat"})
+    assert rg is not None and rg.pattern == "git diff:*"
+    rf = build_allow_always_rule("WriteFile", {"file_path": "src/foo.py"})
+    assert rf is not None and rf.pattern == "src/foo.py"
+    assert build_allow_always_rule("Bash", {"command": ""}) is None

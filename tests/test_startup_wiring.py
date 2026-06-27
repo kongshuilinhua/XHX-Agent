@@ -54,7 +54,7 @@ def test_run_textual_console_wires_config_switches(tmp_path, monkeypatch) -> Non
 
     from xhx_agent.permissions import PermissionMode
 
-    assert captured["permission_mode"] == PermissionMode.ACCEPT_EDITS  # "auto" → ACCEPT_EDITS
+    assert captured["permission_mode"] == PermissionMode.AUTO  # config "auto" → 独立的 AUTO 模式
     assert captured["worktree_config"] is not None
     assert captured["worktree_config"].symlink_directories == ["node_modules", ".venv"]
 

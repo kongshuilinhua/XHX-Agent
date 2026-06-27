@@ -50,6 +50,100 @@ def test_fallback_no_clients() -> None:
         FallbackChatClient([]).chat([])
 
 
+# --- FallbackLLMClient（streaming 层，agent 主循环真正接入的那条） ---
+
+from xhx_agent.client import FallbackLLMClient, LLMClient, NetworkError  # noqa: E402
+from xhx_agent.conversation import ConversationManager  # noqa: E402
+from xhx_agent.models.routing import build_agent_client  # noqa: E402
+from xhx_agent.tools.base import StreamEnd, TextDelta  # noqa: E402
+
+
+class _OkStream(LLMClient):
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+        self.max_tokens: int | None = None
+
+    def set_max_output_tokens(self, tokens: int) -> None:
+        self.max_tokens = tokens
+
+    async def stream(self, conversation, system="", tools=None):  # type: ignore[override]
+        yield TextDelta(text=self.marker)
+        yield StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)
+
+
+class _FailBeforeFirst(LLMClient):
+    async def stream(self, conversation, system="", tools=None):  # type: ignore[override]
+        raise NetworkError("connect failed")
+        yield TextDelta(text="")  # pragma: no cover  仅为使其成为 async generator
+
+
+class _FailMidStream(LLMClient):
+    async def stream(self, conversation, system="", tools=None):  # type: ignore[override]
+        yield TextDelta(text="partial")
+        raise NetworkError("mid-stream drop")
+
+
+def _collect_stream(client) -> list:
+    async def _run() -> list:
+        return [ev async for ev in client.stream(ConversationManager())]
+
+    return asyncio.run(_run())
+
+
+def test_fallback_llm_falls_back_before_first_event() -> None:
+    calls: list[int] = []
+    fb = FallbackLLMClient([_FailBeforeFirst(), _OkStream("B")], on_fallback=lambda i, e: calls.append(i))
+    events = _collect_stream(fb)
+    assert any(isinstance(e, TextDelta) and e.text == "B" for e in events)
+    assert calls == [0]
+
+
+def test_fallback_llm_no_recovery_after_stream_started() -> None:
+    # 首个事件已产出（已开始流式），中途断流不再回退、原样抛出。
+    fb = FallbackLLMClient([_FailMidStream(), _OkStream("B")])
+    with pytest.raises(NetworkError):
+        _collect_stream(fb)
+
+
+def test_fallback_llm_forwards_max_tokens() -> None:
+    a, b = _OkStream("A"), _OkStream("B")
+    FallbackLLMClient([a, b]).set_max_output_tokens(4096)
+    assert a.max_tokens == 4096 and b.max_tokens == 4096
+
+
+def test_fallback_llm_empty_raises() -> None:
+    with pytest.raises(ValueError):
+        FallbackLLMClient([])
+
+
+def test_build_agent_client_no_fallback_returns_single(monkeypatch, tmp_path: Path) -> None:
+    """未配置 routing.fallback 时直接返回主 client、不包 wrapper（零行为变化保证）。"""
+    from xhx_agent.models import routing
+
+    sentinel = _OkStream("primary")
+    monkeypatch.setattr("xhx_agent.client.create_client", lambda cfg: sentinel)
+    fake_cfg = type("C", (), {"routing": type("R", (), {"fallback": []})()})()
+    monkeypatch.setattr(routing, "load_config", lambda ws: fake_cfg)
+
+    provider = type("P", (), {"name": "default"})()
+    assert build_agent_client(tmp_path, provider) is sentinel
+
+
+def test_build_agent_client_with_fallback_wraps(monkeypatch, tmp_path: Path) -> None:
+    from xhx_agent.models import routing
+
+    monkeypatch.setattr("xhx_agent.client.create_client", lambda cfg: _OkStream("c"))
+    fake_cfg = type("C", (), {"routing": type("R", (), {"fallback": ["alt"]})()})()
+    monkeypatch.setattr(routing, "load_config", lambda ws: fake_cfg)
+    monkeypatch.setattr(routing, "get_profile", lambda ws, name: object())
+    monkeypatch.setattr("xhx_agent.config.ProviderConfig.from_xhx_profile", classmethod(lambda cls, p: object()))
+
+    provider = type("P", (), {"name": "default"})()
+    result = build_agent_client(tmp_path, provider)
+    assert isinstance(result, FallbackLLMClient)
+    assert len(result.clients) == 2
+
+
 def test_resolve_profile_for_role(tmp_path: Path) -> None:
     from xhx_agent.runtime.init import init_project
 

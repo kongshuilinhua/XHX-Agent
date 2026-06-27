@@ -27,7 +27,88 @@ from typing import Any, Literal
 
 import yaml
 
-Effect = Literal["allow", "deny"]
+Effect = Literal["allow", "ask", "deny"]
+
+# ---------------------------------------------------------------------------
+# Shell 命令规则匹配（对齐 Claude Code shellRuleMatching：exact / prefix(cmd:*) / wildcard）
+# ---------------------------------------------------------------------------
+
+# 这些工具的内容是 shell 命令，规则按「命令前缀」语义匹配，而非文件 glob。
+_SHELL_TOOLS = frozenset({"Bash", "terminal"})
+
+# 带子命令的二进制：don't-ask-again 生成前缀规则时取前两个 token（如 `git diff`），
+# 否则一次「允许 git」会放行整个 git 全家（含 git push）。
+_SUBCOMMAND_BINARIES = frozenset(
+    {
+        "git",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        "cargo",
+        "go",
+        "docker",
+        "kubectl",
+        "pip",
+        "pip3",
+        "uv",
+        "poetry",
+        "gh",
+        "brew",
+        "apt",
+        "apt-get",
+        "systemctl",
+        "make",
+        "dotnet",
+        "gradle",
+        "mvn",
+        "terraform",
+        "helm",
+        "aws",
+        "gcloud",
+    }
+)
+
+# 组合命令分隔符：&& || ; | & —— 拆分后每个子命令都要被 allow 才整体放行（堵 `mkdir x && rm` 注入）。
+_SHELL_SPLIT_RE = re.compile(r"&&|\|\||;|\||&")
+
+
+def split_shell_command(command: str) -> list[str]:
+    """把组合命令拆成子命令列表（去空白、去空段）。"""
+    return [p.strip() for p in _SHELL_SPLIT_RE.split(command) if p.strip()]
+
+
+def _match_shell_rule(pattern: str, command: str) -> bool:
+    """按 exact / prefix(`cmd:*`) / wildcard(`*`) 语义匹配一条 shell 命令。"""
+    pat = pattern.strip()
+    cmd = command.strip()
+    # 1) 前缀语法 `cmd:*` —— 匹配该前缀本身或以「前缀 + 空格」开头
+    if pat.endswith(":*"):
+        prefix = pat[:-2].strip()
+        return cmd == prefix or cmd.startswith(prefix + " ")
+    # 2) 含通配符 `*` → 整串正则匹配（按 * 分段、各段转义、用 .* 连接，避免转义错位）。
+    #    尾部单个 ` *` 视为可选，使 `git *` 也匹配裸 `git`（对齐 Claude 前缀语义）。
+    if "*" in pat:
+        optional_tail = pat.endswith(" *") and pat.count("*") == 1
+        core = pat[:-2] if optional_tail else pat
+        regex = ".*".join(re.escape(seg) for seg in core.split("*"))
+        if optional_tail:
+            regex += "( .*)?"
+        return re.fullmatch(regex, cmd, re.DOTALL) is not None
+    # 3) 精确匹配
+    return cmd == pat
+
+
+def _command_prefix(command: str) -> str:
+    """提取命令前缀：首 token；首 token 属带子命令的二进制则取前两 token。"""
+    toks = command.strip().split()
+    if not toks:
+        return ""
+    if toks[0] in _SUBCOMMAND_BINARIES and len(toks) >= 2:
+        return f"{toks[0]} {toks[1]}"
+    return toks[0]
+
 
 # ---------------------------------------------------------------------------
 # 工具 → 内容字段映射
@@ -69,6 +150,9 @@ class Rule:
     def matches(self, tool_name: str, content: str) -> bool:
         if self.tool_name != tool_name:
             return False
+        # shell 工具按命令前缀语义匹配；其余（文件路径等）走文件 glob。
+        if tool_name in _SHELL_TOOLS:
+            return _match_shell_rule(self.pattern, content)
         return fnmatch(content, self.pattern)
 
     def __repr__(self) -> str:
@@ -164,7 +248,7 @@ def _load_rules_file(path: Path) -> list[Rule]:
             continue
         rule_str = entry.get("rule", "")
         effect = entry.get("effect", "")
-        if effect not in ("allow", "deny"):
+        if effect not in ("allow", "ask", "deny"):
             continue
         try:
             rules.append(parse_rule(str(rule_str), effect))
@@ -209,16 +293,20 @@ class RuleEngine:
     # ------------------------------------------------------------------
 
     def evaluate(self, tool_name: str, content: str) -> Effect | None:
-        """返回匹配到的最高优先级规则的 effect，无匹配返回 None。
+        """返回匹配规则按行为优先级 deny > ask > allow 的裁决，无匹配返回 None。
 
-        层间按优先级从高到低遍历（local → project → user），命中即返回，
-        使高优先级层覆盖低优先级层；层内仍 last-match-wins。
+        对齐 Claude Code：deny 永远压过 allow（无论在哪一层、哪个位置），ask 压过 allow。
+        三层（user/project/local）的规则全部参与匹配，行为优先级而非层/顺序决定结果——
+        这样一条 deny 不会被某层后写的 allow 意外覆盖。
         """
-        for rules in reversed(self._load_tiers()):
-            # 层内 last-match-wins：倒序遍历
-            for rule in reversed(rules):
+        effects: set[Effect] = set()
+        for rules in self._load_tiers():
+            for rule in rules:
                 if rule.matches(tool_name, content):
-                    return rule.effect
+                    effects.add(rule.effect)
+        for eff in ("deny", "ask", "allow"):
+            if eff in effects:
+                return eff  # type: ignore[return-value]
         return None
 
     def append_local_rule(self, rule: Rule) -> None:
@@ -245,3 +333,25 @@ class RuleEngine:
         for p in (self._user_path, self._project_path, self._local_path):
             tiers.append(_load_rules_file(p) if p else [])
         return tiers
+
+
+# ---------------------------------------------------------------------------
+# don't-ask-again 规则构造
+# ---------------------------------------------------------------------------
+
+
+def build_allow_always_rule(tool_name: str, arguments: dict[str, Any]) -> Rule | None:
+    """从一次工具调用构造「don't ask again」的 allow 规则。
+
+    shell 工具取命令前缀生成 `prefix:*`（如 `git diff:*`），一次批准覆盖该命令族、而非
+    只匹配那条完整命令行；文件等工具用精确内容。无可用内容返回 None。
+    """
+    content = extract_content(tool_name, arguments)
+    if not content:
+        return None
+    if tool_name in _SHELL_TOOLS:
+        prefix = _command_prefix(content)
+        if not prefix:
+            return None
+        return Rule(tool_name=tool_name, pattern=f"{prefix}:*", effect="allow")
+    return Rule(tool_name=tool_name, pattern=content, effect="allow")

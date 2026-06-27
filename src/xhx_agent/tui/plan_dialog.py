@@ -16,7 +16,7 @@ class PlanChoice(StrEnum):
 
 
 _OPTIONS = [
-    ("Yes, enter YOLO mode (auto-approve all)", PlanChoice.YOLO),
+    ("Yes, bypass permissions (auto-approve all)", PlanChoice.YOLO),
     ("Yes, manually approve edits", PlanChoice.MANUAL),
     ("Tell XHX what to change", PlanChoice.FEEDBACK),
 ]

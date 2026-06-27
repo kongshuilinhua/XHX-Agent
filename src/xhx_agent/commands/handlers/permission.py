@@ -12,9 +12,9 @@ _VALID_HINT = ", ".join(f"{m.name.lower()}（{m.value}）" for m in PermissionMo
 _ALIASES = {
     "accept": PermissionMode.ACCEPT_EDITS,
     "edits": PermissionMode.ACCEPT_EDITS,
+    "auto": PermissionMode.AUTO,
     "bypass": PermissionMode.BYPASS,
     "yolo": PermissionMode.BYPASS,
-    "noask": PermissionMode.DONT_ASK,
 }
 
 

@@ -85,3 +85,56 @@ def build_routed_client(
         )
 
     return FallbackChatClient(clients, on_fallback=on_fallback)
+
+
+def build_agent_client(workspace: Path, provider: Any, *, event_callback: Any = None) -> Any:
+    """构造 agent 主循环用的 streaming client：主 provider + ``config.routing.fallback`` 链。
+
+    这是被 TUI / headless 真正接入的入口（对比仅给非流式 summarizer 用的 ``build_routed_client``）。
+    主 client 构造失败照常抛错（保持既有启动语义）；fallback profile 解析/构造失败则跳过该条，
+    不影响主 client 可用。``config.routing.fallback`` 为空（默认）时直接返回单个主 client、不包 wrapper，
+    因此对未配置 fallback 的用户零行为变化。
+    """
+    # 延迟导入，避免 client/config 与本模块的导入期环依赖。
+    from xhx_agent.client import FallbackLLMClient, create_client
+    from xhx_agent.config import ProviderConfig
+
+    primary = create_client(provider)
+
+    try:
+        fallback_names = load_config(workspace).routing.fallback
+    except Exception:
+        fallback_names = []
+
+    primary_name = getattr(provider, "name", "")
+    extra: list[Any] = []
+    for name in fallback_names:
+        if not name or name == primary_name:
+            continue
+        try:
+            profile = get_profile(workspace, name)
+            if profile is None:
+                continue
+            extra.append(create_client(ProviderConfig.from_xhx_profile(profile)))
+        except Exception as err:
+            emit_event(
+                event_callback,
+                "model_fallback_unavailable",
+                f"Fallback profile '{name}' unavailable; skipped.",
+                profile=name,
+                error=str(err),
+            )
+
+    if not extra:
+        return primary
+
+    def on_fallback(idx: int, err: Exception) -> None:
+        emit_event(
+            event_callback,
+            "model_fallback",
+            f"Model stream failed; falling back to next profile (index {idx + 1}).",
+            index=idx,
+            error=str(err),
+        )
+
+    return FallbackLLMClient([primary, *extra], on_fallback=on_fallback)

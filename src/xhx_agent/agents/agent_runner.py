@@ -363,6 +363,9 @@ class Agent:
         self._current_conversation: ConversationManager | None = None
         # 本轮累计被改动的文件（相对路径），供 stop 事件上的 verification 钩子定向跑测试。
         self._changed_files: list[str] = []
+        # 完成前验证关卡（交互路径）默认关闭，需显式 opt-in 才启用——与 headless `--verify`
+        # 一致。开启后每次有 .py/JS 改动的收尾轮会先跑定向测试，失败则注入对话让模型修复。
+        self.verification_gate: bool = False
 
     @property
     def _transcript_path(self) -> str:
@@ -580,7 +583,9 @@ class Agent:
             try:
                 import subprocess
 
-                result = subprocess.run(
+                # 在线程池里跑，避免阻塞交互式 run() 所在的事件循环（关卡现已在 TUI 真触发）。
+                result = await asyncio.to_thread(
+                    subprocess.run,
                     cmd.command,
                     shell=True,
                     cwd=self.work_dir,
@@ -775,8 +780,8 @@ class Agent:
                 conversation.add_assistant_message(response.text, thinking_blocks=conv_thinking)
                 self._loop_count += 1
 
-                # 完成前验证关卡：有变更文件时自动运行验证
-                if self._changed_files and not getattr(self, "_verification_passed", False):
+                # 完成前验证关卡：仅在显式开启（verification_gate）且有变更文件时运行
+                if self.verification_gate and self._changed_files and not getattr(self, "_verification_passed", False):
                     gate_result = await self._run_verification_gate(conversation)
                     if gate_result == "retry":
                         continue
@@ -892,6 +897,11 @@ class Agent:
 
                         if result is None:
                             result = ToolResult(output="Error: no result from tool", is_error=True)
+
+                        # 记录写/改类工具触及的文件，供完成前验证关卡 / context-pack diff /
+                        # stop 钩子定向测试使用。交互路径此前漏记，导致这些功能在 TUI 下哑火。
+                        if not result.is_error:
+                            self._record_changed_file(tc.tool_name, tc.arguments)
 
                         if is_unknown:
                             consecutive_unknown += 1
@@ -1049,33 +1059,40 @@ class Agent:
                 return
 
             if decision.effect == "ask":
-                loop = asyncio.get_running_loop()
-                future: asyncio.Future[PermissionResponse] = loop.create_future()
                 desc = self._build_permission_description(tc)
-                # 向调用方 yield 权限请求事件，由调用方处理
-                yield PermissionRequest(
-                    tool_name=tc.tool_name,
-                    description=desc,
-                    future=future,
-                )
-                response = await future
+                # auto 模式：规则拿不准的命令先问 LLM 分类器，放行则静默执行、不打扰用户。
+                need_prompt = True
+                if decision.needs_classification and await self._classify_command_safe(desc):
+                    need_prompt = False
 
-                if response == PermissionResponse.DENY:
-                    result = ToolResult(
-                        output="Permission denied: 用户拒绝了此操作",
-                        is_error=True,
+                if need_prompt:
+                    loop = asyncio.get_running_loop()
+                    future: asyncio.Future[PermissionResponse] = loop.create_future()
+                    # 向调用方 yield 权限请求事件，由调用方处理
+                    yield PermissionRequest(
+                        tool_name=tc.tool_name,
+                        description=desc,
+                        future=future,
                     )
-                    elapsed = time.monotonic() - start
-                    yield result, elapsed, is_unknown
-                    return
+                    response = await future
 
-                if response == PermissionResponse.ALLOW_ALWAYS:
-                    from xhx_agent.permissions import Rule, extract_content
+                    if response == PermissionResponse.DENY:
+                        result = ToolResult(
+                            output="Permission denied: 用户拒绝了此操作",
+                            is_error=True,
+                        )
+                        elapsed = time.monotonic() - start
+                        yield result, elapsed, is_unknown
+                        return
 
-                    content = extract_content(tc.tool_name, tc.arguments)
-                    pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"
-                    rule = Rule(tool_name=tc.tool_name, pattern=pattern, effect="allow")
-                    self.permission_checker.rule_engine.append_local_rule(rule)
+                    if response == PermissionResponse.ALLOW_ALWAYS:
+                        from xhx_agent.permissions import build_allow_always_rule
+
+                        # 对 Bash 生成命令前缀规则（如 `git diff:*`），一次批准覆盖该命令族而非
+                        # 只匹配那条完整命令行；对文件工具用精确内容。
+                        rule = build_allow_always_rule(tc.tool_name, tc.arguments)
+                        if rule is not None:
+                            self.permission_checker.rule_engine.append_local_rule(rule)
 
         try:
             params = tool.params_model.model_validate(tc.arguments)
@@ -1106,6 +1123,38 @@ class Agent:
         except OSError:
             return
         self.recovery_state.record_file_read(path, content)
+
+    async def _classify_command(self, command: str) -> bool:
+        """auto 模式：让模型判一条 shell 命令是否可安全自动执行。返回 True=放行。
+
+        只在 checker 规则拿不准（risk 分级为 CONFIRM）的命令上触发——明显安全/危险的已被
+        规则秒判，无需打 LLM。系统级绝对禁令仍由 checker Layer 1b 硬拦，与此无关。
+        """
+        prompt = (
+            "You are the safety gate of an autonomous coding agent running on the user's machine. "
+            "Decide whether the following shell command is safe to auto-execute WITHOUT asking the user, "
+            "in a normal coding workflow. BLOCK if it could destroy data, exfiltrate secrets, "
+            "download-and-run remote code, delete many files, or modify system/global state. "
+            "ALLOW ordinary dev commands (build, test, package install, scaffolding, version-control reads).\n\n"
+            f"Command:\n{command}\n\n"
+            "Answer with a single token on the first line: ALLOW or BLOCK."
+        )
+        mini = ConversationManager()
+        mini.add_user_message(prompt)
+        text = ""
+        async for ev in self.client.stream(mini):
+            if isinstance(ev, TextDelta):
+                text += ev.text
+        return text.strip().upper().startswith("ALLOW")
+
+    async def _classify_command_safe(self, command: str) -> bool:
+        """分类器封装：异常 / 超时 / 无客户端一律保守返回 False（转人工确认）。"""
+        if self.client is None:
+            return False
+        try:
+            return await asyncio.wait_for(self._classify_command(command), timeout=20)
+        except Exception:
+            return False
 
     async def _extract_memories(self, conversation: ConversationManager) -> None:
         if self._extracting or not self.memory_manager:
@@ -1375,8 +1424,15 @@ class Agent:
                     is_error=True,
                 )
             if decision.effect == "ask":
-                if self.permission_mode == PermissionMode.DONT_ASK:
+                if self.permission_mode == PermissionMode.BYPASS:
                     pass  # 自动批准
+                elif decision.needs_classification:
+                    # auto 模式：非交互下用 LLM 分类器替代弹框；判定不安全则拒绝。
+                    if not await self._classify_command_safe(self._build_permission_description(tc)):
+                        return ToolResult(
+                            output="Permission denied: auto 分类器判定该命令需人工确认",
+                            is_error=True,
+                        )
                 else:
                     return ToolResult(
                         output="Permission denied: non-interactive agent cannot prompt user",

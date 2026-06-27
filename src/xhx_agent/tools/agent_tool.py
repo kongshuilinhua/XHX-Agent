@@ -48,7 +48,9 @@ class AgentToolParams(BaseModel):
 PERMISSION_MODE_MAP = {
     "default": "DEFAULT",
     "acceptEdits": "ACCEPT_EDITS",
-    "dontAsk": "DONT_ASK",
+    "auto": "AUTO",
+    "plan": "PLAN",
+    "bypassPermissions": "BYPASS",
 }
 
 
@@ -163,7 +165,7 @@ class AgentTool(Tool):
                 disallowed_tools=[],
                 model="inherit",
                 max_turns=self._parent_agent.max_iterations,
-                permission_mode="dontAsk",
+                permission_mode="bypassPermissions",
                 source="builtin",
             )
 
@@ -333,7 +335,7 @@ class AgentTool(Tool):
                 disallowed_tools=[],
                 model="inherit",
                 max_turns=self._parent_agent.max_iterations,
-                permission_mode="dontAsk",
+                permission_mode="bypassPermissions",
                 source="builtin",
             )
 
@@ -391,7 +393,7 @@ class AgentTool(Tool):
             detector=DangerousCommandDetector(),
             sandbox=PathSandbox(wt.path),
             rule_engine=RuleEngine(),
-            mode=PermissionMode.DONT_ASK,
+            mode=PermissionMode.BYPASS,
         )
 
         sub_agent = AgentClass(
@@ -510,7 +512,7 @@ class AgentTool(Tool):
                 disallowed_tools=[],
                 model="inherit",
                 max_turns=self._parent_agent.max_iterations,
-                permission_mode="dontAsk",
+                permission_mode="bypassPermissions",
                 source="builtin",
             )
 
@@ -596,8 +598,8 @@ class AgentTool(Tool):
 
         model_map = {
             "haiku": "claude-haiku-4-5-20251001",
-            "sonnet": "claude-sonnet-4-6-20250514",
-            "opus": "claude-opus-4-6-20250514",
+            "sonnet": "claude-sonnet-4-6",
+            "opus": "claude-opus-4-8",
         }
         model_id = model_map.get(model_alias, model_alias)
 

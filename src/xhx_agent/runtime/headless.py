@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from xhx_agent.agents.agent_runner import Agent
-from xhx_agent.client import LLMClient, create_client
+from xhx_agent.client import LLMClient
 from xhx_agent.config import ProviderConfig
 from xhx_agent.hooks import HookEngine, default_verification_hook
 from xhx_agent.memory import MemoryManager, load_instructions
@@ -49,9 +49,9 @@ def _build_permission_checker(work_dir: Path, mode: PermissionMode) -> Permissio
         detector=DangerousCommandDetector(),
         sandbox=PathSandbox(str(work_dir)),
         rule_engine=RuleEngine(
-            user_rules_path=home / ".XHX" / "permissions.json",
-            project_rules_path=work_dir / ".XHX" / "permissions.json",
-            local_rules_path=work_dir / ".XHX" / "permissions.local.yaml",
+            user_rules_path=home / ".xhx" / "permissions.json",
+            project_rules_path=work_dir / ".xhx" / "permissions.json",
+            local_rules_path=work_dir / ".xhx" / "permissions.local.yaml",
         ),
         mode=mode,
     )
@@ -79,7 +79,10 @@ def build_headless_agent(
         if p is None:
             raise RuntimeError(f"Profile '{profile_name}' not found. Run 'xhx init' first.")
         provider = ProviderConfig.from_xhx_profile(p)
-        client = create_client(provider)
+        # 主 provider + .xhx/config.json 的 routing.fallback 链；无 fallback 时等价于单个 client。
+        from xhx_agent.models.routing import build_agent_client
+
+        client = build_agent_client(ws, provider)
 
     protocol = provider.protocol if provider is not None else "openai-compat"
     context_window = provider.get_context_window() if provider is not None else 200_000
@@ -126,7 +129,7 @@ async def run_headless_task_async(
     event_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> HeadlessResult:
     """异步把任务跑到完成。``assume_yes`` 时自动放行需确认的工具调用；``verify`` 时停止后自动验证。"""
-    mode = PermissionMode.DONT_ASK if assume_yes else PermissionMode.DEFAULT
+    mode = PermissionMode.BYPASS if assume_yes else PermissionMode.DEFAULT
     try:
         agent = build_headless_agent(
             workspace,

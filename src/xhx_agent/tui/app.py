@@ -51,7 +51,6 @@ from xhx_agent.client import (
     AuthenticationError,
     LLMClient,
     LLMError,
-    create_client,
     resolve_context_window,
 )
 from xhx_agent.commands import (
@@ -105,7 +104,7 @@ MAX_AT_REF_BYTES = 10240
 
 _AT_REF_RE = re.compile(r"@([\w./_\-]+(?:\.[\w]+)*)")
 
-_SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".XHX", "build", ".gradle"}
+_SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".xhx", "build", ".gradle"}
 
 
 def scan_files_for_at(prefix: str, work_dir: str, limit: int = 10) -> list[str]:
@@ -176,7 +175,7 @@ class ChatInput(TextArea):
         self._history_file: Path | None = None
 
     def load_history(self, work_dir: str) -> None:
-        self._history_file = Path(work_dir) / ".XHX" / "history"
+        self._history_file = Path(work_dir) / ".xhx" / "history"
         if self._history_file.exists():
             try:
                 lines = self._history_file.read_text(encoding="utf-8").splitlines()
@@ -449,6 +448,7 @@ class ToolCallBlock(Static, can_focus=True):
 _MODE_CYCLE = [
     PermissionMode.DEFAULT,
     PermissionMode.ACCEPT_EDITS,
+    PermissionMode.AUTO,
     PermissionMode.PLAN,
     PermissionMode.BYPASS,
 ]
@@ -456,6 +456,7 @@ _MODE_CYCLE = [
 _MODE_COLORS = {
     PermissionMode.DEFAULT: "dim",
     PermissionMode.ACCEPT_EDITS: "green",
+    PermissionMode.AUTO: "magenta",
     PermissionMode.PLAN: "yellow",
     PermissionMode.BYPASS: "red",
 }
@@ -686,6 +687,7 @@ class XHXApp(App):
         hook_engine: HookEngine | None = None,
         enable_fork: bool = False,
         enable_verification_agent: bool = False,
+        enable_verification_gate: bool = False,
         worktree_config: Any = None,
         teammate_mode: str = "",
         enable_coordinator_mode: bool = False,
@@ -698,6 +700,7 @@ class XHXApp(App):
         self.hook_engine = hook_engine
         self._enable_fork = enable_fork
         self._enable_verification_agent = enable_verification_agent
+        self._enable_verification_gate = enable_verification_gate
         self._worktree_config = worktree_config
         self._teammate_mode = teammate_mode
         self._enable_coordinator_mode = enable_coordinator_mode
@@ -819,7 +822,10 @@ class XHXApp(App):
         self._xhx_last_model = provider.model
         self._xhx_context_budget = provider.context_window
         try:
-            self.client = create_client(provider)
+            from xhx_agent.models.routing import build_agent_client
+
+            # 主 provider + .xhx/config.json 的 routing.fallback 链；无 fallback 时等价于单个 client。
+            self.client = build_agent_client(Path.cwd(), provider)
         except AuthenticationError as e:
             self._show_error(str(e))
             return
@@ -830,9 +836,9 @@ class XHXApp(App):
             detector=DangerousCommandDetector(),
             sandbox=PathSandbox(work_dir),
             rule_engine=RuleEngine(
-                user_rules_path=home / ".XHX" / "permissions.json",
-                project_rules_path=Path(work_dir) / ".XHX" / "permissions.json",
-                local_rules_path=Path(work_dir) / ".XHX" / "permissions.local.yaml",
+                user_rules_path=home / ".xhx" / "permissions.json",
+                project_rules_path=Path(work_dir) / ".xhx" / "permissions.json",
+                local_rules_path=Path(work_dir) / ".xhx" / "permissions.local.yaml",
             ),
             mode=self._initial_permission_mode,
         )
@@ -891,6 +897,7 @@ class XHXApp(App):
         )
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
+        self.agent.verification_gate = self._enable_verification_gate
 
         # 注入回调：两个工具共享同一个 _is_plan_mode / _plan_exists
         def _is_plan() -> bool:
@@ -1131,6 +1138,7 @@ class XHXApp(App):
                 "set_conversation": self._set_conversation,
                 "clear_chat": self._clear_chat,
                 "render_restored": self._render_restored_messages,
+                "file_history": getattr(self, "file_history", None),
                 "skill_loader": self.skill_loader,
                 "skill_executor": self.skill_executor,
             },
@@ -2150,8 +2158,9 @@ class XHXApp(App):
     _MODE_DISPLAY = {
         PermissionMode.DEFAULT: "default",
         PermissionMode.ACCEPT_EDITS: "accept-edits",
+        PermissionMode.AUTO: "auto",
         PermissionMode.PLAN: "plan",
-        PermissionMode.BYPASS: "YOLO",
+        PermissionMode.BYPASS: "bypass",
     }
 
     def _update_mode_label(self) -> None:
@@ -2238,14 +2247,14 @@ class XHXApp(App):
 def _resolve_perm_mode(s: str) -> PermissionMode:
     """把 config 的 default_permission_mode 字符串解析为 PermissionMode（容错，未知回退 DEFAULT）。"""
     t = (s or "").strip().lower().replace("_", "").replace("-", "")
-    if t in ("auto", "acceptedits", "accept", "edits"):
+    if t == "auto":
+        return PermissionMode.AUTO
+    if t in ("acceptedits", "accept", "edits"):
         return PermissionMode.ACCEPT_EDITS
     if t in ("bypass", "bypasspermissions", "yolo"):
         return PermissionMode.BYPASS
     if t == "plan":
         return PermissionMode.PLAN
-    if t in ("dontask", "noask"):
-        return PermissionMode.DONT_ASK
     return PermissionMode.DEFAULT
 
 
@@ -2307,6 +2316,7 @@ def run_textual_console(
         worktree_config=wt_config,
         enable_fork=cfg.enable_fork,
         enable_verification_agent=cfg.enable_verification_agent,
+        enable_verification_gate=cfg.enable_verification_gate,
         enable_coordinator_mode=cfg.enable_coordinator_mode,
     )
     app.run()

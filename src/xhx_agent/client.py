@@ -583,6 +583,56 @@ class MockClient(LLMClient):
         yield StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)
 
 
+class FallbackLLMClient(LLMClient):
+    """按序包住多个 streaming LLMClient：某个在产出首个事件前抛 LLMError 就试下一个。
+
+    与非流式的 ``models.routing.FallbackChatClient`` 不同，本类工作在 agent 主循环真正使用的
+    ``stream()`` 层。回退只在**首个事件产出之前**发生（连接 / 鉴权 / 限流 / 首 token 失败）——
+    一旦开始 yield 内容就不能再切换（部分输出已落到对话里），此后的错误照常向上抛。
+    无 fallback 时调用方应直接用单个 client，不必包这层。
+    """
+
+    def __init__(self, clients: list[LLMClient], on_fallback: Any = None) -> None:
+        if not clients:
+            raise ValueError("FallbackLLMClient requires at least one client")
+        self.clients = clients
+        self.on_fallback = on_fallback
+
+    def set_max_output_tokens(self, tokens: int) -> None:
+        for client in self.clients:
+            client.set_max_output_tokens(tokens)
+
+    async def stream(
+        self,
+        conversation: ConversationManager,
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        last_error: LLMError | None = None
+        for idx, client in enumerate(self.clients):
+            agen = client.stream(conversation, system=system, tools=tools)
+            try:
+                first = await agen.__anext__()
+            except StopAsyncIteration:
+                return  # 空流：视为成功完成（无事件）
+            except LLMError as e:
+                last_error = e
+                if self.on_fallback and idx + 1 < len(self.clients):
+                    try:
+                        self.on_fallback(idx, e)
+                    except Exception:
+                        pass
+                continue
+            # 该 client 已成功产出首个事件 —— 锁定它，把首个事件和余下流全部转发。
+            yield first
+            async for event in agen:
+                yield event
+            return
+        if last_error is not None:
+            raise last_error
+        raise LLMError("No model clients available for streaming.")
+
+
 def create_client(config: ProviderConfig) -> LLMClient:
     if config.protocol == "anthropic":
         return AnthropicClient(config)

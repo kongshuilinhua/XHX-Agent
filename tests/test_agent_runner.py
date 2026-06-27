@@ -346,3 +346,134 @@ def test_bypass_mode_auto_allows(tmp_path) -> None:
     events = _drive_answer(agent, conv, PermissionResponse.DENY)
     assert not any(isinstance(e, PermissionRequest) for e in events)
     assert any(isinstance(e, ToolResultEvent) and "cmd ran" in e.output for e in events)
+
+
+# --- 回归：交互式 run() 的 changed_files 跟踪 + 完成前验证关卡 opt-in ---
+
+
+class _WriteParams(BaseModel):
+    file_path: str = ""
+    content: str = ""
+
+
+class _FakeWriteTool(Tool):
+    """名为 WriteFile 的假写工具（命中 _MUTATION_TOOLS）；非并发安全→走 run() 串行分支。"""
+
+    name = "WriteFile"
+    description = "fake write"
+    params_model = _WriteParams
+    category = "write"
+
+    async def execute(self, params: _WriteParams) -> ToolResult:  # type: ignore[override]
+        return ToolResult(output=f"wrote {params.file_path}")
+
+
+def _write_then_done_client() -> _ScriptedClient:
+    return _ScriptedClient(
+        [
+            [
+                ToolCallComplete(
+                    tool_id="1", tool_name="WriteFile", arguments={"file_path": "src/foo.py", "content": "x"}
+                ),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [TextDelta(text="done"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)],
+        ]
+    )
+
+
+def _write_registry() -> ToolRegistry:
+    reg = ToolRegistry()
+    reg.register(_FakeWriteTool())
+    return reg
+
+
+def test_interactive_run_tracks_changed_files(tmp_path) -> None:
+    """交互式 run() 在写类工具成功后必须记录 changed_files（此前只 headless 记录，TUI 哑火）。"""
+    agent = Agent(
+        client=_write_then_done_client(), registry=_write_registry(), protocol="openai-compat", work_dir=str(tmp_path)
+    )
+    conv = ConversationManager()
+    conv.add_user_message("write foo")
+    _drive(agent, conv)
+    assert "src/foo.py" in agent.changed_files
+
+
+def test_verification_gate_off_by_default(tmp_path, monkeypatch) -> None:
+    """默认 verification_gate=False：即使有改动也不触碰验证关卡。"""
+    import xhx_agent.verification.router as router
+
+    hits: list[int] = []
+    monkeypatch.setattr(router, "infer_verification", lambda ws, cf: hits.append(1))
+
+    agent = Agent(
+        client=_write_then_done_client(), registry=_write_registry(), protocol="openai-compat", work_dir=str(tmp_path)
+    )
+    conv = ConversationManager()
+    conv.add_user_message("write foo")
+    events = _drive(agent, conv)
+    assert hits == []  # 关卡未触发
+    assert any(isinstance(e, LoopComplete) for e in events)
+
+
+def test_verification_gate_runs_when_enabled(tmp_path, monkeypatch) -> None:
+    """verification_gate=True 且有改动时，收尾轮执行验证命令（这里用无害 echo 验证关卡确实跑）。"""
+    import xhx_agent.verification.router as router
+    from xhx_agent.verification.router import VerificationCommand, VerificationPlan
+
+    monkeypatch.setattr(
+        router,
+        "infer_verification",
+        lambda ws, cf: VerificationPlan(commands=[VerificationCommand(command="echo ok", reason="test")]),
+    )
+
+    agent = Agent(
+        client=_write_then_done_client(), registry=_write_registry(), protocol="openai-compat", work_dir=str(tmp_path)
+    )
+    agent.verification_gate = True
+    conv = ConversationManager()
+    conv.add_user_message("write foo")
+    _drive(agent, conv)
+    assert getattr(agent, "_verification_passed", False) is True
+
+
+# --- auto 模式 LLM 分类器 ---
+
+
+class _VerdictClient:
+    """固定吐一句裁决文本的 fake client，用于测 auto 分类器解析。"""
+
+    def __init__(self, verdict: str) -> None:
+        self.verdict = verdict
+
+    async def stream(self, conversation: Any, system: Any = None, tools: Any = None) -> Any:
+        yield TextDelta(text=self.verdict)
+        yield StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)
+
+
+def test_classify_command_parses_verdict(tmp_path) -> None:
+    a = Agent(
+        client=_VerdictClient("ALLOW looks safe"),
+        registry=_registry(),
+        protocol="openai-compat",
+        work_dir=str(tmp_path),
+    )
+    b = Agent(
+        client=_VerdictClient("BLOCK destructive"),
+        registry=_registry(),
+        protocol="openai-compat",
+        work_dir=str(tmp_path),
+    )
+    assert asyncio.run(a._classify_command("mkdir x")) is True
+    assert asyncio.run(b._classify_command("rm -rf x")) is False
+
+
+def test_classify_command_safe_failsafe(tmp_path) -> None:
+    class _BoomClient:
+        async def stream(self, conversation: Any, system: Any = None, tools: Any = None) -> Any:
+            raise RuntimeError("boom")
+            yield  # pragma: no cover  使其成为 async generator
+
+    a = Agent(client=_BoomClient(), registry=_registry(), protocol="openai-compat", work_dir=str(tmp_path))
+    # 分类器异常时保守返回 False（转人工确认）
+    assert asyncio.run(a._classify_command_safe("anything")) is False

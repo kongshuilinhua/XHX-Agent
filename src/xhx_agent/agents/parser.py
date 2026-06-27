@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 VALID_MODELS = {"inherit", "sonnet", "opus", "haiku", ""}
-VALID_PERMISSION_MODES = {"default", "acceptEdits", "dontAsk", ""}
+VALID_PERMISSION_MODES = {"default", "acceptEdits", "auto", "plan", "bypassPermissions", ""}
 VALID_ISOLATION_MODES = {"", "worktree"}
 
 

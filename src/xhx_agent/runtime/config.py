@@ -52,6 +52,7 @@ class ProjectConfig(BaseModel):
     enable_coordinator_mode: bool = False  # 协调者模式：lead 工具收窄为仅派发
     enable_fork: bool = False  # 允许子 agent fork 当前对话（继承完整历史）
     enable_verification_agent: bool = False  # 启用只读验证子 agent
+    enable_verification_gate: bool = False  # 交互式完成前验证关卡：收尾轮先跑定向测试，失败注入修复（默认关）
     # worktree 隔离里要软链回来的目录（如 node_modules/.venv，避免重装依赖）。
     worktree_symlink_directories: list[str] = Field(default_factory=list)
 
