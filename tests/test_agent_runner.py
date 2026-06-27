@@ -477,3 +477,15 @@ def test_classify_command_safe_failsafe(tmp_path) -> None:
     a = Agent(client=_BoomClient(), registry=_registry(), protocol="openai-compat", work_dir=str(tmp_path))
     # 分类器异常时保守返回 False（转人工确认）
     assert asyncio.run(a._classify_command_safe("anything")) is False
+
+
+def test_classifier_client_takes_precedence(tmp_path) -> None:
+    # 配了便宜分类器 client 时，_classify_command 用它（ALLOW）而非主 client（BLOCK）
+    a = Agent(
+        client=_VerdictClient("BLOCK from main"),
+        registry=_registry(),
+        protocol="openai-compat",
+        work_dir=str(tmp_path),
+    )
+    a.classifier_client = _VerdictClient("ALLOW from cheap")
+    assert asyncio.run(a._classify_command("mkdir x")) is True

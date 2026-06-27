@@ -898,6 +898,10 @@ class XHXApp(App):
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
         self.agent.verification_gate = self._enable_verification_gate
+        # auto 分类器模型：配了 routing.roles["classify"] 的便宜 profile 就用它，没配走主模型。
+        from xhx_agent.models.routing import build_role_client
+
+        self.agent.classifier_client = build_role_client(Path.cwd(), "classify", provider.name)
 
         # 注入回调：两个工具共享同一个 _is_plan_mode / _plan_exists
         def _is_plan() -> bool:

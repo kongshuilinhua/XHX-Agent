@@ -103,7 +103,7 @@ def build_headless_agent(
         pass
     hook_engine = HookEngine(hook_list) if hook_list else None
 
-    return Agent(
+    agent = Agent(
         client=client,
         registry=registry,
         protocol=protocol,
@@ -115,6 +115,12 @@ def build_headless_agent(
         memory_manager=MemoryManager(str(ws)),
         hook_engine=hook_engine,
     )
+    # auto 分类器模型：配了 routing.roles["classify"] 的便宜 profile 就用它，没配走主模型。
+    if provider is not None:
+        from xhx_agent.models.routing import build_role_client
+
+        agent.classifier_client = build_role_client(ws, "classify", provider.name)
+    return agent
 
 
 async def run_headless_task_async(

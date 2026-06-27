@@ -138,3 +138,35 @@ def build_agent_client(workspace: Path, provider: Any, *, event_callback: Any = 
         )
 
     return FallbackLLMClient([primary, *extra], on_fallback=on_fallback)
+
+
+def build_role_client(workspace: Path, role: str, main_profile_name: str, *, event_callback: Any = None) -> Any:
+    """为某个角色（如 "classify"）解析路由出的流式 client，没配则返回 None。
+
+    语义对齐主模型配置：``config.routing.roles[role]`` 指向一个**与主 profile 不同**的 profile 时，
+    构造该 profile 的流式 client；没配 / 配的就是主 profile / 解析失败 → 返回 None，由调用方回退
+    主 client（即默认走主模型）。让 auto 分类器、记忆抽取等辅助角色能像主模型一样在 .xhx 里简单
+    配一个便宜模型，没配就沿用主模型、零额外配置。
+    """
+    from xhx_agent.client import create_client
+    from xhx_agent.config import ProviderConfig
+
+    try:
+        profile_name = load_config(workspace).routing.roles.get(role)
+    except Exception:
+        return None
+    if not profile_name or profile_name == main_profile_name:
+        return None
+    try:
+        profile = get_profile(workspace, profile_name)
+        return create_client(ProviderConfig.from_xhx_profile(profile))
+    except Exception as err:
+        emit_event(
+            event_callback,
+            "role_client_unavailable",
+            f"Role '{role}' profile '{profile_name}' unavailable; using main model.",
+            role=role,
+            profile=profile_name,
+            error=str(err),
+        )
+        return None

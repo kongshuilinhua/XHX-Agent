@@ -326,6 +326,9 @@ class Agent:
         hook_engine: HookEngine | None = None,
     ) -> None:
         self.client = client
+        # auto 分类器用的客户端：默认 None（沿用主 client）；上层可按 routing.roles["classify"]
+        # 路由成一个便宜模型注入（见 models.routing.build_role_client），没配就走主模型。
+        self.classifier_client: LLMClient | None = None
         self.registry = registry
         self.protocol = protocol
         self.work_dir = work_dir
@@ -1142,14 +1145,16 @@ class Agent:
         mini = ConversationManager()
         mini.add_user_message(prompt)
         text = ""
-        async for ev in self.client.stream(mini):
+        # 配了 routing.roles["classify"] 的便宜模型就用它，否则沿用主 client。
+        client = self.classifier_client or self.client
+        async for ev in client.stream(mini):
             if isinstance(ev, TextDelta):
                 text += ev.text
         return text.strip().upper().startswith("ALLOW")
 
     async def _classify_command_safe(self, command: str) -> bool:
         """分类器封装：异常 / 超时 / 无客户端一律保守返回 False（转人工确认）。"""
-        if self.client is None:
+        if self.classifier_client is None and self.client is None:
             return False
         try:
             return await asyncio.wait_for(self._classify_command(command), timeout=20)

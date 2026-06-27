@@ -205,3 +205,35 @@ def test_legacy_read_file_func(tmp_path: Path) -> None:
     assert out == "y"
     with pytest.raises(FileNotFoundError):
         _resolve_inside(tmp_path, "missing.txt")
+
+
+# --- build_role_client：辅助角色（如 classify）的便宜模型路由，没配回退主 ---
+
+
+def test_build_role_client_unconfigured_returns_none(monkeypatch, tmp_path: Path) -> None:
+    from xhx_agent.models import routing
+
+    fake_cfg = type("C", (), {"routing": type("R", (), {"roles": {}})()})()
+    monkeypatch.setattr(routing, "load_config", lambda ws: fake_cfg)
+    assert routing.build_role_client(tmp_path, "classify", "default") is None
+
+
+def test_build_role_client_same_as_main_returns_none(monkeypatch, tmp_path: Path) -> None:
+    from xhx_agent.models import routing
+
+    fake_cfg = type("C", (), {"routing": type("R", (), {"roles": {"classify": "default"}})()})()
+    monkeypatch.setattr(routing, "load_config", lambda ws: fake_cfg)
+    # 配的就是主 profile → None（回退主 client，不重复构造）
+    assert routing.build_role_client(tmp_path, "classify", "default") is None
+
+
+def test_build_role_client_configured_builds(monkeypatch, tmp_path: Path) -> None:
+    from xhx_agent.models import routing
+
+    fake_cfg = type("C", (), {"routing": type("R", (), {"roles": {"classify": "cheap"}})()})()
+    monkeypatch.setattr(routing, "load_config", lambda ws: fake_cfg)
+    monkeypatch.setattr(routing, "get_profile", lambda ws, name: object())
+    monkeypatch.setattr("xhx_agent.config.ProviderConfig.from_xhx_profile", classmethod(lambda cls, p: object()))
+    sentinel = _OkStream("cheap")
+    monkeypatch.setattr("xhx_agent.client.create_client", lambda cfg: sentinel)
+    assert routing.build_role_client(tmp_path, "classify", "default") is sentinel
