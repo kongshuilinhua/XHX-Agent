@@ -24,9 +24,9 @@ async def handle_status(ctx: CommandContext) -> None:
     else:
         lines.append("模式: 未知")
 
-    # 会话信息
+    # 会话信息：TUI 的 Session 用 session_id 标识（不是 run_id，那是 headless 侧的字段）。
     if ctx.session:
-        lines.append(f"会话: {getattr(ctx.session, 'run_id', '?')}")
+        lines.append(f"会话: {getattr(ctx.session, 'session_id', None) or '?'}")
     else:
         lines.append("会话: 无")
 

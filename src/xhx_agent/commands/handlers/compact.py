@@ -23,6 +23,10 @@ async def handle_compact(ctx: CommandContext) -> None:
         ctx.ui.add_system_message(f"当前 token 数约 {used:,}，无需压缩")
         return
 
+    # 压缩要等一次 LLM 摘要调用（数秒级）。先给一条反馈，否则 await 期间界面毫无动静，
+    # 看着像“卡死”。这条消息会在随后 await 让出事件循环时立即渲染出来。
+    ctx.ui.add_system_message(f"正在压缩上下文（约 {used:,} tokens），请稍候…")
+
     result = await ctx.agent.manual_compact(ctx.conversation)
     from xhx_agent.agents.agent_runner import CompactNotification
 
