@@ -5,6 +5,8 @@ import sys
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 from xhx_agent.cli.rpc import start_rpc_loop
 from xhx_agent.evals.benchmark import BenchmarkRunner
 from xhx_agent.evals.metrics import RunMetrics
@@ -100,6 +102,12 @@ def test_trail_replayer(tmp_path: Path) -> None:
     assert "Mock task for replay" in content
     assert "Step 1: Read config" in content
     assert "app.py" in content
+
+
+def test_trail_replayer_missing_trace_raises(tmp_path: Path) -> None:
+    # 没有 trace 的 run（如新栈 headless run）不该静默返回全零 success。
+    with pytest.raises(FileNotFoundError, match="no-such-run"):
+        TrailReplayer(tmp_path).replay("no-such-run")
 
 
 def test_benchmark_runner(tmp_path: Path) -> None:

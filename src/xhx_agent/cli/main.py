@@ -175,14 +175,14 @@ def _record_run_session(workspace: Path, task: str, result: HeadlessResult) -> S
     adapter = SimpleNamespace(
         run_id=run_id,
         status=result.status,
-        verification="",
-        changed_files=[],
+        verification=result.verification,
+        changed_files=list(result.changed_files or []),
         summary_path=summary_file.relative_to(workspace).as_posix(),
         transcript_path=None,
         mode="",
         messages=None,
     )
-    return record_session(workspace, task, adapter)  # type: ignore[arg-type]  # duck-typed 适配对象
+    return record_session(workspace, task, adapter, turn_count=result.turns)  # type: ignore[arg-type]  # duck-typed 适配对象
 
 
 @app.command("run")

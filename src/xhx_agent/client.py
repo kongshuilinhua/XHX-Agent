@@ -475,29 +475,16 @@ class OpenAICompatClient(LLMClient):
         # tool_calls 列表中的位置索引下发 delta，我们按索引跟踪每个进行中的调用。
         active_calls: dict[int, dict[str, str]] = {}  # 索引 -> {id, name, args}
         stop_reason = "end_turn"  # 由 finish_reason 更新
-        emitted_end = False  # 是否已 yield StreamEnd（避免重复/遗漏）
+        # usage 的挂载位置因 provider 而异：OpenAI 放在末尾一个空 choices 的专属 chunk，
+        # DeepSeek 挂在最后一个带 finish_reason 的 chunk 上。任何 chunk 见到就暂存，流结束统一上报。
+        final_usage: Any = None
 
         try:
             response = await self._client.chat.completions.create(**kwargs)
             async for chunk in response:
+                if chunk.usage:
+                    final_usage = chunk.usage
                 if not chunk.choices:
-                    # 最后一个 chunk，只包含 usage 数据。
-                    if chunk.usage:
-                        # 部分兼容 provider 通过 prompt_tokens_details.cached_tokens
-                        # 上报 cache 命中数，大多数不上报（cache_read 保持 0）。
-                        # prompt_tokens 包含了缓存 token，需要减去以保持
-                        # input + cache_read 可加性。没有 provider 上报 creation 计数。
-                        details = getattr(chunk.usage, "prompt_tokens_details", None)
-                        cache_read = getattr(details, "cached_tokens", 0) or 0
-                        prompt_tokens = chunk.usage.prompt_tokens or 0
-                        yield StreamEnd(
-                            stop_reason=stop_reason,
-                            input_tokens=max(prompt_tokens - cache_read, 0),
-                            output_tokens=chunk.usage.completion_tokens or 0,
-                            cache_read=cache_read,
-                            cache_creation=0,
-                        )
-                        emitted_end = True
                     continue
 
                 choice = chunk.choices[0]
@@ -543,9 +530,23 @@ class OpenAICompatClient(LLMClient):
                             )
                         active_calls.clear()
 
-            # 兜底：provider 未在流末回传 usage chunk（如 deepseek）时，这里补一个 StreamEnd，
-            # 确保 stop_reason 正确、agent 循环正常收尾（token 计数交由本地估算）。
-            if not emitted_end:
+            if final_usage is not None:
+                # 部分兼容 provider 通过 prompt_tokens_details.cached_tokens 上报 cache 命中数，
+                # 大多数不上报（cache_read 保持 0）。prompt_tokens 包含了缓存 token，需要减去
+                # 以保持 input + cache_read 可加性。没有 provider 上报 creation 计数。
+                details = getattr(final_usage, "prompt_tokens_details", None)
+                cache_read = getattr(details, "cached_tokens", 0) or 0
+                prompt_tokens = final_usage.prompt_tokens or 0
+                yield StreamEnd(
+                    stop_reason=stop_reason,
+                    input_tokens=max(prompt_tokens - cache_read, 0),
+                    output_tokens=final_usage.completion_tokens or 0,
+                    cache_read=cache_read,
+                    cache_creation=0,
+                )
+            else:
+                # 兜底：provider 全程未回传 usage 时补一个 StreamEnd，
+                # 确保 stop_reason 正确、agent 循环正常收尾（token 计数交由本地估算）。
                 yield StreamEnd(stop_reason=stop_reason, input_tokens=0, output_tokens=0)
 
         except _openai.AuthenticationError as e:

@@ -65,3 +65,26 @@ def test_sessions_empty() -> None:
         result = runner.invoke(app, ["sessions"])
         assert result.exit_code == 0
         assert "No sessions recorded" in result.output
+
+
+def test_record_run_session_passes_through_result_fields() -> None:
+    # headless 结果里的 verification/changed_files/turns 必须落入会话索引，
+    # 否则 `xhx sessions` 对 headless 运行永远显示不出这些真实值。
+    from xhx_agent.cli.main import _record_run_session
+    from xhx_agent.runtime.headless import HeadlessResult
+    from xhx_agent.runtime.init import init_project
+
+    with runner.isolated_filesystem() as ws:
+        init_project(Path(ws))
+        result = HeadlessResult(
+            status="completed",
+            summary="done",
+            verification="passed",
+            turns=3,
+            changed_files=["a.py", "b.py"],
+        )
+        entry = _record_run_session(Path(ws), "some task", result)
+        assert entry.verification == "passed"
+        assert entry.changed_files == ["a.py", "b.py"]
+        assert entry.turn_count == 3
+        assert (Path(ws) / entry.summary_path).read_text(encoding="utf-8") == "done"

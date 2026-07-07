@@ -24,6 +24,9 @@ class TrailReplayer:
 
         store = EvidenceStore(self.workspace, run_id)
         traces = store.list_traces()
+        if not traces:
+            # 没有 trace 就没有可回放的内容；静默返回全零 success 会误导调用方。
+            raise FileNotFoundError(f"No trace recorded for run '{run_id}'; nothing to replay.")
 
         # Reconstructed fields
         task = ""
