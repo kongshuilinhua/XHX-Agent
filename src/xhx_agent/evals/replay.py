@@ -44,6 +44,7 @@ class TrailReplayer:
         plan_summaries: list[str] = []
         duration_seconds = 0.0
         tokens_estimate = 0
+        answer: str | None = None
 
         # Loop through traces to extract variables
         for entry in traces:
@@ -53,6 +54,17 @@ class TrailReplayer:
             elif entry.type == "context_pack":
                 turns += 1
                 tokens_estimate += payload.get("used_tokens_estimate", 0)
+            elif entry.type == "model_turn":
+                # 统一 Agent 循环的逐轮条目：每轮一条，带真实 token 用量与模型文本。
+                turns = max(turns, int(payload.get("turn", 0) or 0))
+                tokens_estimate += payload.get("input_tokens", 0) + payload.get("output_tokens", 0)
+                text = payload.get("text", "")
+                if text and not payload.get("tool_calls"):
+                    answer = text  # 无工具调用的收尾轮文本即最终回答
+            elif entry.type == "tool_call":
+                cmd = (payload.get("arguments") or {}).get("command", "")
+                if payload.get("tool") == "Bash" and cmd:
+                    commands.append(cmd)
             elif entry.type in {"mock_plan", "model_plan"}:
                 plan_summaries.append(payload.get("summary", ""))
             elif entry.type == "verification":
@@ -118,7 +130,8 @@ class TrailReplayer:
             files_changed_count=len(changed_files),
             commands_run_count=len(commands),
             repair_attempts=repair_attempts,
-            success=(status == "success"),
+            # 旧栈 run_end 记 "success"，统一 Agent 循环记 "completed"，都算成功。
+            success=(status in ("success", "completed")),
         )
 
         return RunResult(
@@ -136,4 +149,5 @@ class TrailReplayer:
             summary_path=str(summary_path.relative_to(self.workspace)),
             risk_summary=risk_summary,
             metrics=metrics,
+            answer=answer,
         )

@@ -358,6 +358,10 @@ class Agent:
         self.agent_id: str = uuid.uuid4().hex[:12]
         self.parent_id: str | None = None
         self.trace_id: str | None = None
+        # 持久化证据链（`.xhx/traces/<run_id>.jsonl`）：上层（headless/TUI）挂一个
+        # EvidenceStore 即启用，None 时零开销。写入永不打断运行。
+        self.trace_store: Any | None = None
+        self._trace_turn: int = 0
         self.coordinator_mode: bool = False
         self.team_name: str = ""
         self._team_manager: Any = None
@@ -520,6 +524,40 @@ class Agent:
         if path and path not in self._changed_files:
             self._changed_files.append(path)
 
+    def _trace(self, entry_type: str, payload: dict[str, Any]) -> None:
+        """写一条持久化 trace（挂了 trace_store 才生效）；失败只吞掉，绝不打断运行。"""
+        if self.trace_store is None:
+            return
+        try:
+            self.trace_store.write_trace(entry_type, payload)
+        except Exception:
+            pass
+
+    def _trace_model_turn(self, turn: int, response: LLMResponse) -> None:
+        self._trace(
+            "model_turn",
+            {
+                "turn": turn,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "text": response.text[:2000],
+                "tool_calls": [tc.tool_name for tc in response.tool_calls],
+            },
+        )
+
+    def _trace_tool_exec(self, tc: ToolCallComplete, result: ToolResult, elapsed: float) -> None:
+        self._trace("tool_call", {"turn": self._trace_turn, "tool": tc.tool_name, "arguments": tc.arguments})
+        self._trace(
+            "tool_result",
+            {
+                "turn": self._trace_turn,
+                "tool": tc.tool_name,
+                "is_error": result.is_error,
+                "output": result.output[:500],
+                "elapsed": round(elapsed, 3),
+            },
+        )
+
     def _drain_hook_events(self) -> list[HookEvent]:
         if not self.hook_engine:
             return []
@@ -646,6 +684,7 @@ class Agent:
 
         while True:
             iteration += 1
+            self._trace_turn = iteration
 
             if iteration > self.max_iterations:
                 yield ErrorEvent(message=f"Agent reached maximum iterations ({self.max_iterations})")
@@ -750,6 +789,7 @@ class Agent:
                 input_tokens=self.total_input_tokens,
                 output_tokens=self.total_output_tokens,
             )
+            self._trace_model_turn(iteration, response)
 
             conv_thinking = [
                 ConvThinkingBlock(thinking=tb.thinking, signature=tb.signature) for tb in response.thinking_blocks
@@ -1012,12 +1052,14 @@ class Agent:
             result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
 
         self._snapshot_for_recovery(tc, result)
+        elapsed = time.monotonic() - start
+        self._trace_tool_exec(tc, result, elapsed)
 
         return _ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
             result=result,
-            elapsed=time.monotonic() - start,
+            elapsed=elapsed,
             is_unknown=False,
         )
 
@@ -1108,6 +1150,7 @@ class Agent:
         self._snapshot_for_recovery(tc, result)
 
         elapsed = time.monotonic() - start
+        self._trace_tool_exec(tc, result, elapsed)
         yield result, elapsed, is_unknown
 
     def _snapshot_for_recovery(self, tc: ToolCallComplete, result: ToolResult) -> None:
@@ -1260,6 +1303,7 @@ class Agent:
         last_text = ""
 
         for iteration in range(1, self.max_iterations + 1):
+            self._trace_turn = iteration
             if self.hook_engine:
                 ctx = self._build_hook_context("turn_start")
                 await self.hook_engine.run_hooks("turn_start", ctx)
@@ -1304,6 +1348,7 @@ class Agent:
             response = collector.response
             self.total_input_tokens += response.input_tokens
             self.total_output_tokens += response.output_tokens
+            self._trace_model_turn(iteration, response)
 
             if event_callback:
                 event_callback(
@@ -1444,6 +1489,7 @@ class Agent:
                         is_error=True,
                     )
 
+        start = time.monotonic()
         try:
             params = tool.params_model.model_validate(tc.arguments)
             result = await tool.execute(params)
@@ -1451,6 +1497,7 @@ class Agent:
             result = ToolResult(output=f"Parameter validation error: {e}", is_error=True)
         except Exception as e:
             result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
+        self._trace_tool_exec(tc, result, time.monotonic() - start)
 
         if not result.is_error:
             self._record_changed_file(tc.tool_name, tc.arguments)

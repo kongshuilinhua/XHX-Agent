@@ -59,6 +59,61 @@ def load_transcript_messages(workspace: Path, rel_path: str | None) -> list[dict
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def messages_to_records(messages: list) -> list[dict]:
+    """把 ConversationManager 的 Message 列表序列化成可 JSON 落盘的 record 列表。
+
+    record 结构与交互会话 jsonl（memory.Session.append）保持同一形状：
+    {"type": "message", "role", "content", "tool_uses"?, "tool_results"?}。
+    """
+    from dataclasses import asdict
+
+    records: list[dict] = []
+    for msg in messages:
+        record: dict = {"type": "message", "role": msg.role, "content": msg.content}
+        if msg.tool_uses:
+            record["tool_uses"] = [asdict(tu) for tu in msg.tool_uses]
+        if msg.tool_results:
+            record["tool_results"] = [asdict(tr) for tr in msg.tool_results]
+        records.append(record)
+    return records
+
+
+def records_to_messages(records: list[dict]) -> list:
+    """把落盘的 record 列表还原成 Message 列表；非消息 record（无 role）跳过。"""
+    from xhx_agent.conversation import Message, ToolResultBlock, ToolUseBlock
+
+    messages: list = []
+    for rec in records:
+        role = rec.get("role")
+        if not role:
+            continue
+        tool_uses = [
+            ToolUseBlock(
+                tool_use_id=tu.get("tool_use_id", ""),
+                tool_name=tu.get("tool_name", ""),
+                arguments=tu.get("arguments", {}) or {},
+            )
+            for tu in rec.get("tool_uses", []) or []
+        ]
+        tool_results = [
+            ToolResultBlock(
+                tool_use_id=tr.get("tool_use_id", ""),
+                content=tr.get("content", ""),
+                is_error=bool(tr.get("is_error", False)),
+            )
+            for tr in rec.get("tool_results", []) or []
+        ]
+        messages.append(
+            Message(
+                role=role,
+                content=rec.get("content", "") or "",
+                tool_uses=tool_uses,
+                tool_results=tool_results,
+            )
+        )
+    return messages
+
+
 def view_log_path(workspace: Path, run_id: str) -> Path:
     return xhx_dir(workspace) / "sessions" / f"{run_id}.view.json"
 

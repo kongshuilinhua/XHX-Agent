@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 # Load .env file manually if exists in current working directory
 env_path = Path.cwd() / ".env"
@@ -165,7 +165,8 @@ def _record_run_session(workspace: Path, task: str, result: HeadlessResult) -> S
     import uuid
     from types import SimpleNamespace
 
-    run_id = uuid.uuid4().hex[:12]
+    # run_id 与 trace 文件（.xhx/traces/<run_id>.jsonl）共用，`xhx replay` 才能直接回放。
+    run_id = result.run_id or uuid.uuid4().hex[:12]
     runs_dir = workspace / ".xhx" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     summary_file = runs_dir / f"{run_id}.md"
@@ -180,9 +181,28 @@ def _record_run_session(workspace: Path, task: str, result: HeadlessResult) -> S
         summary_path=summary_file.relative_to(workspace).as_posix(),
         transcript_path=None,
         mode="",
-        messages=None,
+        # 完整对话 record：record_session 会落盘 .xhx/sessions/<run_id>.json 供 --resume 全量还原。
+        messages=result.messages,
     )
     return record_session(workspace, task, adapter, turn_count=result.turns)  # type: ignore[arg-type]  # duck-typed 适配对象
+
+
+def _restore_conversation(workspace: Path, entry: SessionEntry) -> Any:
+    """按会话索引的 transcript 全量还原 ConversationManager；缺 transcript 返回 None（回退摘要续接）。"""
+    records = load_transcript_messages(workspace, entry.transcript_path)
+    if not records:
+        return None
+    from xhx_agent.conversation import ConversationManager
+    from xhx_agent.runtime.session import records_to_messages
+
+    messages = records_to_messages(records)
+    if not messages:
+        return None
+    conversation = ConversationManager(history=messages)
+    # 历史里已含上一轮注入的环境上下文/长期记忆，标记为已注入，续跑时不再重复插入。
+    conversation.env_injected = True
+    conversation.ltm_injected = True
+    return conversation
 
 
 @app.command("run")
@@ -222,17 +242,25 @@ def run(
         return
 
     effective_task = task
+    prior_conversation = None
     if cont or resume:
         previous = load_latest_session(workspace) if cont else load_session(workspace, resume or "")
         if previous is not None:
             verb = "Continuing" if cont else "Resuming"
-            effective_task = format_follow_up(previous) + "\n\n" + task
-            console.print(f"{verb} from run {previous.run_id} ({previous.status}) — summary context injected.")
+            # 优先全量还原完整对话历史；缺 transcript 的老会话回退摘要续接。
+            prior_conversation = _restore_conversation(workspace, previous)
+            if prior_conversation is not None:
+                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — full transcript restored.")
+            else:
+                effective_task = format_follow_up(previous) + "\n\n" + task
+                console.print(f"{verb} from run {previous.run_id} ({previous.status}) — summary context injected.")
         else:
             target = "most recent session" if cont else f"session '{resume}'"
             console.print(f"No {target} found; starting fresh.")
 
-    result = run_headless_task(workspace, effective_task, profile=profile, assume_yes=yes, verify=verify)
+    result = run_headless_task(
+        workspace, effective_task, profile=profile, assume_yes=yes, verify=verify, conversation=prior_conversation
+    )
     entry = _record_run_session(workspace, task, result)
 
     if json_output:

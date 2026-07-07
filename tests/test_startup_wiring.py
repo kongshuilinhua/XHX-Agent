@@ -148,7 +148,7 @@ def test_headless_connects_and_closes_mcp(tmp_path, monkeypatch) -> None:
         turn_count = 1
         changed_files: list = []
 
-        async def run_to_completion(self, task, event_callback=None) -> str:
+        async def run_to_completion(self, task, conversation=None, event_callback=None) -> str:
             return "done"
 
     import xhx_agent.runtime.headless as hl

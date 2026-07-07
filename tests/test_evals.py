@@ -105,9 +105,58 @@ def test_trail_replayer(tmp_path: Path) -> None:
 
 
 def test_trail_replayer_missing_trace_raises(tmp_path: Path) -> None:
-    # 没有 trace 的 run（如新栈 headless run）不该静默返回全零 success。
+    # 没有 trace 的 run 不该静默返回全零 success。
     with pytest.raises(FileNotFoundError, match="no-such-run"):
         TrailReplayer(tmp_path).replay("no-such-run")
+
+
+def test_trail_replayer_unified_loop_entries(tmp_path: Path) -> None:
+    # 统一 Agent 循环的 trace 词汇（model_turn/tool_call/tool_result + status=completed）也能重建。
+    run_id = "unified-run"
+    traces_dir = tmp_path / ".xhx" / "traces"
+    traces_dir.mkdir(parents=True)
+    entries = [
+        {"type": "run_start", "run_id": run_id, "payload": {"task": "check repo", "profile": "default"}},
+        {
+            "type": "model_turn",
+            "run_id": run_id,
+            "payload": {"turn": 1, "input_tokens": 100, "output_tokens": 20, "text": "", "tool_calls": ["Bash"]},
+        },
+        {
+            "type": "tool_call",
+            "run_id": run_id,
+            "payload": {"turn": 1, "tool": "Bash", "arguments": {"command": "git status"}},
+        },
+        {
+            "type": "tool_result",
+            "run_id": run_id,
+            "payload": {"turn": 1, "tool": "Bash", "is_error": False, "output": "clean", "elapsed": 0.1},
+        },
+        {
+            "type": "model_turn",
+            "run_id": run_id,
+            "payload": {"turn": 2, "input_tokens": 50, "output_tokens": 10, "text": "全部干净", "tool_calls": []},
+        },
+        {
+            "type": "run_end",
+            "run_id": run_id,
+            "payload": {"status": "completed", "changed_files": [], "verification": "", "duration_seconds": 2.5},
+        },
+    ]
+    with open(traces_dir / f"{run_id}.jsonl", "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    result = TrailReplayer(tmp_path).replay(run_id)
+
+    assert result.status == "completed"
+    assert result.turns == 2
+    assert result.commands == ["git status"]
+    assert result.answer == "全部干净"
+    assert result.metrics is not None
+    assert result.metrics.success is True
+    assert result.metrics.tokens_estimate == 180
+    assert result.metrics.duration_seconds == 2.5
 
 
 def test_benchmark_runner(tmp_path: Path) -> None:

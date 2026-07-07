@@ -898,6 +898,14 @@ class XHXApp(App):
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
         self.agent.verification_gate = self._enable_verification_gate
+        # 持久化证据链：交互会话按 session_id 落 `.xhx/traces/<session_id>.jsonl`，
+        # `xhx replay <session_id>` 可回放。构造失败只降级为无 trace，不影响启动。
+        try:
+            from xhx_agent.evidence.store import EvidenceStore
+
+            self.agent.trace_store = EvidenceStore(Path(work_dir), self.session.session_id)
+        except Exception:
+            pass
         # auto 分类器模型：配了 routing.roles["classify"] 的便宜 profile 就用它，没配走主模型。
         from xhx_agent.models.routing import build_role_client
 

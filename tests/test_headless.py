@@ -186,3 +186,102 @@ def test_headless_verify_reports_failing_tests(tmp_path: Path, monkeypatch: Any)
 
     assert result.status == "completed"
     assert "FAILED" in result.verification
+
+
+def test_headless_writes_trace_and_replay_reconstructs(tmp_path: Path, monkeypatch: Any) -> None:
+    # 统一 Agent 循环必须落持久化证据链，`xhx replay <run_id>` 能重建轮数/token/回答。
+    monkeypatch.chdir(tmp_path)
+    client = FakeLLMClient(
+        [
+            [
+                ToolCallComplete(
+                    tool_id="t1",
+                    tool_name="WriteFile",
+                    arguments={"file_path": "note.txt", "content": "hello"},
+                ),
+                StreamEnd(stop_reason="tool_use", input_tokens=10, output_tokens=5),
+            ],
+            [
+                TextDelta("done"),
+                StreamEnd(stop_reason="end_turn", input_tokens=3, output_tokens=2),
+            ],
+        ]
+    )
+
+    result = run_headless_task(tmp_path, "write a note", assume_yes=True, client=client)
+
+    assert result.run_id
+    trace_file = tmp_path / ".xhx" / "traces" / f"{result.run_id}.jsonl"
+    assert trace_file.exists()
+    import json
+
+    types = [json.loads(line)["type"] for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for expected in ("run_start", "model_turn", "tool_call", "tool_result", "run_end"):
+        assert expected in types, f"missing trace entry type: {expected} (got {types})"
+
+    from xhx_agent.evals.replay import TrailReplayer
+
+    replayed = TrailReplayer(tmp_path).replay(result.run_id)
+    assert replayed.status == "completed"
+    assert replayed.turns == 2
+    assert replayed.answer == "done"
+    assert replayed.metrics is not None
+    assert replayed.metrics.success is True
+    assert replayed.metrics.tokens_estimate == 20  # (10+5) + (3+2)，来自真实 usage
+
+
+def test_headless_result_carries_transcript_messages(tmp_path: Path, monkeypatch: Any) -> None:
+    # HeadlessResult.messages 是完整对话的 record 形式，能无损还原成 Message 列表。
+    monkeypatch.chdir(tmp_path)
+    client = FakeLLMClient(
+        [
+            [
+                TextDelta("the answer is 42"),
+                StreamEnd(stop_reason="end_turn", input_tokens=4, output_tokens=6),
+            ],
+        ]
+    )
+
+    result = run_headless_task(tmp_path, "what is the answer", client=client)
+
+    assert result.messages
+    from xhx_agent.runtime.session import records_to_messages
+
+    messages = records_to_messages(result.messages)
+    assert any(m.role == "user" and "what is the answer" in m.content for m in messages)
+    assert messages[-1].role == "assistant"
+    assert messages[-1].content == "the answer is 42"
+
+
+def test_headless_resumes_on_restored_conversation(tmp_path: Path, monkeypatch: Any) -> None:
+    # `--resume` 全量还原：把上一轮的完整历史交给 headless，续跑时模型能看到全部旧消息。
+    monkeypatch.chdir(tmp_path)
+    from xhx_agent.conversation import ConversationManager, Message
+
+    prior = ConversationManager(
+        history=[
+            Message(role="user", content="first question"),
+            Message(role="assistant", content="first answer"),
+        ]
+    )
+    prior.env_injected = True
+    prior.ltm_injected = True
+
+    seen_histories: list[int] = []
+
+    class RecordingClient(FakeLLMClient):
+        async def stream(self, conversation: Any, system: str = "", tools: Any = None) -> AsyncIterator[StreamEvent]:
+            seen_histories.append(len(conversation.get_messages()))
+            async for event in super().stream(conversation, system, tools):
+                yield event
+
+    client = RecordingClient(
+        [[TextDelta("continued"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)]]
+    )
+
+    result = run_headless_task(tmp_path, "follow up", client=client, conversation=prior)
+
+    assert result.status == "completed"
+    assert result.summary == "continued"
+    # 模型看到的历史 = 旧 2 条 + 新 user 任务 1 条
+    assert seen_histories and seen_histories[0] == 3

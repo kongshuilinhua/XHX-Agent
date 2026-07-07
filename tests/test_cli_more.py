@@ -88,3 +88,34 @@ def test_record_run_session_passes_through_result_fields() -> None:
         assert entry.changed_files == ["a.py", "b.py"]
         assert entry.turn_count == 3
         assert (Path(ws) / entry.summary_path).read_text(encoding="utf-8") == "done"
+
+
+def test_record_run_session_persists_transcript_and_restores() -> None:
+    # run_id 与 trace/会话索引共用；messages 落盘 transcript，_restore_conversation 能全量还原。
+    from xhx_agent.cli.main import _record_run_session, _restore_conversation
+    from xhx_agent.runtime.headless import HeadlessResult
+    from xhx_agent.runtime.init import init_project
+
+    with runner.isolated_filesystem() as ws:
+        init_project(Path(ws))
+        result = HeadlessResult(
+            status="completed",
+            summary="hi there",
+            run_id="abc123def456",
+            messages=[
+                {"type": "message", "role": "user", "content": "say hi"},
+                {"type": "message", "role": "assistant", "content": "hi there"},
+            ],
+        )
+        entry = _record_run_session(Path(ws), "say hi", result)
+
+        assert entry.run_id == "abc123def456"
+        assert entry.transcript_path
+        assert (Path(ws) / entry.transcript_path).exists()
+
+        conversation = _restore_conversation(Path(ws), entry)
+        assert conversation is not None
+        history = conversation.get_messages()
+        assert [m.role for m in history] == ["user", "assistant"]
+        assert history[-1].content == "hi there"
+        assert conversation.env_injected and conversation.ltm_injected

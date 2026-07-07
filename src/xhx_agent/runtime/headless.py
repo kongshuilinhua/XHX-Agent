@@ -40,6 +40,11 @@ class HeadlessResult:
     verification: str = ""  # 启用 verify 时的验证结论（空=未启用/无可验证项）
     turns: int = 0
     changed_files: list[str] | None = None
+    # 本次运行的 id：trace 文件（.xhx/traces/<run_id>.jsonl）与会话索引共用同一个，
+    # `xhx replay <run_id>` 才能直接回放 `xhx sessions` 列出的运行。
+    run_id: str = ""
+    # 完整对话历史（record 形式），供会话索引落盘 transcript、`--resume` 全量还原。
+    messages: list[dict[str, Any]] | None = None
 
 
 def _build_permission_checker(work_dir: Path, mode: PermissionMode) -> PermissionChecker:
@@ -133,9 +138,17 @@ async def run_headless_task_async(
     client: LLMClient | None = None,
     verify: bool = False,
     event_callback: Callable[[dict[str, Any]], None] | None = None,
+    conversation: Any = None,
 ) -> HeadlessResult:
-    """异步把任务跑到完成。``assume_yes`` 时自动放行需确认的工具调用；``verify`` 时停止后自动验证。"""
+    """异步把任务跑到完成。``assume_yes`` 时自动放行需确认的工具调用；``verify`` 时停止后自动验证。
+
+    ``conversation`` 传入已还原的 ConversationManager 时在其历史上续跑（`--resume` 全量还原）。
+    """
+    import time
+    import uuid
+
     mode = PermissionMode.BYPASS if assume_yes else PermissionMode.DEFAULT
+    run_id = uuid.uuid4().hex[:12]
     try:
         agent = build_headless_agent(
             workspace,
@@ -146,7 +159,28 @@ async def run_headless_task_async(
             verify=verify,
         )
     except Exception as exc:  # 配置/构造期失败：直接返回 error，不抛给 CLI
-        return HeadlessResult(status="error", summary="", error=str(exc))
+        return HeadlessResult(status="error", summary="", error=str(exc), run_id=run_id)
+
+    # 持久化证据链：`.xhx/traces/<run_id>.jsonl`。写失败不阻断任务（trace 是旁路观测）。
+    trace_store = None
+    start_time = time.monotonic()
+    try:
+        from xhx_agent.evidence.store import EvidenceStore
+
+        trace_store = EvidenceStore(Path(workspace).resolve(), run_id)
+        trace_store.write_trace("run_start", {"task": task, "profile": profile or "default"})
+        agent.trace_store = trace_store
+    except Exception:
+        trace_store = None
+
+    def _trace_run_end(payload: dict[str, Any]) -> None:
+        if trace_store is None:
+            return
+        try:
+            payload["duration_seconds"] = round(time.monotonic() - start_time, 3)
+            trace_store.write_trace("run_end", payload)
+        except Exception:
+            pass
 
     # 接入 MCP：连接 .xhx/mcp.json 的 server 并注册工具；任务结束（含异常）后 close。
     mcp_manager = None
@@ -165,14 +199,17 @@ async def run_headless_task_async(
 
     try:
         try:
-            text = await agent.run_to_completion(task, event_callback=event_callback)
+            text = await agent.run_to_completion(task, conversation=conversation, event_callback=event_callback)
         except Exception as exc:
+            _trace_run_end({"status": "error", "error": str(exc)})
             return HeadlessResult(
                 status="error",
                 summary="",
                 input_tokens=agent.total_input_tokens,
                 output_tokens=agent.total_output_tokens,
                 error=str(exc),
+                run_id=run_id,
+                messages=_serialize_conversation(agent),
             )
 
         verification = ""
@@ -181,6 +218,14 @@ async def run_headless_task_async(
                 if note.hook_id == "builtin-verification":
                     verification = note.output
 
+        _trace_run_end(
+            {
+                "status": "completed",
+                "changed_files": list(agent.changed_files),
+                "verification": verification,
+                "summary": text[:500],
+            }
+        )
         return HeadlessResult(
             status="completed",
             summary=text,
@@ -189,10 +234,25 @@ async def run_headless_task_async(
             verification=verification,
             turns=agent.turn_count,
             changed_files=list(agent.changed_files),
+            run_id=run_id,
+            messages=_serialize_conversation(agent),
         )
     finally:
         if mcp_manager is not None:
             mcp_manager.close()
+
+
+def _serialize_conversation(agent: Agent) -> list[dict[str, Any]] | None:
+    """把 agent 本次运行的完整对话序列化成 record 列表；失败返回 None（transcript 是旁路）。"""
+    conv = getattr(agent, "_current_conversation", None)
+    if conv is None:
+        return None
+    try:
+        from xhx_agent.runtime.session import messages_to_records
+
+        return messages_to_records(conv.get_messages())
+    except Exception:
+        return None
 
 
 def run_headless_task(workspace: str | Path, task: str, **kwargs: Any) -> HeadlessResult:
