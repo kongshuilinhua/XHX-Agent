@@ -26,7 +26,8 @@
 - **Cross-session long-term memory.** `.xhx/memory/` keeps durable facts (`user` / `feedback` / `project` / `reference`) with **deterministic recall** (keyword/token overlap, no extra LLM call) injected into the system prompt under budget. Verified end-to-end: a fact that exists *only* in memory is recalled and shapes the real model's answer.
 - **Sub-agents & multi-agent teams.** Spawn a read-only **research** sub-agent or a write-capable **edit** sub-agent (its own worktree, merged back with conflict detection) via the `Agent` tool. Or stand up an **Agent Team** (coordinator + workers, mailbox messaging, shared task board) for parallel collaboration.
 - **MCP, web, and skills.** Connect external **MCP** servers (stdio / Streamable HTTP / SSE) from `.xhx/mcp.json`; fetch and search the web (SSRF-guarded `WebFetch` + Tavily `WebSearch`); load **skills** (`SKILL.md`, three-tier builtin/user/project) that inject SOPs and slash commands on trigger.
-- **Multi-model routing + graceful fallback.** Route roles to different model profiles and fall back down a profile chain on error/rate-limit; orthogonal to streaming.
+- **Multi-model routing + graceful fallback.** Route roles to different model profiles and fall back down a profile chain on error/rate-limit; orthogonal to streaming. `xhx benchmark --profiles default,cheap` quantifies the trade-off (success rate / turns / tokens / wall time) on a shared fixture set.
+- **Persistent evidence trail + deterministic replay.** Every model turn and tool execution lands in `.xhx/traces/<run_id>.jsonl` (real token usage, arguments, result summaries); `xhx replay <run-id>` rebuilds a run's turns, commands, and final answer offline — and when a long task *looks* hung, the trace shows exactly what it is doing.
 
 ---
 
@@ -128,6 +129,7 @@ The runtime is organized into focused, independently-testable layers:
 | **Sub-agents** | `Agent` tool spawns read-only research or write-capable edit sub-agents with a filtered toolset; edit agents work in isolated worktrees. |
 | **Worktree** | Full git-worktree lifecycle (create / enter / exit / auto-cleanup) for isolated edits. |
 | **Agent Teams** | Coordinator + workers, file-based mailbox messaging, shared task board, per-teammate progress. |
+| **Evidence / replay** | Per-turn `model_turn` + per-tool `tool_call`/`tool_result` entries in `.xhx/traces/` (run_id shared with the session index); `xhx replay` rebuilds the run offline. |
 
 ---
 
@@ -145,10 +147,10 @@ uv run xhx run "<task>" [options]
 | `--verify` | Run change-targeted tests after the agent stops. |
 | `-y`, `--yes` | Pre-approve confirm-tier commands (non-interactive). |
 | `--json` | Emit the run result as structured JSON. |
-| `--continue` | Resume from the most recent session, injecting its summary as context. |
-| `--resume <run-id>` | Resume from a specific past session (`xhx sessions` lists them). |
+| `--continue` | Resume from the most recent session: restores the full transcript when available, falls back to summary injection for older sessions. |
+| `--resume <run-id>` | Resume from a specific past session (`xhx sessions` lists them), likewise preferring a full-transcript restore. |
 
-Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `sessions`, `tui` / `chat`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>`, `benchmark`, `memory`, `compact`, `config list` / `config set-profile`.
+Other commands: `init` (`--global` for user-level `~/.xhx/`), `repo-index`, `sessions`, `tui` / `chat`, `rpc` (JSON-RPC 2.0 over stdio), `replay <run-id>` (rebuild a run offline from its trace), `benchmark` (`--profiles default,cheap` compares model profiles on a shared fixture set), `memory`, `compact`, `config list` / `config set-profile`.
 
 ### TUI slash commands
 
@@ -194,16 +196,16 @@ Stated plainly so capability is never confused with roadmap.
 - Hooks: lifecycle engine with `command` / `prompt` / `http` / `verification` actions.
 - Sub-agents (read-only research + write-capable edit-in-worktree) and Agent Teams (coordinator + workers, mailbox, shared tasks).
 - Git worktree lifecycle; repo intelligence (symbol / import / reference / call index, `ast` + tree-sitter, JSON + SQLite); multi-model routing + fallback.
+- Evidence trail & replay: the unified loop writes per-turn / per-tool entries to `.xhx/traces/<run_id>.jsonl` (run_id shared across trace, session index, and `xhx sessions`); `xhx replay` rebuilds turns / tokens / commands / final answer offline; `--continue` / `--resume` restore the full transcript, falling back to summary injection for older sessions.
+- Benchmark: `--profiles` compares model profiles on a shared fixture set (success rate / turns / tokens / wall time — all real run data).
 - Interfaces: Textual TUI, headless `xhx run`, JSON-RPC 2.0 stdio; offline `mock` profile.
-- CI: ruff (check + format), mypy (clean), pytest with a **75%** coverage floor.
+- CI: ruff (check + format), mypy (clean), pytest with a **70%** coverage gate (currently ~75%).
 
 **Simplified / partial (by design)**
 - The older `--mode loop/plan/graph`, `--auto-repair`, and `--dry-run` flags on `xhx run` are **accepted but no-ops** — superseded by the single unified agent loop. Multi-agent work is reached through the `Agent` tool / Teams in the interactive runtime, not via `--mode`.
 - The `hooks` `agent` action type (hook-triggered sub-agent) is **disabled** at config-load time — it was never implemented; the other three action types are live.
 - Edit sub-agents run sequentially, each in its own worktree, merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution; JS/TS import/call extraction uses regex (only JS/TS *symbols* use tree-sitter; Python uses full `ast`).
-
-See [`docs/01-architecture.md`](docs/01-architecture.md) for details.
 
 ---
 
@@ -236,7 +238,7 @@ src/xhx_agent/
 ## Development
 
 ```bash
-uv run pytest          # test suite (521 passed, ~75% coverage)
+uv run pytest          # test suite (~75% coverage, 70% CI gate)
 uv run ruff check .    # lint
 uv run ruff format .   # format
 uv run mypy src        # type-check
