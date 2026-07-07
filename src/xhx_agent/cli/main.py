@@ -388,10 +388,11 @@ def replay(
 def benchmark(
     profile: Annotated[str, typer.Option("--profile", help="Model profile name to benchmark.")] = "mock",
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON results.")] = False,
-    modes: Annotated[
+    profiles: Annotated[
         str | None,
         typer.Option(
-            "--modes", help="Comma-separated list of modes to benchmark: loop,plan,team (default: loop,plan,team)."
+            "--profiles",
+            help="Comma-separated profiles to compare on the same fixture set (e.g. default,cheap).",
         ),
     ] = None,
 ) -> None:
@@ -399,15 +400,15 @@ def benchmark(
 
     runner = BenchmarkRunner(Path.cwd())
     if not json_output:
-        console.print(f"Running benchmark fixtures against profile: {profile}...")
+        console.print(f"Running benchmark fixtures against profile(s): {profiles or profile}...")
     try:
-        if modes:
+        if profiles:
             import json
 
             from xhx_agent.evals.benchmark import render_benchmark_report
 
-            mode_list = [m.strip() for m in modes.split(",") if m.strip()]
-            report = render_benchmark_report(profile, runner.run_matrix(profile, mode_list))
+            profile_list = [p.strip() for p in profiles.split(",") if p.strip()]
+            report = render_benchmark_report(runner.run_matrix(profile_list))
             if json_output:
                 print(json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
                 return

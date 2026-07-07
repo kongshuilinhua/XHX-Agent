@@ -232,7 +232,8 @@ async def run_headless_task_async(
             input_tokens=agent.total_input_tokens,
             output_tokens=agent.total_output_tokens,
             verification=verification,
-            turns=agent.turn_count,
+            # 真实模型迭代数（每次 LLM 调用算一轮），与 trace/replay 的 turns 同源同义。
+            turns=agent.last_iterations,
             changed_files=list(agent.changed_files),
             run_id=run_id,
             messages=_serialize_conversation(agent),

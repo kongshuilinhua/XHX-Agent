@@ -146,6 +146,7 @@ def test_headless_connects_and_closes_mcp(tmp_path, monkeypatch) -> None:
         total_input_tokens = 0
         total_output_tokens = 0
         turn_count = 1
+        last_iterations = 1
         changed_files: list = []
 
         async def run_to_completion(self, task, conversation=None, event_callback=None) -> str:

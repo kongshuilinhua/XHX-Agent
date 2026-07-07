@@ -1,12 +1,17 @@
+"""Benchmark 台架：同一任务集 × 多个模型 profile 的量化对比。
+
+早期的"三范式矩阵"（loop/plan/team 按 `--modes` 分流）已随旧编排器栈退役——统一
+Agent 循环下不存在按 mode 分流的执行路径，按范式打标签只会产出三份相同的数字。
+现在唯一的矩阵维度是**模型 profile**（如强模型 vs 便宜模型），对比成功率 / 轮数 /
+token / 耗时，直接服务多模型路由（`config.routing`）的取舍决策。
+"""
+
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
 from pydantic import BaseModel
-
-# 三范式对比的默认范式集（协议都用 tool-calling，只差控制流）。
-DEFAULT_BENCHMARK_MODES = ["loop", "plan", "team"]
 
 
 class BenchmarkFixture(BaseModel):
@@ -24,16 +29,13 @@ class BenchmarkResult(BaseModel):
     duration_seconds: float
     tokens_estimate: int
     success: bool
-    mode: str = ""
     files_changed: int = 0
-    repair_attempts: int = 0
 
 
 class BenchmarkReport(BaseModel):
-    """三范式对比报告：逐 (任务×范式) 明细 + 按范式聚合 + markdown 渲染。"""
+    """profile 对比报告：逐 (任务×profile) 明细 + 按 profile 聚合 + markdown 渲染。"""
 
-    profile: str
-    modes: list[str]
+    profiles: list[str]
     results: list[BenchmarkResult]
     summary: dict[str, dict[str, float]]
     markdown: str
@@ -58,8 +60,8 @@ class BenchmarkRunner:
             ),
         ]
 
-    def _run_fixture(self, fixture: BenchmarkFixture, profile_name: str, mode: str | None) -> BenchmarkResult:
-        """跑一个 (fixture, mode)，把 HeadlessResult 折成 BenchmarkResult；任何异常折成 failed 结果。"""
+    def _run_fixture(self, fixture: BenchmarkFixture, profile_name: str) -> BenchmarkResult:
+        """跑一个 (fixture, profile)，把 HeadlessResult 折成 BenchmarkResult；任何异常折成 failed 结果。"""
         from xhx_agent.runtime.headless import run_headless_task
 
         start_time = time.time()
@@ -77,13 +79,11 @@ class BenchmarkRunner:
                 fixture_id=fixture.id,
                 name=fixture.name,
                 profile=profile_name,
-                mode=mode or "",
                 status=res.status,
                 turns=res.turns,
                 duration_seconds=round(time.time() - start_time, 2),
                 tokens_estimate=tokens_estimate,
                 files_changed=files_changed,
-                repair_attempts=0,
                 success=(res.status == "completed"),
             )
         except Exception:
@@ -91,27 +91,24 @@ class BenchmarkRunner:
                 fixture_id=fixture.id,
                 name=fixture.name,
                 profile=profile_name,
-                mode=mode or "",
                 status="failed",
                 turns=0,
                 duration_seconds=round(time.time() - start_time, 2),
                 tokens_estimate=0,
                 files_changed=0,
-                repair_attempts=0,
                 success=False,
             )
 
     def run_benchmark(self, profile_name: str) -> list[BenchmarkResult]:
-        """单 profile、默认编排（向后兼容的原行为）。"""
-        return [self._run_fixture(fixture, profile_name, None) for fixture in self.fixtures]
+        """单 profile：每个 fixture 跑一遍。"""
+        return [self._run_fixture(fixture, profile_name) for fixture in self.fixtures]
 
-    def run_matrix(self, profile_name: str, modes: list[str] | None = None) -> list[BenchmarkResult]:
-        """范式矩阵：每个 fixture 分别用 modes 里的每种范式跑一遍。"""
-        modes = modes or DEFAULT_BENCHMARK_MODES
+    def run_matrix(self, profiles: list[str]) -> list[BenchmarkResult]:
+        """profile 矩阵：每个 fixture 分别用每个 profile 跑一遍。"""
         results: list[BenchmarkResult] = []
         for fixture in self.fixtures:
-            for mode in modes:
-                results.append(self._run_fixture(fixture, profile_name, mode))
+            for profile_name in profiles:
+                results.append(self._run_fixture(fixture, profile_name))
         return results
 
 
@@ -119,14 +116,14 @@ def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 2) if values else 0.0
 
 
-def render_benchmark_report(profile: str, results: list[BenchmarkResult]) -> BenchmarkReport:
-    """把矩阵结果聚合成按范式对比的报告（含 markdown 表）。"""
-    modes = sorted({r.mode for r in results})
+def render_benchmark_report(results: list[BenchmarkResult]) -> BenchmarkReport:
+    """把矩阵结果聚合成按 profile 对比的报告（含 markdown 表）。"""
+    profiles = sorted({r.profile for r in results})
     summary: dict[str, dict[str, float]] = {}
-    for mode in modes:
-        rs = [r for r in results if r.mode == mode]
+    for profile_name in profiles:
+        rs = [r for r in results if r.profile == profile_name]
         n = len(rs)
-        summary[mode] = {
+        summary[profile_name] = {
             "runs": float(n),
             "success_rate": round(sum(1 for r in rs if r.success) / n, 3) if n else 0.0,
             "mean_turns": _mean([r.turns for r in rs]),
@@ -135,25 +132,25 @@ def render_benchmark_report(profile: str, results: list[BenchmarkResult]) -> Ben
             "total_files_changed": float(sum(r.files_changed for r in rs)),
         }
 
-    lines: list[str] = [f"# 三范式 Benchmark 对比（profile: {profile}）", ""]
-    lines.append("## 按范式聚合")
-    lines.append("| 范式 | 任务数 | 成功率 | 平均轮数 | 平均 tokens | 平均耗时(s) | 改动文件数 |")
+    lines: list[str] = ["# 模型 Profile Benchmark 对比", ""]
+    lines.append("## 按 profile 聚合")
+    lines.append("| profile | 任务数 | 成功率 | 平均轮数 | 平均 tokens | 平均耗时(s) | 改动文件数 |")
     lines.append("|---|---|---|---|---|---|---|")
-    for mode in modes:
-        s = summary[mode]
+    for profile_name in profiles:
+        s = summary[profile_name]
         lines.append(
-            f"| `{mode}` | {int(s['runs'])} | {s['success_rate']:.0%} | {s['mean_turns']} | "
+            f"| `{profile_name}` | {int(s['runs'])} | {s['success_rate']:.0%} | {s['mean_turns']} | "
             f"{s['mean_tokens']} | {s['mean_duration']} | {int(s['total_files_changed'])} |"
         )
     lines += [
         "",
         "## 逐任务明细",
-        "| 任务 | 范式 | 状态 | 轮数 | tokens | 耗时(s) | 改动 |",
+        "| 任务 | profile | 状态 | 轮数 | tokens | 耗时(s) | 改动 |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in results:
         lines.append(
-            f"| {r.fixture_id} | `{r.mode}` | {r.status} | {r.turns} | "
+            f"| {r.fixture_id} | `{r.profile}` | {r.status} | {r.turns} | "
             f"{r.tokens_estimate} | {r.duration_seconds} | {r.files_changed} |"
         )
-    return BenchmarkReport(profile=profile, modes=modes, results=results, summary=summary, markdown="\n".join(lines))
+    return BenchmarkReport(profiles=profiles, results=results, summary=summary, markdown="\n".join(lines))

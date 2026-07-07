@@ -361,7 +361,9 @@ class Agent:
         # 持久化证据链（`.xhx/traces/<run_id>.jsonl`）：上层（headless/TUI）挂一个
         # EvidenceStore 即启用，None 时零开销。写入永不打断运行。
         self.trace_store: Any | None = None
-        self._trace_turn: int = 0
+        # 最近一次 run/run_to_completion 里的模型迭代序号（每次 LLM 调用 +1）：
+        # trace 条目的轮次标注、headless 的真实迭代数上报都用它（turn_count 只数完成的对话轮）。
+        self._iteration: int = 0
         self.coordinator_mode: bool = False
         self.team_name: str = ""
         self._team_manager: Any = None
@@ -401,6 +403,11 @@ class Agent:
     def turn_count(self) -> int:
         """已执行的对话轮数（公开只读）。"""
         return self._loop_count
+
+    @property
+    def last_iterations(self) -> int:
+        """最近一次 run/run_to_completion 的模型迭代数（每次 LLM 调用算一轮，公开只读）。"""
+        return self._iteration
 
     @property
     def changed_files(self) -> list[str]:
@@ -546,11 +553,11 @@ class Agent:
         )
 
     def _trace_tool_exec(self, tc: ToolCallComplete, result: ToolResult, elapsed: float) -> None:
-        self._trace("tool_call", {"turn": self._trace_turn, "tool": tc.tool_name, "arguments": tc.arguments})
+        self._trace("tool_call", {"turn": self._iteration, "tool": tc.tool_name, "arguments": tc.arguments})
         self._trace(
             "tool_result",
             {
-                "turn": self._trace_turn,
+                "turn": self._iteration,
                 "tool": tc.tool_name,
                 "is_error": result.is_error,
                 "output": result.output[:500],
@@ -684,7 +691,7 @@ class Agent:
 
         while True:
             iteration += 1
-            self._trace_turn = iteration
+            self._iteration = iteration
 
             if iteration > self.max_iterations:
                 yield ErrorEvent(message=f"Agent reached maximum iterations ({self.max_iterations})")
@@ -1303,7 +1310,7 @@ class Agent:
         last_text = ""
 
         for iteration in range(1, self.max_iterations + 1):
-            self._trace_turn = iteration
+            self._iteration = iteration
             if self.hook_engine:
                 ctx = self._build_hook_context("turn_start")
                 await self.hook_engine.run_hooks("turn_start", ctx)
