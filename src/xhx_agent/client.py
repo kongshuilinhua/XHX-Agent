@@ -531,11 +531,15 @@ class OpenAICompatClient(LLMClient):
                         active_calls.clear()
 
             if final_usage is not None:
-                # 部分兼容 provider 通过 prompt_tokens_details.cached_tokens 上报 cache 命中数，
-                # 大多数不上报（cache_read 保持 0）。prompt_tokens 包含了缓存 token，需要减去
-                # 以保持 input + cache_read 可加性。没有 provider 上报 creation 计数。
+                # 缓存命中数按 provider 位置容错解析：OpenAI 系放在
+                # prompt_tokens_details.cached_tokens；DeepSeek 等放在 usage 顶层的
+                # prompt_cache_hit_tokens（OpenAI SDK 的 pydantic 模型允许 extra 字段，
+                # getattr 可直接取到）。都没有则保持 0。prompt_tokens 包含了缓存 token，
+                # 需要减去以保持 input + cache_read 可加性。没有 provider 上报 creation 计数。
                 details = getattr(final_usage, "prompt_tokens_details", None)
                 cache_read = getattr(details, "cached_tokens", 0) or 0
+                if not cache_read:
+                    cache_read = getattr(final_usage, "prompt_cache_hit_tokens", 0) or 0
                 prompt_tokens = final_usage.prompt_tokens or 0
                 yield StreamEnd(
                     stop_reason=stop_reason,

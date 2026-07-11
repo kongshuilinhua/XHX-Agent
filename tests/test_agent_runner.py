@@ -319,6 +319,111 @@ def test_notification_fn_injects_reminder(tmp_path) -> None:
     assert any("有新消息" in (m.content or "") for m in conv.history)
 
 
+class _DeferredTool(Tool):
+    name = "rare_tool"
+    description = "rarely used deferred tool"
+    params_model = _EchoParams
+    category = "read"
+    should_defer = True
+
+    async def execute(self, params: _EchoParams) -> ToolResult:  # type: ignore[override]
+        return ToolResult(output="ok")
+
+
+def test_deferred_reminder_injected_once(tmp_path) -> None:
+    """deferred 工具提醒内容逐轮相同，只注入一次；重复注入只会膨胀历史。"""
+    reg = _registry()
+    reg.register(_DeferredTool())
+    client = _ScriptedClient(
+        [
+            [
+                ToolCallComplete(tool_id="1", tool_name="echo", arguments={"text": "a"}),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [
+                ToolCallComplete(tool_id="2", tool_name="echo", arguments={"text": "b"}),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [TextDelta(text="done"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)],
+        ]
+    )
+    agent = Agent(client=client, registry=reg, protocol="openai-compat", work_dir=str(tmp_path))
+    conv = ConversationManager()
+    conv.add_user_message("go")
+    _drive(agent, conv)
+    reminders = [m for m in conv.history if "deferred tools" in (m.content or "")]
+    assert len(reminders) == 1
+
+
+def test_hook_prompt_goes_to_reminder_not_system(tmp_path) -> None:
+    """prompt 型 hook 输出以 system reminder 追加进对话（append-only），
+    system prompt 全程逐字稳定（不随 hook 触发抖动，保住前缀缓存）。"""
+
+    class _FakeHookEngine:
+        def __init__(self) -> None:
+            self._prompts = ["项目规范：先跑测试"]
+
+        async def run_hooks(self, event: str, ctx: Any) -> None:
+            return None
+
+        def drain_notifications(self) -> list[Any]:
+            return []
+
+        def collect_prompt_messages(self) -> list[str]:
+            msgs, self._prompts = self._prompts, []
+            return msgs
+
+    client = _ScriptedClient(
+        [
+            [
+                ToolCallComplete(tool_id="1", tool_name="echo", arguments={"text": "a"}),
+                StreamEnd(stop_reason="tool_use", input_tokens=1, output_tokens=1),
+            ],
+            [TextDelta(text="done"), StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1)],
+        ]
+    )
+    agent = Agent(
+        client=client,
+        registry=_registry(),
+        protocol="openai-compat",
+        work_dir=str(tmp_path),
+        hook_engine=_FakeHookEngine(),  # type: ignore[arg-type]
+    )
+    conv = ConversationManager()
+    conv.add_user_message("go")
+    _drive(agent, conv)
+    hook_msgs = [m for m in conv.history if "Hook context:" in (m.content or "")]
+    assert len(hook_msgs) == 1 and "项目规范：先跑测试" in hook_msgs[0].content
+
+
+def test_model_turn_trace_records_cache_fields(tmp_path) -> None:
+    """model_turn trace 落真实缓存用量（cache_read/cache_creation），供 replay 汇总命中率。"""
+
+    class _FakeStore:
+        def __init__(self) -> None:
+            self.entries: list[tuple[str, dict]] = []
+
+        def write_trace(self, entry_type: str, payload: dict) -> None:
+            self.entries.append((entry_type, payload))
+
+    client = _ScriptedClient(
+        [
+            [
+                TextDelta(text="hi"),
+                StreamEnd(stop_reason="end_turn", input_tokens=3, output_tokens=1, cache_read=7, cache_creation=2),
+            ]
+        ]
+    )
+    agent = Agent(client=client, registry=_registry(), protocol="openai-compat", work_dir=str(tmp_path))
+    store = _FakeStore()
+    agent.trace_store = store
+    conv = ConversationManager()
+    conv.add_user_message("hi")
+    _drive(agent, conv)
+    model_turns = [p for t, p in store.entries if t == "model_turn"]
+    assert model_turns and model_turns[0]["cache_read"] == 7 and model_turns[0]["cache_creation"] == 2
+
+
 def test_bypass_mode_auto_allows(tmp_path) -> None:
     from xhx_agent.permissions import PermissionMode
 

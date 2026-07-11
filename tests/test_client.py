@@ -110,6 +110,23 @@ def test_stream_reads_usage_from_trailing_empty_choices_chunk() -> None:
     assert ends[0].output_tokens == 3
 
 
+def test_stream_reads_cache_hit_from_top_level_usage_field() -> None:
+    # DeepSeek 等 provider 不给 prompt_tokens_details，缓存命中数在 usage 顶层的
+    # prompt_cache_hit_tokens；解析需按位置容错，否则命中率观测恒为 0。
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=5,
+        prompt_cache_hit_tokens=64,
+        prompt_cache_miss_tokens=36,
+    )
+    events = _stream_events([_content_chunk("ok", finish_reason="stop", usage=usage)])
+
+    ends = [e for e in events if isinstance(e, StreamEnd)]
+    assert len(ends) == 1
+    assert ends[0].cache_read == 64
+    assert ends[0].input_tokens == 36  # prompt 含缓存 token，扣除后保持可加性
+
+
 def test_stream_without_usage_still_emits_single_end() -> None:
     # provider 全程不回传 usage：仍要有且仅有一个 StreamEnd 收尾（计数交由本地估算）。
     events = _stream_events([_content_chunk("hi", finish_reason="stop")])

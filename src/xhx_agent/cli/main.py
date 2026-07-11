@@ -379,6 +379,11 @@ def replay(
             console.print(f"turns: {result.metrics.turns}")
             console.print(f"duration: {result.metrics.duration_seconds}s")
             console.print(f"tokens: {result.metrics.tokens_estimate}")
+            if result.metrics.cache_read_tokens > 0:
+                console.print(
+                    f"cache hit: {result.metrics.cache_read_tokens} tokens "
+                    f"({result.metrics.cache_hit_rate:.0%} of prompt)"
+                )
     except Exception as e:
         console.print(f"[red]Error during replay: {e}[/red]")
         raise typer.Exit(code=1)

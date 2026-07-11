@@ -44,6 +44,8 @@ class TrailReplayer:
         plan_summaries: list[str] = []
         duration_seconds = 0.0
         tokens_estimate = 0
+        cache_read_total = 0
+        prompt_total = 0
         answer: str | None = None
 
         # Loop through traces to extract variables
@@ -56,8 +58,13 @@ class TrailReplayer:
                 tokens_estimate += payload.get("used_tokens_estimate", 0)
             elif entry.type == "model_turn":
                 # 统一 Agent 循环的逐轮条目：每轮一条，带真实 token 用量与模型文本。
+                # input_tokens 不含缓存命中部分（可加性），完整 prompt = input + cache_read。
                 turns = max(turns, int(payload.get("turn", 0) or 0))
-                tokens_estimate += payload.get("input_tokens", 0) + payload.get("output_tokens", 0)
+                cache_read = payload.get("cache_read", 0) or 0
+                input_tokens = payload.get("input_tokens", 0) or 0
+                cache_read_total += cache_read
+                prompt_total += input_tokens + cache_read
+                tokens_estimate += input_tokens + cache_read + (payload.get("output_tokens", 0) or 0)
                 text = payload.get("text", "")
                 if text and not payload.get("tool_calls"):
                     answer = text  # 无工具调用的收尾轮文本即最终回答
@@ -127,6 +134,8 @@ class TrailReplayer:
             duration_seconds=duration_seconds,
             turns=turns,
             tokens_estimate=tokens_estimate,
+            cache_read_tokens=cache_read_total,
+            cache_hit_rate=round(cache_read_total / prompt_total, 4) if prompt_total > 0 else 0.0,
             files_changed_count=len(changed_files),
             commands_run_count=len(commands),
             repair_attempts=repair_attempts,

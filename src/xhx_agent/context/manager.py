@@ -30,6 +30,12 @@ KEEP_RECENT_TURNS = 10
 OLD_RESULT_SNIP_CHARS = 2_000
 SNIPPED_TAG = "<snipped>"
 
+# Pass 3 陈旧裁剪的批量步长（按对话轮数计）。裁剪会重写历史中段，破坏推理侧的
+# 前缀缓存：被裁掉的旧结果本来只按缓存命中价计费（自动前缀缓存下约为原价 1/10），
+# 而重写点之后的全部内容要按原价重算一次。因此不逐轮滑动边界，而是攒够
+# SNIP_BATCH_TURNS 轮才推进一次——把"每轮都破坏一次缓存"摊薄成"每 N 轮一次"。
+SNIP_BATCH_TURNS = 5
+
 SUMMARY_OUTPUT_RESERVE = 20_000
 AUTO_COMPACT_SAFETY_MARGIN = 13_000
 MANUAL_COMPACT_SAFETY_MARGIN = 3_000
@@ -87,6 +93,9 @@ class CompactEvent:
 class ContentReplacementState:
     seen_ids: set[str] = field(default_factory=set)
     replacements: dict[str, str] = field(default_factory=dict)
+    # Pass 3 陈旧裁剪已推进到的轮次边界（含）。裁剪决策与 Pass 1/2 一样冻结在
+    # replacements 里，这个游标只负责"批量推进"，避免每轮滑动边界重写前缀。
+    snipped_through_turn: int = 0
 
 
 @dataclass
@@ -104,6 +113,7 @@ def clone_replacement_state(src: ContentReplacementState) -> ContentReplacementS
     return ContentReplacementState(
         seen_ids=set(src.seen_ids),
         replacements=dict(src.replacements),
+        snipped_through_turn=src.snipped_through_turn,
     )
 
 
@@ -238,19 +248,36 @@ def _copy_message_with_results(msg: Message, new_tool_results: list[ToolResultBl
 
 def _snip_stale_messages(
     history: list[Message],
+    state: ContentReplacementState,
+    new_records: list[ContentReplacementRecord],
 ) -> list[Message]:
+    """批量推进的陈旧裁剪（缓存感知版 Pass 3）。
+
+    旧实现每轮无状态重算，窗口边界随对话逐轮滑动——每滑一格就重写一次历史
+    中段，令推理侧前缀缓存从该点起整段失效。现在：
+    - 裁剪边界攒够 SNIP_BATCH_TURNS 轮才推进一次（重写频率摊薄为 1/N）；
+    - 每个裁剪决策写入 state.replacements 并持久化为记录，与 Pass 1/2 一样
+      冻结，后续调用与会话恢复直接复用，不再重算。
+    """
     total_turns = _count_turns(history)
-    if total_turns <= KEEP_RECENT_TURNS:
+    target_boundary = total_turns - KEEP_RECENT_TURNS
+
+    # 历史被 Layer 2 压缩或 rewind 缩短过：游标自愈回落，否则会长期挡住后续裁剪。
+    if target_boundary < state.snipped_through_turn:
+        state.snipped_through_turn = max(target_boundary, 0)
+
+    if target_boundary <= 0:
+        return history
+    if target_boundary - state.snipped_through_turn < SNIP_BATCH_TURNS:
         return history
 
     out: list[Message] = []
     turns_seen = 0
-    old_boundary = total_turns - KEEP_RECENT_TURNS
 
     for msg in history:
         if msg.role == "assistant" and not msg.tool_uses:
             turns_seen += 1
-        if turns_seen > old_boundary or not msg.tool_results:
+        if turns_seen > target_boundary or not msg.tool_results:
             out.append(msg)
             continue
 
@@ -274,10 +301,19 @@ def _snip_stale_messages(
                     is_error=tr.is_error,
                 )
             )
+            state.replacements[tr.tool_use_id] = new_content
+            state.seen_ids.add(tr.tool_use_id)
+            new_records.append(
+                ContentReplacementRecord(
+                    tool_use_id=tr.tool_use_id,
+                    replacement=new_content,
+                )
+            )
             changed = True
 
         out.append(_copy_message_with_results(msg, new_results) if changed else msg)
 
+    state.snipped_through_turn = target_boundary
     return out
 
 
@@ -291,7 +327,8 @@ def apply_tool_result_budget(
 
     返回一个新的 ConversationManager，其中 tool_result.content 已根据 state.replacements
     应用了决策，并对本轮 fresh 候选执行了 Pass 1（单条超限）+ Pass 2（聚合超限）。
-    Pass 3（陈旧裁剪）在新 history 上跑，仍然 stateless（边界 drift 是已知 trade-off）。
+    Pass 3（陈旧裁剪）同样冻结决策并按批推进边界，保持请求前缀在多数轮次逐字稳定
+    （推理侧自动前缀缓存的命中前提）。
 
     state 会被 mutate：本轮新决定的 id 进入 seen_ids，新决定替换的 id 进入 replacements。
     """
@@ -381,8 +418,8 @@ def apply_tool_result_budget(
         ]
         new_history.append(_copy_message_with_results(msg, new_tool_results))
 
-    # Pass 3：在新 history 上裁剪过期结果（无状态；边界漂移是已知 trade-off）
-    new_history = _snip_stale_messages(new_history)
+    # Pass 3：在新 history 上裁剪过期结果（决策冻结 + 批量推进，见 _snip_stale_messages）
+    new_history = _snip_stale_messages(new_history, state, new_records)
 
     new_conv = ConversationManager()
     new_conv.history = new_history

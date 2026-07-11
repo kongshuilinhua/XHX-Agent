@@ -7,8 +7,11 @@ from pathlib import Path
 
 from xhx_agent.context.manager import (
     AGGREGATE_CHAR_LIMIT,
+    KEEP_RECENT_TURNS,
     PERSISTED_TAG,
     SINGLE_RESULT_CHAR_LIMIT,
+    SNIP_BATCH_TURNS,
+    SNIPPED_TAG,
     CompactCircuitBreaker,
     ContentReplacementRecord,
     RecoveryState,
@@ -174,6 +177,101 @@ def test_aggregate_limit_persists(tmp_path: Path) -> None:
     new_conv, records = apply_tool_result_budget(conv, session_dir, create_replacement_state())
     persisted = [tr for tr in new_conv.history[1].tool_results if tr.content.startswith(PERSISTED_TAG)]
     assert persisted  # 至少一条被落盘以满足聚合预算
+
+
+# --- Pass 3 陈旧裁剪：批量推进 + 决策冻结 ---
+
+
+def _turn_msgs(idx: int, result_chars: int = 3000) -> list[Message]:
+    """一整轮对话：assistant 发起工具调用 → 工具结果 → assistant 收尾（计一轮）。"""
+    tid = f"turn{idx}"
+    return [
+        Message(role="assistant", content="", tool_uses=[ToolUseBlock(tool_use_id=tid, tool_name="x", arguments={})]),
+        Message(
+            role="user",
+            content="",
+            tool_results=[ToolResultBlock(tool_use_id=tid, content=f"R{idx}-" + "x" * result_chars)],
+        ),
+        Message(role="assistant", content=f"done {idx}"),
+    ]
+
+
+def _conv_with_turns(n: int) -> ConversationManager:
+    conv = ConversationManager()
+    for i in range(1, n + 1):
+        conv.history.extend(_turn_msgs(i))
+    return conv
+
+
+def _flat_results(conv: ConversationManager) -> list[tuple[str, str]]:
+    return [(tr.tool_use_id, tr.content) for m in conv.history for tr in m.tool_results]
+
+
+def test_snip_waits_for_batch(tmp_path: Path) -> None:
+    """待裁剪轮数不足 SNIP_BATCH_TURNS 时不动前缀（避免每轮滑动边界破坏缓存）。"""
+    session_dir = ensure_session_dir(str(tmp_path))
+    state = create_replacement_state()
+    conv = _conv_with_turns(KEEP_RECENT_TURNS + SNIP_BATCH_TURNS - 1)
+    new_conv, records = apply_tool_result_budget(conv, session_dir, state)
+    assert not any(c.startswith(SNIPPED_TAG) for _, c in _flat_results(new_conv))
+    assert state.snipped_through_turn == 0
+    assert records == []
+
+
+def test_snip_batch_freezes_decisions(tmp_path: Path) -> None:
+    """攒满批量后一次性裁剪；决策冻结进 state + 持久化记录，重复调用输出逐字一致。"""
+    session_dir = ensure_session_dir(str(tmp_path))
+    state = create_replacement_state()
+    total = KEEP_RECENT_TURNS + SNIP_BATCH_TURNS
+    conv = _conv_with_turns(total)
+    new_conv, records = apply_tool_result_budget(conv, session_dir, state)
+
+    assert state.snipped_through_turn == SNIP_BATCH_TURNS
+    snipped_ids = {r.tool_use_id for r in records}
+    assert "turn1" in snipped_ids and state.replacements["turn1"].startswith(SNIPPED_TAG)
+    # 最近一轮的结果原样保留
+    assert dict(_flat_results(new_conv))[f"turn{total}"].startswith(f"R{total}-")
+
+    # 再次调用：无新记录，序列化内容逐字一致（前缀缓存命中的前提）
+    again, records2 = apply_tool_result_budget(conv, session_dir, state)
+    assert records2 == []
+    assert _flat_results(again) == _flat_results(new_conv)
+
+
+def test_snip_boundary_stable_between_batches(tmp_path: Path) -> None:
+    """两次批量之间追加新轮次：已有前缀逐字不变，直到再攒满一批才推进。"""
+    session_dir = ensure_session_dir(str(tmp_path))
+    state = create_replacement_state()
+    total = KEEP_RECENT_TURNS + SNIP_BATCH_TURNS
+    conv = _conv_with_turns(total)
+    first, _ = apply_tool_result_budget(conv, session_dir, state)
+    baseline = _flat_results(first)
+
+    for i in range(1, SNIP_BATCH_TURNS):
+        conv.history.extend(_turn_msgs(total + i))
+        new_conv, recs = apply_tool_result_budget(conv, session_dir, state)
+        assert recs == []
+        assert _flat_results(new_conv)[: len(baseline)] == baseline
+
+    conv.history.extend(_turn_msgs(total + SNIP_BATCH_TURNS))
+    _, recs = apply_tool_result_budget(conv, session_dir, state)
+    assert recs  # 攒满一批，一次性推进
+    assert state.snipped_through_turn == 2 * SNIP_BATCH_TURNS
+
+
+def test_snip_cursor_self_heals_after_history_shrinks(tmp_path: Path) -> None:
+    """历史被压缩/回退缩短后游标自愈回落，不会永久挡住后续裁剪。"""
+    state = create_replacement_state()
+    state.snipped_through_turn = 50
+    conv = _conv_with_turns(3)
+    apply_tool_result_budget(conv, ensure_session_dir(str(tmp_path)), state)
+    assert state.snipped_through_turn == 0
+
+
+def test_clone_preserves_snip_cursor() -> None:
+    s = create_replacement_state()
+    s.snipped_through_turn = 7
+    assert clone_replacement_state(s).snipped_through_turn == 7
 
 
 # --- keep_start 对齐 ---

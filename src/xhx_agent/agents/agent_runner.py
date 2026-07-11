@@ -370,6 +370,9 @@ class Agent:
         self.notification_fn: Callable[[], list[str]] | None = None
         self.file_history: Any = None
         self._current_conversation: ConversationManager | None = None
+        # 最近一次注入过 deferred 工具提醒的名单。提醒内容逐轮相同，重复注入只会
+        # 膨胀历史；只在名单变化（ToolSearch 加载了新工具）或压缩清史后重新注入。
+        self._last_deferred_names: tuple[str, ...] | None = None
         # 本轮累计被改动的文件（相对路径），供 stop 事件上的 verification 钩子定向跑测试。
         self._changed_files: list[str] = []
         # 完成前验证关卡（交互路径）默认关闭，需显式 opt-in 才启用——与 headless `--verify`
@@ -547,6 +550,8 @@ class Agent:
                 "turn": turn,
                 "input_tokens": response.input_tokens,
                 "output_tokens": response.output_tokens,
+                "cache_read": response.cache_read,
+                "cache_creation": response.cache_creation,
                 "text": response.text[:2000],
                 "tool_calls": [tc.tool_name for tc in response.tool_calls],
             },
@@ -684,6 +689,15 @@ class Agent:
             for he in self._drain_hook_events():
                 yield he
 
+        # system prompt 是请求前缀的第一段，也是推理侧自动前缀缓存的命中前提，
+        # 在整个 run 期间保持逐字稳定：一次构建、循环内复用。prompt 型 hook 的
+        # 输出不再烘进 system prompt（那会让头部字节随 hook 触发翻动、整段缓存
+        # 失效），改为以 system reminder 追加进对话（见循环内 pre_send 之后）。
+        system = build_system_prompt(
+            coordinator_mode=self.coordinator_mode,
+            agent_catalog=self._agent_catalog_list or None,
+        )
+
         iteration = 0
         consecutive_unknown = 0
         max_tokens_escalated = False
@@ -729,6 +743,8 @@ class Agent:
                 conversation.inject_environment(self._build_env_context())
                 mem = self.memory_manager.load() if self.memory_manager else ""
                 conversation.inject_long_term_memory(self.instructions_content, mem)
+                # 压缩清空了历史，deferred 提醒随之丢失，下轮需要重新注入。
+                self._last_deferred_names = None
             elif isinstance(compact_result, str):
                 yield ErrorEvent(message=compact_result)
 
@@ -737,13 +753,8 @@ class Agent:
                 await self.hook_engine.run_hooks("pre_send", ctx)
                 for he in self._drain_hook_events():
                     yield he
-
-            hook_prompts = self.hook_engine.collect_prompt_messages() if self.hook_engine else None
-            system = build_system_prompt(
-                hook_prompts=hook_prompts,
-                coordinator_mode=self.coordinator_mode,
-                agent_catalog=self._agent_catalog_list or None,
-            )
+                for hook_prompt in self.hook_engine.collect_prompt_messages():
+                    conversation.add_system_reminder(f"Hook context:\n{hook_prompt}")
 
             if self.plan_mode:
                 plan_path = str(self._get_plan_path())
@@ -760,13 +771,14 @@ class Agent:
                     )
 
             deferred_names = self.registry.get_deferred_tool_names()
-            if deferred_names:
+            if deferred_names and tuple(deferred_names) != self._last_deferred_names:
                 conversation.add_system_reminder(
                     "The following deferred tools are available via ToolSearch. "
                     "Their schemas are NOT loaded - use ToolSearch with "
                     'query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
                     + "\n".join(deferred_names)
                 )
+                self._last_deferred_names = tuple(deferred_names)
 
             tools = self._active_tool_schemas()
 
@@ -1288,9 +1300,12 @@ class Agent:
         if task:
             conversation.add_user_message(task)
 
-        hook_prompts = self.hook_engine.collect_prompt_messages() if self.hook_engine else None
+        # 与 run() 一致：system prompt 逐字稳定，prompt 型 hook 输出走 append-only
+        # 的 system reminder，避免请求头部字节随 hook 触发抖动、破坏前缀缓存。
+        if self.hook_engine:
+            for hook_prompt in self.hook_engine.collect_prompt_messages():
+                conversation.add_system_reminder(f"Hook context:\n{hook_prompt}")
         system = build_system_prompt(
-            hook_prompts=hook_prompts,
             coordinator_mode=self.coordinator_mode,
         )
 
@@ -1333,15 +1348,21 @@ class Agent:
             )
             if isinstance(compact_result, CompactEvent):
                 conversation.inject_environment(self._build_env_context())
+                self._last_deferred_names = None
+
+            if self.hook_engine:
+                for hook_prompt in self.hook_engine.collect_prompt_messages():
+                    conversation.add_system_reminder(f"Hook context:\n{hook_prompt}")
 
             deferred_names = self.registry.get_deferred_tool_names()
-            if deferred_names:
+            if deferred_names and tuple(deferred_names) != self._last_deferred_names:
                 conversation.add_system_reminder(
                     "The following deferred tools are available via ToolSearch. "
                     "Their schemas are NOT loaded - use ToolSearch with "
                     'query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
                     + "\n".join(deferred_names)
                 )
+                self._last_deferred_names = tuple(deferred_names)
 
             api_conv, _new_records = apply_tool_result_budget(conversation, self.session_dir, self.replacement_state)
             if _new_records:

@@ -159,6 +159,46 @@ def test_trail_replayer_unified_loop_entries(tmp_path: Path) -> None:
     assert result.metrics.duration_seconds == 2.5
 
 
+def test_trail_replayer_aggregates_cache_usage(tmp_path: Path) -> None:
+    # model_turn 带 cache_read 时，replay 汇总缓存命中 token 与命中率（真实运行数据）。
+    run_id = "cached-run"
+    traces_dir = tmp_path / ".xhx" / "traces"
+    traces_dir.mkdir(parents=True)
+    entries = [
+        {"type": "run_start", "run_id": run_id, "payload": {"task": "t"}},
+        {
+            "type": "model_turn",
+            "run_id": run_id,
+            "payload": {"turn": 1, "input_tokens": 100, "output_tokens": 10, "cache_read": 0, "tool_calls": ["Bash"]},
+        },
+        {
+            "type": "model_turn",
+            "run_id": run_id,
+            "payload": {
+                "turn": 2,
+                "input_tokens": 20,
+                "output_tokens": 10,
+                "cache_read": 80,
+                "text": "done",
+                "tool_calls": [],
+            },
+        },
+        {"type": "run_end", "run_id": run_id, "payload": {"status": "completed"}},
+    ]
+    with open(traces_dir / f"{run_id}.jsonl", "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    result = TrailReplayer(tmp_path).replay(run_id)
+
+    assert result.metrics is not None
+    assert result.metrics.cache_read_tokens == 80
+    # 完整 prompt = (100+0) + (20+80) = 200，命中 80 → 40%
+    assert result.metrics.cache_hit_rate == 0.4
+    # tokens_estimate 计入缓存命中部分，反映真实 prompt 体量
+    assert result.metrics.tokens_estimate == 100 + 10 + 20 + 80 + 10
+
+
 def test_benchmark_runner(tmp_path: Path) -> None:
     # Initialize a mock environment
     (tmp_path / ".xhx").mkdir()
