@@ -188,6 +188,31 @@ def test_mcp_manager_register_and_close_unregisters() -> None:
     assert "mcp_demo_echo" not in tool_names_after
 
 
+def test_mcp_registered_tool_schema_passthrough() -> None:
+    # 回归：注册进 registry 的 MCP 工具必须把 server 的 inputSchema 透传给模型。
+    # 此前 get_schema() 走空的宽松 params_model，模型收到的所有 MCP 工具都是"零参数"，
+    # 根本不知道怎么填参——连接成功但工具实际不可用。
+    cfg = MCPServerConfig(name="demo", command=sys.executable, args=[FAKE_MCP_SERVER])
+    mgr = MCPManager()
+    registry = ToolRegistry()
+    try:
+        mgr.connect_all([cfg])
+        mgr.register_tools_to_registry(registry)
+
+        echo = registry.get("mcp_demo_echo")
+        assert echo is not None
+        schema = echo.get_schema()["input_schema"]
+        assert "text" in schema.get("properties", {})
+        assert "text" in schema.get("required", [])
+
+        add = registry.get("mcp_demo_add")
+        assert add is not None
+        add_schema = add.get_schema()["input_schema"]
+        assert {"a", "b"} <= set(add_schema.get("properties", {}))
+    finally:
+        mgr.close()
+
+
 def test_mcp_manager_connect_failure_isolated() -> None:
     # 不存在的 command → 连接失败，只回调 on_error 并跳过，不抛。
     bad = MCPServerConfig(name="bad", command="this_command_does_not_exist_xhx_test", args=[])
@@ -197,8 +222,13 @@ def test_mcp_manager_connect_failure_isolated() -> None:
         mgr.connect_all([bad], on_error=lambda name, _e: errors.append(name))
         assert errors == ["bad"]
         assert "bad" not in mgr._sessions
+        # 失败明细同时记录在 failed_servers，供 TUI/headless//mcp 事后上报
+        assert "bad" in mgr.failed_servers
+        assert mgr.failed_servers["bad"]
     finally:
         mgr.close()
+    # close 后清空，重连时不残留旧失败
+    assert mgr.failed_servers == {}
 
 
 def test_skills_compiler_integration(tmp_path: Path) -> None:

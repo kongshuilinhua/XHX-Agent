@@ -84,6 +84,44 @@ def test_headless_with_instructions_injects_memory(tmp_path: Path, monkeypatch: 
     assert result.summary == "你好"
 
 
+def test_headless_reports_mcp_connect_failure(tmp_path: Path, monkeypatch: Any) -> None:
+    """MCP server 连不上时任务照常完成，但失败必须可见：事件流 mcp_error + trace 落盘。
+
+    回归保护：此前 connect_all 的 on_error 传 None 且异常整体吞掉，
+    配了 server 却没工具时完全无从排查。
+    """
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    xhx = tmp_path / ".xhx"
+    xhx.mkdir()
+    (xhx / "mcp.json").write_text(
+        json.dumps({"servers": [{"name": "ghost", "command": "this_command_does_not_exist_xhx_test"}]}),
+        encoding="utf-8",
+    )
+    client = FakeLLMClient(
+        [
+            [
+                TextDelta("ok"),
+                StreamEnd(stop_reason="end_turn", input_tokens=1, output_tokens=1),
+            ],
+        ]
+    )
+    events: list[dict[str, Any]] = []
+
+    result = run_headless_task(tmp_path, "say ok", client=client, event_callback=events.append)
+
+    assert result.status == "completed"
+    mcp_errors = [e for e in events if e.get("type") == "mcp_error"]
+    assert len(mcp_errors) == 1 and mcp_errors[0]["server"] == "ghost"
+    assert mcp_errors[0]["error"]
+
+    trace_file = tmp_path / ".xhx" / "traces" / f"{result.run_id}.jsonl"
+    if trace_file.exists():  # trace 是旁路，存在时必须包含 mcp_error 记录
+        kinds = [json.loads(line).get("type") for line in trace_file.read_text(encoding="utf-8").splitlines()]
+        assert "mcp_error" in kinds
+
+
 def test_headless_returns_text_without_tools(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.chdir(tmp_path)
     # 模型首轮就直接给出答复、无工具调用 → 循环立即终止。

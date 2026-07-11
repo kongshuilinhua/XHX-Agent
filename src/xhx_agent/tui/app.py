@@ -2030,7 +2030,8 @@ class XHXApp(App):
         self._mcp_connecting = True
         self._update_mode_label()
         manager = MCPManager()
-        # 在后台线程中同步执行连接（connect_all 内部用 anyio portal）
+        # 在后台线程中同步执行连接（connect_all 内部用 anyio portal）；
+        # 单 server 失败明细记在 manager.failed_servers，回到事件循环后统一上报。
         await asyncio.to_thread(
             manager.connect_all,
             self._mcp_server_configs,
@@ -2046,6 +2047,12 @@ class XHXApp(App):
         server_count = len(getattr(manager, "_sessions", {}))
         if server_count > 0:
             self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
+        failed = getattr(manager, "failed_servers", {})
+        if failed:
+            from rich.markup import escape
+
+            lines = [f"    {escape(name)}: {escape(err)}" for name, err in sorted(failed.items())]
+            self.add_system_message("⚠ MCP server 连接失败（工具不可用）：\n" + "\n".join(lines))
         if server_count > 0 and mcp_tools > 0:
             parts = []
             for cfg in self._mcp_server_configs:

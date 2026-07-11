@@ -16,8 +16,12 @@ async def handle_mcp(ctx: CommandContext) -> None:
     # list_tools() 返回 Tool 对象，取 .name 再判前缀（直接对对象 .startswith 会 AttributeError）。
     names = [getattr(t, "name", str(t)) for t in registry.list_tools()]
     mcp_tools = [n for n in names if n.startswith("mcp_")]
-    if not mcp_tools:
-        ctx.ui.add_system_message("未检测到 MCP 工具（可能未配置或连接失败）")
+    # 连接失败明细：manager 挂在 TUI app（ctx.ui）上，非 TUI 场景取不到则视为无失败。
+    manager = getattr(ctx.ui, "mcp_manager", None)
+    failed: dict[str, str] = dict(getattr(manager, "failed_servers", None) or {})
+
+    if not mcp_tools and not failed:
+        ctx.ui.add_system_message("未检测到 MCP 工具（未配置 .xhx/mcp.json 或仍在连接中）")
         return
 
     # 按 server 分组
@@ -33,6 +37,12 @@ async def handle_mcp(ctx: CommandContext) -> None:
         lines.append(f"  {server}: {len(stools)} 个工具")
         for t in sorted(stools):
             lines.append(f"    - {t}")
+    if failed:
+        # 错误文本是外部动态内容，进 Textual markup 前必须 escape（含 [ 会炸样式）。
+        from rich.markup import escape
+
+        for server, err in sorted(failed.items()):
+            lines.append(f"  {escape(server)}: 连接失败 — {escape(err)}")
     ctx.ui.add_system_message("\n".join(lines))
 
 

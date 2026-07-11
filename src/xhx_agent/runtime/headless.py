@@ -183,7 +183,10 @@ async def run_headless_task_async(
             pass
 
     # 接入 MCP：连接 .xhx/mcp.json 的 server 并注册工具；任务结束（含异常）后 close。
+    # 失败不阻断任务，但必须可见：明细写 trace（mcp_error）并转发事件流，否则
+    # "配了 server 但模型没有对应工具"完全无从排查。
     mcp_manager = None
+    mcp_failures: dict[str, str] = {}
     try:
         from xhx_agent.runtime.mcp_config import load_mcp_servers
 
@@ -193,9 +196,21 @@ async def run_headless_task_async(
 
             mcp_manager = MCPManager()
             await asyncio.to_thread(mcp_manager.connect_all, servers, None)
+            mcp_failures.update(mcp_manager.failed_servers)
             mcp_manager.register_tools_to_registry(agent.registry)
-    except Exception:
-        mcp_manager = None  # MCP 连接失败不该让 headless 任务失败
+    except Exception as exc:
+        mcp_failures["(mcp)"] = f"{type(exc).__name__}: {exc}"
+        if mcp_manager is not None:
+            mcp_manager.close()  # 注册半途失败时释放已建立的连接，别悬挂到进程结束
+            mcp_manager = None
+    for server_name, err in mcp_failures.items():
+        if trace_store is not None:
+            try:
+                trace_store.write_trace("mcp_error", {"server": server_name, "error": err})
+            except Exception:
+                pass
+        if event_callback:
+            event_callback({"type": "mcp_error", "server": server_name, "error": err})
 
     try:
         try:

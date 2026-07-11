@@ -34,14 +34,6 @@ class _MCPToolParams(BaseModel):
     model_config = {"extra": "allow"}
 
 
-class _MCPTool:
-    """MCP 工具的动态 Tool 包装器。
-
-    每个 MCP server 的工具都动态生成一个继承 Tool 的实例，通过 registry.register()
-    注册进 Tool 式 registry。不是 pydantic model，而是真正的 Tool 子类。
-    """
-
-
 def _make_mcp_tool(
     full_name: str,
     description: str,
@@ -49,6 +41,7 @@ def _make_mcp_tool(
     tool_name: str,
     mcp_manager: Any,
     is_read_only: bool,
+    input_schema: dict[str, Any] | None = None,
 ) -> Any:
     """为单个 MCP 工具动态创建一个 Tool 子类实例。"""
     from xhx_agent.tools.base import Tool, ToolCategory, ToolResult
@@ -56,6 +49,7 @@ def _make_mcp_tool(
     # 闭包变量避免 Python 类体 scoping 陷阱（description = description 在类体里报 NameError）
     _desc = description
     _cat: ToolCategory = "read" if is_read_only else "command"
+    _schema = dict(input_schema) if input_schema else None
 
     class _DynamicMCPTool(Tool):
         name = full_name
@@ -66,6 +60,14 @@ def _make_mcp_tool(
         @property
         def is_read_only(self) -> bool:
             return is_read_only
+
+        def get_schema(self) -> dict[str, Any]:
+            # params_model 只是执行侧透传容器，其 json schema 是空对象——发给模型
+            # 会让每个 MCP 工具看起来"零参数"。必须原样透传 server 的 inputSchema
+            # （含 properties/required），模型才知道怎么填参。server 没提供时才回落。
+            if _schema is not None:
+                return {"name": self.name, "description": self.description, "input_schema": _schema}
+            return super().get_schema()
 
         async def execute(self, params: BaseModel) -> ToolResult:
             args: dict[str, Any] = {}
@@ -102,6 +104,9 @@ class MCPManager:
         self._sessions: dict[str, Any] = {}
         self._registry: Any = None
         self._registered_names: list[str] = []
+        # server 名 -> 失败原因。on_error 回调之外的统一失败记录，供 TUI/headless/命令
+        # 事后上报——此前失败只进回调（且调用方全传 None），"配了没生效"完全无从排查。
+        self.failed_servers: dict[str, str] = {}
 
     # ---------- 生命周期 ----------
     def connect_all(self, servers: list[MCPServerConfig], on_error: OnError | None = None) -> None:
@@ -115,6 +120,7 @@ class MCPManager:
                 session = self._stack.enter_context(self._portal.wrap_async_context_manager(self._open(cfg)))
                 self._sessions[cfg.name] = session
             except Exception as e:
+                self.failed_servers[cfg.name] = f"{type(e).__name__}: {e}"
                 if on_error is not None:
                     on_error(cfg.name, e)
 
@@ -127,6 +133,7 @@ class MCPManager:
         self._registered_names = []
         self._registry = None
         self._sessions = {}
+        self.failed_servers = {}
         if self._stack is not None:
             try:
                 self._stack.close()
@@ -206,6 +213,7 @@ class MCPManager:
                     tool_name=tool.name,
                     mcp_manager=self,
                     is_read_only=read_only,
+                    input_schema=getattr(tool, "inputSchema", None),
                 )
                 registry.register(tool_instance)
                 self._registered_names.append(full_name)
