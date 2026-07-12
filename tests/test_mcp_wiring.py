@@ -82,3 +82,28 @@ def test_mcp_config_loaded_and_wired(tmp_path, monkeypatch) -> None:
     registered = asyncio.run(_run())
     assert captured.get("servers") == servers  # 接线通：_init_mcp 把配置喂给了 connect_all
     assert registered  # MCP 工具真注册进 registry
+
+
+def test_mcp_instructions_reinjected_after_conversation_reset() -> None:
+    """MCP server 说明按"当前对话里是否已有"注入（自愈式）。
+
+    回归：曾用一次性标志 _mcp_instructions_ok，/new、恢复会话、压缩清史后
+    新对话里永远不会再注入 MCP 说明。
+    """
+    from xhx_agent.conversation import ConversationManager, Message
+    from xhx_agent.tui.app import _has_mcp_instructions
+
+    instructions = "# MCP Server Instructions\n\n## github\nAvailable tools: mcp_github_get_me"
+
+    conv = ConversationManager()
+    assert not _has_mcp_instructions(conv)
+
+    conv.add_system_reminder(instructions)
+    assert _has_mcp_instructions(conv)  # 已注入则不再重复
+
+    # /new / 恢复会话：换新 conversation 对象 → 需要重新注入
+    assert not _has_mcp_instructions(ConversationManager())
+
+    # 压缩：历史被摘要替换 → 说明随之丢失，需要重新注入
+    conv.history = [Message(role="user", content="[对话摘要] 之前讨论了……")]
+    assert not _has_mcp_instructions(conv)

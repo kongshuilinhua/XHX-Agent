@@ -201,7 +201,7 @@ cp -r path/to/some-skill ~/.xhx/skills/   # 含 SKILL.md 的目录
 - CI：ruff（check + format）、mypy（干净）、pytest，覆盖率门槛 **70%**（当前约 75%）。
 
 **简化 / 部分实现（有意为之）**
-- `xhx run` 上更早的 `--mode loop/plan/graph`、`--auto-repair`、`--dry-run` 三个旗标**接受但已是 no-op**——被统一 agent 主循环取代。多 agent 工作经交互运行时的 `Agent` 工具 / Teams 触达，而非 `--mode`。
+- `xhx run` 上更早的 `--mode loop/plan/graph`、`--auto-repair`、`--dry-run` 三个旗标**已移除**——被统一 agent 主循环取代。多 agent 工作经交互运行时的 `Agent` 工具 / Teams 触达，而非 `--mode`。
 - Hook 的 `agent` 动作类型（hook 触发子 agent）**已在配置加载阶段停用**——它从未实现；另外三种动作类型正常可用。
 - 编辑子 agent 串行执行，各自在自己的 worktree、合并时带冲突检测；真·**并发**子 agent 执行属后续优化。
 - 引用索引是文本级 symbol-name 匹配、非语义解析；JS/TS 的 import/call 提取用正则（只有 JS/TS *符号* 用 tree-sitter，Python 用完整 `ast`）。

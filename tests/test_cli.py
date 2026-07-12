@@ -131,12 +131,8 @@ def test_sessions_command_and_resume_by_id() -> None:
         assert "Resuming from run" in strip_ansi(resumed.output)
 
 
-def test_run_mode_flag_accepted() -> None:
-    from xhx_agent.runtime.init import init_project
-
-    with runner.isolated_filesystem() as workspace:
-        root = Path(workspace)
-        init_project(root)
-        result = runner.invoke(app, ["run", "analyze the repo", "--profile", "mock", "--mode", "loop"])
-        assert result.exit_code == 0, result.output
-        assert "status:" in result.output
+def test_run_rejects_removed_legacy_flags() -> None:
+    """--mode/--dry-run/--auto-repair 是旧编排器概念，已彻底移除：不再静默吞掉。"""
+    for flag in (["--mode", "loop"], ["--dry-run"], ["--auto-repair"]):
+        result = runner.invoke(app, ["run", "task", *flag])
+        assert result.exit_code != 0, f"{flag} 应被拒绝而非静默接受"

@@ -268,6 +268,42 @@ def test_status_shows_session_id_not_question_mark(tmp_path: Path) -> None:
     assert "会话: ?" not in joined
 
 
+def test_status_reports_mcp_state(tmp_path: Path) -> None:
+    """/status 的 MCP 行用实时数据：未配置 / 已连接（server 数、工具数、失败数）。"""
+    import types
+
+    from pydantic import BaseModel
+
+    from xhx_agent.commands.handlers.status import handle_status
+    from xhx_agent.tools.base import Tool, ToolResult
+
+    # 未配置：无 mcp_ 工具、ui 上无 manager
+    ctx, ui, agent, _registry = _build_ctx(tmp_path)
+    ui.messages.clear()
+    _run(handle_status, ctx)
+    assert "MCP: 未配置" in "\n".join(ui.messages)
+
+    # 已连接 1 个 server、1 个工具、1 个失败
+    class _P(BaseModel):
+        pass
+
+    class _McpTool(Tool):
+        name = "mcp_github_get_me"
+        description = "x"
+        params_model = _P
+        category = "read"
+
+        async def execute(self, params: _P) -> ToolResult:  # type: ignore[override]
+            return ToolResult(output="ok")
+
+    agent.registry.register(_McpTool())
+    ui.mcp_manager = types.SimpleNamespace(failed_servers={"broken": "boom"})  # type: ignore[attr-defined]
+    ui.messages.clear()
+    _run(handle_status, ctx)
+    joined = "\n".join(ui.messages)
+    assert "MCP: 1 个 server / 1 个工具（1 个连接失败，详见 /mcp）" in joined
+
+
 def test_compact_emits_progress_before_result(tmp_path: Path) -> None:
     """/compact 在等待 LLM 摘要前先给“正在压缩”反馈，避免界面看着像卡死。"""
     from xhx_agent.agents.agent_runner import CompactNotification

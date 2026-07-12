@@ -202,7 +202,7 @@ Stated plainly so capability is never confused with roadmap.
 - CI: ruff (check + format), mypy (clean), pytest with a **70%** coverage gate (currently ~75%).
 
 **Simplified / partial (by design)**
-- The older `--mode loop/plan/graph`, `--auto-repair`, and `--dry-run` flags on `xhx run` are **accepted but no-ops** — superseded by the single unified agent loop. Multi-agent work is reached through the `Agent` tool / Teams in the interactive runtime, not via `--mode`.
+- The older `--mode loop/plan/graph`, `--auto-repair`, and `--dry-run` flags on `xhx run` have been **removed** — superseded by the single unified agent loop. Multi-agent work is reached through the `Agent` tool / Teams in the interactive runtime, not via `--mode`.
 - The `hooks` `agent` action type (hook-triggered sub-agent) is **disabled** at config-load time — it was never implemented; the other three action types are live.
 - Edit sub-agents run sequentially, each in its own worktree, merged back with conflict detection; truly *concurrent* sub-agent execution is a future optimization.
 - The reference index is text-level symbol-name matching, not semantic resolution; JS/TS import/call extraction uses regex (only JS/TS *symbols* use tree-sitter; Python uses full `ast`).

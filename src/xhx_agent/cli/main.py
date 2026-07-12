@@ -211,12 +211,6 @@ def run(
     json_output: Annotated[bool, typer.Option("--json", help="Print structured JSON result.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Allow confirm-level verification commands.")] = False,
     profile: Annotated[str | None, typer.Option("--profile", help="Model profile name.")] = None,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Only build the first model plan; do not execute tools.")
-    ] = False,
-    auto_repair: Annotated[
-        bool, typer.Option("--auto-repair", help="Allow up to two repair attempts after failed verification.")
-    ] = False,
     cont: Annotated[
         bool,
         typer.Option("--continue", help="Resume from the most recent session, injecting its summary as context."),
@@ -225,21 +219,9 @@ def run(
         str | None,
         typer.Option("--resume", help="Resume from a specific session by run id (see `xhx sessions`)."),
     ] = None,
-    mode: Annotated[
-        str | None,
-        typer.Option(
-            "--mode",
-            help="Orchestrator paradigm: loop | plan | graph (linear = auto-classify fallback; default: auto-classified).",
-        ),
-    ] = None,
     verify: Annotated[bool, typer.Option("--verify", help="Run change-targeted tests after the agent stops.")] = False,
 ) -> None:
     workspace = Path.cwd()
-    # --mode / --auto-repair 是旧编排器/修复循环的概念，统一 Agent 循环下不再适用，仅作兼容接受。
-    _ = (mode, auto_repair)
-    if dry_run:
-        console.print("--dry-run 在统一 Agent 循环下已不再支持，已跳过执行。")
-        return
 
     effective_task = task
     prior_conversation = None

@@ -37,7 +37,8 @@ class ExitWorktreeTool(Tool):
                 is_error=True,
             )
 
-        # restore_session 占位返回 None，所以以最近进入的 active worktree 作为"当前"。
+        # manager 不跟踪"当前"是哪个 worktree（active 是本会话进入过 + 启动时
+        # restore_session 恢复的列表），以最近进入的一个作为退出目标。
         handle = active[-1]
         action = params.action if params.action in ("keep", "remove") else "keep"
 

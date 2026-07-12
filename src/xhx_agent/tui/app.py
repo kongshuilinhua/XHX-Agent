@@ -463,6 +463,21 @@ _MODE_COLORS = {
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
+# MCP server 说明 reminder 的头部（add_system_reminder 会包一层 <system-reminder> 标签）。
+_MCP_INSTRUCTIONS_HEADER = "<system-reminder>\n# MCP Server Instructions"
+
+
+def _has_mcp_instructions(conversation: ConversationManager) -> bool:
+    """当前对话历史里是否已注入过 MCP server 说明。
+
+    用 startswith 而非全文包含：reminder 恒以固定头部开始，逐条 O(1) 判断，
+    不随消息长度线性扫描。
+    """
+    return any(
+        msg.role == "user" and isinstance(msg.content, str) and msg.content.startswith(_MCP_INSTRUCTIONS_HEADER)
+        for msg in conversation.history
+    )
+
 
 def _to_past_tense(verb: str) -> str:
     """把现在进行时动词转换为过去式。"""
@@ -718,7 +733,6 @@ class XHXApp(App):
         self._spinner_idx: int = 0
         self._spinner_timer: Timer | None = None
         self._spinner_label: Static | None = None
-        self._mcp_server_info: str = ""
         self._plan_pending: bool = False
         self._present_plan_tool: PresentPlanTool | None = None
         self._agent_task: asyncio.Task[None] | None = None
@@ -752,7 +766,6 @@ class XHXApp(App):
         self._current_ai_row: Vertical | None = None
         self._current_accumulated_text: str = ""
         self._mcp_instructions: str = ""
-        self._mcp_instructions_ok: bool = False
         self._mcp_connecting: bool = False
         self._teammate_tree: TeammateTree | None = None
         self._teammate_timer: Timer | None = None
@@ -1381,9 +1394,10 @@ class XHXApp(App):
                 self.session.append(Message(role="user", content=text))
                 self._session_saved_count += 1
 
-        if self._mcp_instructions and not self._mcp_instructions_ok:
+        # MCP server 说明按"当前对话里是否已有"注入（自愈式）：/new、恢复会话、
+        # 手动或自动压缩都会换掉/清掉历史，一次性标志会让说明永久丢失。
+        if self._mcp_instructions and not _has_mcp_instructions(self.conversation):
             self.conversation.add_system_reminder(self._mcp_instructions)
-            self._mcp_instructions_ok = True
 
         # Collect prefetched recall with 3s timeout, inject as system-reminder.
         if prefetch_task is not None:
@@ -2045,8 +2059,6 @@ class XHXApp(App):
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
         server_count = len(getattr(manager, "_sessions", {}))
-        if server_count > 0:
-            self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         failed = getattr(manager, "failed_servers", {})
         if failed:
             from rich.markup import escape
